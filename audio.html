@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Durations</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        audio {
+            display: block;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+
+<div id='odyo'>
+    <audio id='eVoiceFajr' src='audio/azan_fajr.mp3'></audio>
+    <audio id='eVoiceDohr' src='audio/azan_dohr.mp3'></audio>
+    <audio id='eVoiceAsr' src='audio/azan_asr.mp3'></audio>
+    <audio id='eVoiceMaghreb' src='audio/azan_maghreb.mp3'></audio>
+    <audio id='eVoiceIsha' src='audio/azan_isha.mp3'></audio>
+    <audio id='shortAzan' src='audio/short_azan.mp3'></audio>
+    <audio id='shortIqama' src='audio/short_iqama.mp3'></audio>
+    <audio id='eBeeep' src='audio/audio_wbeeep.wav'></audio>
+    <audio id='eTit' src='audio/audio_wtit.wav'></audio>
+</div>
+
+<h2>Durations des fichiers audio</h2>
+<ul id="durationsList">
+    <li>Azan Fajr Duration: <span id="fajrDuration"></span></li>
+    <li>Azan Dohr Duration: <span id="dohrDuration"></span></li>
+    <li>Azan Asr Duration: <span id="asrDuration"></span></li>
+    <li>Azan Maghreb Duration: <span id="maghrebDuration"></span></li>
+    <li>Azan Isha Duration: <span id="ishaDuration"></span></li>
+</ul>
+
+<script>
+    // Get audio elements
+    var JS_SND_FAJR = document.getElementById('eVoiceFajr');
+    var JS_SND_DOHR = document.getElementById('eVoiceDohr');
+    var JS_SND_ASR = document.getElementById('eVoiceAsr');
+    var JS_SND_MAGHREB = document.getElementById('eVoiceMaghreb');
+    var JS_SND_ISHA = document.getElementById('eVoiceIsha');
+
+    // Function to set durations
+    function setDurations() {
+        // Function to format duration in minutes and seconds
+        function formatDuration(duration) {
+            const minutes = Math.floor(duration / 60);
+            const seconds = Math.floor(duration % 60);
+            return `${minutes}m ${seconds}s`;
+        }
+
+        // Set durations after metadata has loaded
+        JS_SND_FAJR.onloadedmetadata = function() {
+            document.getElementById('fajrDuration').innerText = formatDuration(JS_SND_FAJR.duration);
+        };
+        JS_SND_DOHR.onloadedmetadata = function() {
+            document.getElementById('dohrDuration').innerText = formatDuration(JS_SND_DOHR.duration);
+        };
+        JS_SND_ASR.onloadedmetadata = function() {
+            document.getElementById('asrDuration').innerText = formatDuration(JS_SND_ASR.duration);
+        };
+        JS_SND_MAGHREB.onloadedmetadata = function() {
+            document.getElementById('maghrebDuration').innerText = formatDuration(JS_SND_MAGHREB.duration);
+        };
+        JS_SND_ISHA.onloadedmetadata = function() {
+            document.getElementById('ishaDuration').innerText = formatDuration(JS_SND_ISHA.duration);
+        };
+    }
+
+    // Call the function to set durations
+    setDurations();
+</script>
+
+</body>
+</html>

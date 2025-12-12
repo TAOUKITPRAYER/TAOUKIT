@@ -31,82 +31,89 @@
 
 
 
-
 	<script>
-		(function () {
-			const site = location.search.replace('?', '').trim();
-			console.log("🔍 Site parameter =", site || "(none)");
+		window.addEventListener("load", function () {
 
-			// No site → load default
-			if (!site) {
-				console.log("➡️ No site provided → loading default scripts");
+			(function () {
+				const site = location.search.replace('?', '').trim();
+				console.log("🔍 Site parameter =", site || "(none)");
 
-				const s1 = document.createElement('script');
-				s1.src = './lights.js';
-				s1.onload  = () => console.log("✅ Loaded: default lights.js");
-				s1.onerror = () => console.log("❌ Failed to load: default lights.js");
-				document.head.appendChild(s1);
+				// No site → load default
+				if (!site) {
+					console.log("➡️ No site provided → loading default scripts");
 
-				const s2 = document.createElement('script');
-				s2.src = './JSALLDATA.js';
-				s2.onload  = () => console.log("✅ Loaded: default JSALLDATA.js");
-				s2.onerror = () => console.log("❌ Failed to load: default JSALLDATA.js");
-				document.head.appendChild(s2);
+					const s1 = document.createElement('script');
+					s1.src = './lights.js';
+					s1.onload  = () => console.log("✅ Loaded: default lights.js");
+					s1.onerror = () => console.log("❌ Failed to load: default lights.js");
+					document.head.appendChild(s1);
 
-				return;
-			}
+					const s2 = document.createElement('script');
+					s2.src = './JSALLDATA.js';
+					s2.onload  = () => console.log("✅ Loaded: default JSALLDATA.js");
+					s2.onerror = () => console.log("❌ Failed to load: default JSALLDATA.js");
+					document.head.appendChild(s2);
 
-			console.log(`➡️ Trying site-specific scripts for site: ${site}`);
+					return;
+				}
 
-			// ---------------------------
-			// 1️⃣ Load site-specific lights.js
-			// ---------------------------
-			const siteLights = document.createElement('script');
-			siteLights.src = `./${site}/lights.js`;
+				console.log(`➡️ Trying site-specific scripts for site: ${site}`);
 
-			siteLights.onload = () =>
-				console.log(`✅ Loaded: site-specific lights.js from ${site}`);
+				// 1️⃣ lights.js
+				const siteLights = document.createElement('script');
+				siteLights.src = `./${site}/lights.js`;
 
-			siteLights.onerror = () => {
-				console.log(`⚠️ Site-specific lights.js not found → falling back to default`);
+				siteLights.onload = () =>
+					console.log(`✅ Loaded: site-specific lights.js from ${site}`);
 
-				const fallback = document.createElement('script');
-				fallback.src = './lights.js';
-				fallback.onload  = () => console.log("✅ Loaded: default lights.js (fallback)");
-				fallback.onerror = () => console.log("❌ Failed to load: default lights.js (fallback)");
-				document.head.appendChild(fallback);
-			};
+				siteLights.onerror = () => {
+					console.log(`⚠️ site-specific lights.js not found → fallback`);
+					const fallback = document.createElement('script');
+					fallback.src = './lights.js';
+					fallback.onload  = () => console.log("✅ Loaded: default lights.js (fallback)");
+					fallback.onerror = () => console.log("❌ Failed to load: default lights.js (fallback)");
+					document.head.appendChild(fallback);
+				};
 
-			document.head.appendChild(siteLights);
+				document.head.appendChild(siteLights);
 
-			// ---------------------------
-			// 2️⃣ Load site-specific JSALLDATA.js
-			// ---------------------------
-			const siteData = document.createElement('script');
-			siteData.src = `./${site}/JSALLDATA.js`;
+				// 2️⃣ JSALLDATA.js
+				const siteData = document.createElement('script');
+				siteData.src = `./${site}/JSALLDATA.js`;
 
-			siteData.onload = () =>
-				console.log(`✅ Loaded: site-specific JSALLDATA.js from ${site}`);
+				siteData.onload = () => {
+					console.log(`✅ Loaded: site-specific JSALLDATA.js from ${site}`);
+					//console.log('AFTER LOAD - JSALLDATA.MOSQUENAME=' + JSALLDATA.MosqueName);
 
-			siteData.onerror = () => {
-				console.log(`⚠️ Site-specific JSALLDATA.js not found → falling back to default`);
+					setMOSQUENAME();
+					setDefaultCITY();
+					GoGloballyFillDATA();
+				};
 
-				const fallback = document.createElement('script');
-				fallback.src = './JSALLDATA.js';
-				fallback.onload  = () => console.log("✅ Loaded: default JSALLDATA.js (fallback)");
-				fallback.onerror = () => console.log("❌ Failed to load: default JSALLDATA.js (fallback)");
-				document.head.appendChild(fallback);
-			};
+				siteData.onerror = () => {
+					console.log(`⚠️ site-specific JSALLDATA.js not found → fallback`);
+					const fallback = document.createElement('script');
+					fallback.src = './JSALLDATA.js';
 
-			document.head.appendChild(siteData);
-			
-			console.log('2 -  JSALLDATA.IZAMPLIINTERNE=' + JSALLDATA.IZAMPLIINTERNE);
+					fallback.onload = () => {
+						console.log("✅ Loaded: fallback default JSALLDATA.js");
+						setMOSQUENAME();
+						setDefaultCITY();
+						GoGloballyFillDATA();
+					};
 
-		})();
+					fallback.onerror = () => console.log("❌ Failed to load fallback JSALLDATA.js");
+					document.head.appendChild(fallback);
+				};
+
+				document.head.appendChild(siteData);
+
+				//console.log('START - JSALLDATA.MOSQUENAME=' + JSALLDATA.MosqueName);
+
+			})();
+
+		});  
 	</script>
-
-
-	
 
 	<script>  
 		var JS_VERSIO = new Date().getTime(); 
@@ -6537,8 +6544,9 @@ function stopDecrement() {
 	{	
 
 		var str = JSALLDATA.MosqueName;
+		//console.log('1 - setMOSQUENAME : str ='+str);
 		if(str === null || str === '' || !str) str = 'إسم المسجد هنا';
-		
+		//console.log('2 - setMOSQUENAME : str ='+str);
 		JS_MOSQUE_NAME = str;
 		JS_VRMsqNAME.innerHTML = JS_MOSQUE_NAME;
 		JS_HRMsqNAME.innerHTML = JS_MOSQUE_NAME;
@@ -9831,12 +9839,12 @@ function stopDecrement() {
 
 
 	<!-- Last script -->
-	<script>
+	<!-- <script>
 			console.log('1 -  JSALLDATA.IZAMPLIINTERNE=' + JSALLDATA.IZAMPLIINTERNE);
 			setMOSQUENAME();
 			setDefaultCITY();
 			GoGloballyFillDATA();
-	</script>
+	</script> -->
 
 </body>
 </html>

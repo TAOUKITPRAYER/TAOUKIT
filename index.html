@@ -3811,6 +3811,7 @@ function stopDecrement() {
 
 		if(JS_DECOMPTE_STARTED)
 		{
+ 
 
 				JS_IQUAMA_SECONDS--;
 				
@@ -4760,6 +4761,8 @@ function stopDecrement() {
 
 		}
 
+		ForceSTOPSLIDES();
+		ForceSTOPazkar(); 
 		ShowZunder2('VRAzanCOMES');
 		ShowZunder2('HRAzanCOMES');
 		//dolog('Affichage page AZAN : '+JS_NOW_SALAT_NAME);
@@ -5865,7 +5868,8 @@ function stopDecrement() {
 	{
 		//dolog('startDECOMPTE : JS_IQAMA_COUNTDOWN_ACTIVE = '+JS_IQAMA_COUNTDOWN_ACTIVE+' **** JSALLDATA.IZforHOME ='+JSALLDATA.IZforHOME + ' *** xminu ='+xminu+' *** duree='+duree);
 		if( (!JS_IQAMA_COUNTDOWN_ACTIVE) || (JSALLDATA.IZforHOME==1) ) return;
-
+		ForceSTOPSLIDES();
+		ForceSTOPazkar();
 		// NO COUNTER, DIRECT BLACKSCREEN AND EXIT
 		if(xminu < 1) {setTimeout('ShowRIDEAU()', 1000);  setTimeout('SetAllTubesNORMAL()', 9000);   return; }
 
@@ -9835,6 +9839,17 @@ function stopDecrement() {
 			audio.addEventListener("ended", hideIndicator);
 			audio.addEventListener("error", hideIndicator);
 		});
+	</script>
+	<!-- Redirection vers la page d'aide si le paramètre help est présent dans l'URL -->
+	<script>
+	document.addEventListener("DOMContentLoaded", () => {
+		const params = new URLSearchParams(window.location.search);
+
+		if (params.has("help")) {
+			window.location.href = "help.html";
+			return;
+		}
+	});
 	</script>
 
 	<script>

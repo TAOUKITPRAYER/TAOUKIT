@@ -1,0 +1,3 @@
+# Firebase Admin SDK service-account key + client config — real secrets,
+# never commit (grants server-side admin access to the Firebase project).
+firekey/

@@ -4736,6 +4736,106 @@
     display: block;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   MODALE "RÉGLAGES" — styles injectés par _installSettingsModal
+   Ouverte depuis la barre flottante du logo (icône roue dentée). Même
+   structure/palette que #ucMosqueInfoModal juste au-dessus (anthracite/or,
+   plein écran, verrouillage visuel identique) mais namespace propre
+   (ucSettingsModal*) pour ne pas entrer en collision avec les classes
+   génériques ucSettingsRow-, ucSettingsToggle- et ucSettingsSlider- du
+   contenu déplacé depuis l'ex-onglet "⚙ الإعدادات" de la modale info-mosquée
+   (cf. plus bas, "Onglet 'الإعدادات'").
+   ═══════════════════════════════════════════════════════════════════════════ */
+#ucSettingsModal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: #2b2720;
+    flex-direction: column;
+    font-size: 16px;
+}
+#ucSettingsModal.ucSettingsModalOpen {
+    display: flex;
+}
+
+#ucSettingsModalHeader {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    padding: 18px 20px 12px;
+    flex-shrink: 0;
+    background: #1e1a12;
+    border-bottom: 1px solid #4a3a1a;
+}
+#ucSettingsModalTitle {
+    color: #d4aa50;
+    font-size: 1.2em;
+    font-weight: bold;
+    letter-spacing: 0.02em;
+    direction: rtl;
+    text-align: center;
+}
+#ucSettingsModalClose {
+    position: absolute;
+    top: 50%;
+    right: 20px;
+    transform: translateY(-50%);
+    color: #e05050;
+    cursor: pointer;
+    font-size: 1.25em;
+    line-height: 1;
+    transition: color 0.15s;
+}
+#ucSettingsModalClose:hover {
+    color: #ff7070;
+}
+
+#ucSettingsModalTabs {
+    display: flex;
+    direction: rtl;
+    padding: 0;
+    background: #1e1a12;
+    border-bottom: 1px solid #4a3a1a;
+    flex-shrink: 0;
+}
+.ucSettingsModalTabBtn {
+    flex: 1;
+    text-align: center;
+    padding: 12px 8px;
+    color: #cbb98a;
+    font-size: 0.95em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.2s;
+    user-select: none;
+}
+.ucSettingsModalTabBtn:hover {
+    color: #e0c58f;
+}
+.ucSettingsModalTabBtnActive {
+    color: #d4aa50;
+    background: #2b2720;
+    box-shadow: inset 0 -2px 0 #d4aa50;
+}
+
+#ucSettingsModalBody {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 18px 32px;
+}
+#ucSettingsModalBody::-webkit-scrollbar { width: 5px; }
+#ucSettingsModalBody::-webkit-scrollbar-track { background: transparent; }
+#ucSettingsModalBody::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+.ucSettingsModalPane {
+    display: none;
+}
+.ucSettingsModalPaneActive {
+    display: block;
+}
+
 /* ── Onglet Information : image + adresse ────────────────────────────────── */
 #ucMosqueInfoImageWrap {
     width: 100%;
@@ -5156,12 +5256,13 @@
 
 /* ── Onglet "الإعدادات" — alerte avant azan + silencieux auto (toggles +
    jauges) ────────────────────────────────────────────────────────────────
-   4e onglet de la modale info-mosquée, juste après le calendrier (custom.js,
-   _installMosqueInfoModal). Accent doré #f0d080 repris de
-   .ucMosqueInfoTabBtnActive pour rester cohérent avec le reste de la modale
-   plutôt que le vert utilisé par .ucMosqueNotifSwitchOn (abonnements).
-   Classes (pas d'ID) sur les lignes/jauges génériques car répétées 3x
-   (alerte avant azan, silencieux avant azan, remise du son après azan). */
+   Contenu de l'onglet "الأذان والإشعارات" de la modale Réglages (custom.js,
+   _installSettingsModal) — déplacé depuis l'ex-4e onglet de la modale
+   info-mosquée. Accent doré #f0d080 repris de .ucSettingsModalTabBtnActive
+   pour rester cohérent avec le reste de la modale plutôt que le vert utilisé
+   par .ucMosqueNotifSwitchOn (abonnements). Classes (pas d'ID) sur les
+   lignes/jauges génériques car répétées 3x (alerte avant azan, silencieux
+   avant azan, remise du son après azan). */
 #ucSettingsSection {
     padding-top: 4px;
 }
@@ -5434,26 +5535,29 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   LOCALISATION — bouton "ma position" + modale carte Google Maps
-   Bouton vivant dans #mainVerticalContainer (sibling de #menuToggleButton)
-   -> masqué/affiché automatiquement avec le conteneur en mode horizontal,
-   aucune règle @media supplémentaire nécessaire ici.
+   RÉGLAGES — bouton roue dentée, ouvre la barre flottante du logo (verticale)
+   Ex-bouton "ma position" (cf. injectMapLocatorFeature, custom.js) : même
+   emplacement/mécanisme, réutilisé comme second déclencheur de
+   #ucLogoQuickBarOverlay (cf. _installLogoQuickBar) — le premier étant le
+   logo lui-même. Bouton vivant dans #mainVerticalContainer (sibling de
+   #menuToggleButton) -> masqué/affiché automatiquement avec le conteneur en
+   mode horizontal, aucune règle @media supplémentaire nécessaire ici.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-#mapLocatorButtonVertical {
+#ucSettingsButtonVertical {
     position: absolute;
     z-index: 9999333;          /* même plan que #menuToggleButton */
     top: 1%;
     right: 1.5%;
-    width: 6vmin;
-    height: 6vmin;
+    width: 7.5vmin;
+    height: 7.5vmin;
     padding: 1vmin;
     box-sizing: border-box;
     cursor: pointer;
     opacity: 0.92;
 }
-#mapLocatorButtonVertical svg { display: block; width: 100%; height: 100%; }
-#mapLocatorButtonVertical:active { opacity: 0.55; }
+#ucSettingsButtonVertical svg { display: block; width: 100%; height: 100%; }
+#ucSettingsButtonVertical:active { opacity: 0.55; }
 
 /* Overlay plein-écran (appended to <html>, immune à la rotation du body) */
 #mapLocatorOverlay {
@@ -5589,13 +5693,13 @@
 
 /* ═══════════════════════════════════════════════════════════════════════════
    QIBLA — bouton "direction de la Qibla" + modale boussole / carte
-   Bouton jumeau de #mapLocatorButtonVertical (même conteneur, même mécanisme
+   Bouton jumeau de #ucSettingsButtonVertical (même conteneur, même mécanisme
    d'affichage exclusif au mode vertical), positionné en bas à droite.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 #qiblaButtonVertical {
     position: absolute;
-    z-index: 9999333;          /* même plan que #mapLocatorButtonVertical */
+    z-index: 9999333;          /* même plan que #ucSettingsButtonVertical */
     bottom: 1%;
     right: 1.5%;
     width: 6vmin;
@@ -6121,6 +6225,7 @@
     flex-direction: column;
     overflow: hidden;
     direction: rtl;
+    position: relative;   /* ancrage pour #qrFahrasPanel (position:absolute; inset:0) */
 }
 
 /* Onglet ⚙ الإعدادات : accès rapide (miroir "QP") aux réglages les plus
@@ -6180,32 +6285,104 @@
     border-bottom: 1px solid #4a3a1a;
     background: #1e1a12;
 }
-#qpReadNavMode,
-#qpReadNavList {
-    /* width: largeur du contenu (et non celle, bien plus grande, allouée par
-       défaut par Chrome à un <select>) afin de laisser le maximum de place à
-       #qpReadSearchInput, qui absorbe le reste via flex:1. */
-    width: -webkit-fit-content;
-    width: fit-content;
-    max-width: 38%;
+/* Bouton d'ouverture du fahras plein écran (remplace les deux anciens
+   <select> سورة/جزء/حزب/صفحة) — cf. _qrOpenFahras() dans custom.js. */
+#qrFahrasBtn {
     flex-shrink: 0;
-    padding: 6px 8px;
+    white-space: nowrap;
+    padding: 6px 12px;
     border: 1px solid #6a5530;
     border-radius: 8px;
     background: #2b2720;
-    color: #e8dcc0;
+    color: #d4aa50;
     font-family: 'Amiri', serif;
     font-size: 0.95em;
+    font-weight: bold;
+    cursor: pointer;
+    user-select: none;
 }
-/* Un <select> n'hérite pas le background de ses <option> : sans cette règle,
-   Chrome affiche le menu déroulant en blanc avec un texte clair illisible
-   (un seul item lisible : celui survolé/sélectionné, mis en surbrillance par
-   le navigateur). */
-#qpReadNavMode option,
-#qpReadNavList option {
+#qrFahrasBtn:active { background: #3a3225; }
+/* Bascule coloration tajwid (expérimental, Qaloun uniquement) —
+   cf. _qrTajweedHtml()/qrTajweedToggleBtn dans custom.js. */
+#qrTajweedToggleBtn {
+    flex-shrink: 0;
+    white-space: nowrap;
+    padding: 6px 12px;
+    border: 1px solid #6a5530;
+    border-radius: 8px;
     background: #2b2720;
-    color: #e8dcc0;
+    color: #a89a78;
+    font-family: 'Amiri', serif;
+    font-size: 0.95em;
+    font-weight: bold;
+    cursor: pointer;
+    user-select: none;
 }
+#qrTajweedToggleBtn.qrTajweedToggleOn {
+    color: #d4aa50;
+    border-color: #d4aa50;
+    background: #3a3225;
+}
+#qrTajweedToggleBtn:active { background: #3a3225; }
+
+/* ── Coloration tajwid par règle (Qaloun, expérimental) ─────────────────────
+   Palette de départ, groupée par famille phonétique — à ajuster librement,
+   c'est juste du CSS (aucun impact sur les données/positions). */
+.qrTaj { font-weight: 700; }
+.qrTaj-ghunnah          { color: #d98c00; }
+.qrTaj-idghaam_ghunnah      { color: #2f9e44; }
+.qrTaj-idghaam_no_ghunnah   { color: #37b24d; }
+.qrTaj-idghaam_shafawi      { color: #2b9348; }
+.qrTaj-idghaam_mutajanisayn { color: #1f6b3a; }
+.qrTaj-idghaam_mutaqaribayn { color: #17532d; }
+.qrTaj-ikhfa            { color: #b5650a; }
+.qrTaj-ikhfa_shafawi    { color: #995610; }
+.qrTaj-iqlab            { color: #0f9e94; }
+.qrTaj-qalqalah         { color: #2f5fa8; }
+.qrTaj-madd_2           { color: #e0575a; }
+.qrTaj-madd_246         { color: #d9272e; }
+.qrTaj-madd_muttasil    { color: #b8181e; }
+.qrTaj-madd_munfasil    { color: #931118; }
+.qrTaj-madd_6           { color: #6e0d12; }
+.qrTaj-lam_shamsiyyah   { color: #8a8578; }
+.qrTaj-silent           { color: #7a7568; }
+.qrTaj-hamzat_wasl      { color: #8a8578; }
+
+/* Pastille de couleur réutilisant les mêmes classes .qrTaj-xxx (currentColor
+   reprend la couleur définie ci-dessus, aucune valeur dupliquée). */
+.qrTajDot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: currentColor;
+    vertical-align: middle;
+}
+
+/* Bande de légende contextuelle en pied de page (uniquement les couleurs
+   présentes sur la page affichée) — cf. _qrBuildTajLegendRow() dans custom.js. */
+.qrTajLegendRow {
+    flex-shrink: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px 10px;
+    padding: 6px 14px;
+    background: #241f14;
+    border-top: 1px solid #3a2f1c;
+    cursor: pointer;
+    user-select: none;
+}
+.qrTajLegendChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #cbb98a;
+    font-size: 0.72em;
+    font-family: 'Amiri', serif;
+}
+.qrTajLegendChip .qrTajDot { width: 8px; height: 8px; }
 #qpReadSearchInput {
     flex: 1;
     min-width: 0;
@@ -6227,6 +6404,194 @@
     color: #d4aa50;
     cursor: pointer;
 }
+
+/* ── Fahras plein écran (سورة / جزء / حزب / المرجعيات) ─────────────────────
+   Panneau plein cadre par-dessus qpReadTextArea (position:absolute, inset:0
+   dans qpReadTabBody qui porte la règle position:relative ajoutée plus haut).
+   Ouvert/fermé via _qrOpenFahras()/_qrCloseFahras() dans custom.js. ──────── */
+#qrFahrasPanel, #qrTajInfoPanel {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    background: #1e1a12;
+}
+#qrFahrasPanel.qrFahrasHidden, #qrTajInfoPanel.qrFahrasHidden { display: none; }
+
+#qrFahrasHeader, #qrTajInfoHeader {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 15px;
+    border-bottom: 1px solid #4a3a1a;
+    position: relative;
+}
+#qrFahrasTitle, #qrTajInfoTitle {
+    color: #d4aa50;
+    font-weight: bold;
+    font-family: 'Amiri', serif;
+}
+#qrFahrasClose, #qrTajInfoClose {
+    position: absolute;
+    right: 15px;
+    color: #e05050;
+    font-size: 1.2em;
+    cursor: pointer;
+}
+
+#qrFahrasTabs {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: row;
+    border-bottom: 1px solid #4a3a1a;
+    background: #241f14;
+}
+.qrFahrasTabBtn {
+    flex: 1;
+    text-align: center;
+    padding: 9px 4px;
+    cursor: pointer;
+    color: #cbb98a;
+    font-size: 0.86em;
+    user-select: none;
+}
+.qrFahrasTabBtn.qrFahrasTabActive {
+    color: #d4aa50;
+    box-shadow: inset 0 -2px 0 #d4aa50;
+    background: #2b2720;
+}
+
+#qrFahrasBody, #qrTajInfoBody {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+}
+.qrTajInfoIntro {
+    color: #9a8a66;
+    font-size: 0.85em;
+    line-height: 1.7;
+    text-align: center;
+    padding: 4px 10px 14px;
+    border-bottom: 1px solid #3a2f1c;
+    margin-bottom: 8px;
+}
+.qrTajInfoRow {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px 6px;
+    border-bottom: 1px solid #2b2418;
+}
+.qrTajInfoRow .qrTajDot {
+    flex-shrink: 0;
+    margin-top: 4px;
+}
+.qrTajInfoLabel {
+    color: #e8dcc0;
+    font-family: 'Amiri', serif;
+    font-weight: bold;
+    font-size: 0.98em;
+    margin-bottom: 2px;
+}
+.qrTajInfoDesc {
+    color: #a99b7c;
+    font-size: 0.82em;
+    line-height: 1.6;
+}
+.qrFahrasEmpty {
+    color: #9a8a66;
+    text-align: center;
+    margin-top: 30px;
+    line-height: 1.8;
+    font-size: 0.9em;
+}
+
+/* Grille des 114 sourates */
+.qrFahrasGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+}
+.qrFahrasItem {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 10px 6px;
+    border: 1px solid #4a3a1a;
+    border-radius: 8px;
+    background: #2b2720;
+    cursor: pointer;
+    text-align: center;
+}
+.qrFahrasItem:active { background: #3a3225; }
+.qrFahrasItemNum {
+    display: inline-block;
+    width: 1.6em;
+    height: 1.6em;
+    line-height: 1.6em;
+    border: 1px solid #c8a96e;
+    border-radius: 50%;
+    color: #d4aa50;
+    font-size: 0.78em;
+}
+.qrFahrasItemName {
+    color: #f0d070;
+    font-family: 'Amiri', serif;
+    font-size: 1em;
+}
+.qrFahrasItemMeta {
+    color: #9a8a66;
+    font-size: 0.72em;
+}
+
+/* Listes جزء / حزب / المرجعيات */
+.qrFahrasList {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.qrFahrasRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid #4a3a1a;
+    border-radius: 8px;
+    background: #2b2720;
+    cursor: pointer;
+}
+.qrFahrasRow:active { background: #3a3225; }
+.qrFahrasRowLabel {
+    flex: 1;
+    color: #f0d070;
+    font-family: 'Amiri', serif;
+    font-size: 0.95em;
+}
+.qrFahrasRowPage {
+    color: #9a8a66;
+    font-size: 0.8em;
+    white-space: nowrap;
+}
+.qrFahrasRowRemove {
+    color: #e05050;
+    font-size: 1.05em;
+    padding: 2px 6px;
+    cursor: pointer;
+}
+
+/* Marque-page (étoile) dans la barre supérieure de la page */
+.qrBookmarkToggle {
+    color: #6a5530;
+    font-size: 1.1em;
+    cursor: pointer;
+    user-select: none;
+    line-height: 1;
+}
+.qrBookmarkToggle.qrBookmarked { color: #d4aa50; }
 
 /* Zone de texte coranique */
 #qpReadTextArea {
@@ -7888,13 +8253,16 @@ input[type='checkbox']:checked::after {
 
 #ucLogoQuickBar {
     display: flex;
+    flex-direction: column;
     align-items: center;
     gap: 3vmin;
     background: #2b2720;
     border: 1px solid #6a5530;
     border-radius: 999px;
     box-shadow: 0 12px 44px rgba(0, 0, 0, 0.88);
-    padding: 2.4vmin 3.4vmin;
+    padding: 3.4vmin 2.4vmin;
+    max-height: 90vh;
+    overflow-y: auto;
 }
 
 .ucLQBIcon {

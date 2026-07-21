@@ -116,7 +116,7 @@ if (typeof _L === 'undefined') {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.44A';
+var CUSTOM_APP_VERSION = '11.51';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -217,6 +217,7 @@ const JS_CUSTOM_DEFAULTS = {
     // ── Lecture du Coran (texte, onglet "القراءة" du modal Coran) ───────────
     ucRiwayaCatalogUrl:     '',        // URL JSON du catalogue des riwayat (riwayatCatalog.json) — à définir une fois hébergé
     ucRiwayaActive:         'hafs',    // riwaya affichée par défaut : 'hafs' | 'qaloun' | 'warsh' (état "installé" = scan natif, cf. RiwayaManager)
+    ucQrTajweedColors:      1,         // 1 = coloration tajwid activée (Qaloun uniquement pour l'instant, cf. spec/qaloun_tajweed_data.js)
     // ── Choix du son de l'azan (modale déclenchée par customSpeakerIcon) ────
     ucAzanCatalogUrl:       'https://taoukitprayer.github.io/azan/azan-catalog.json', // hébergé GitHub Pages (CORS OK, contrairement aux assets de Release) ; repli sur spec/audio/azan/azan-catalog.json (bundlé) si injoignable
     ucAzanFajrSelected:     '',        // id du catalogue azan-catalog.json (groupe 'fajr') ; '' = son par défaut de l'appli
@@ -280,11 +281,11 @@ const JS_CUSTOM_DEFAULTS = {
     ucSilenceShortAlerts:         0,   // 1 = silence tous les sons beep/teet/drop/alert
     ucAlertByVoiceEnabled:        0,   // 1 = jouer spec/audio/alert_voice.ogg au BLACK_SHOW
     ucAlertByVoiceDelay:          12,
-    // ── Onglet Réglages (modale info-mosquée) : alerte avant azan ──────────
+    // ── Onglet "الأذان والإشعارات" (modale Réglages) : alerte avant azan ────
 
     ucAzanAlertEnabled:          0,   // 1 = bandeau visuel affiché avant l'azan de la prochaine prière
-    ucAzanAlertMinutes:          5,   // minutes avant l'azan (jauge 1-30 dans l'onglet الإعدادات)
-    // ── Onglet الإعدادات : silencieux automatique autour de l'azan ─────────
+    ucAzanAlertMinutes:          5,   // minutes avant l'azan (jauge 1-30 dans la modale Réglages)
+    // ── Onglet "الأذان والإشعارات" : silencieux automatique autour de l'azan ─
     ucSilentBeforeAzanEnabled:   0,   // 1 = coupe la sonnerie avant l'azan (AlarmManager natif)
     ucSilentBeforeAzanMinutes:   1,   // minutes avant l'azan où la sonnerie est coupée (jauge 0-60)
     ucSilentAfterAzanMinutes:    60,  // minutes après l'azan où la sonnerie est remise (jauge 1-180)
@@ -1114,11 +1115,35 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
 // present dans le core, utilise une seule fois au chargement de la page,
 // m2body.js ~L8842) recalculer depuis l'heure reelle si un compte a rebours
 // iqama doit effectivement etre actif maintenant.
+// Epoque de sequence iqama : incrementee a chaque resync (retour au premier
+// plan apres pause reelle). Les continuations tardives de startIqamaSequenceFunction()
+// (setTimeout('onIqamaEndFunction()'), setTimeout('activateBlackScreenIfEnabled()'),
+// setTimeout('animateBlackScreenCountdown()'), setTimeout(hideElementFunction, ..., 'iqamaPopup...'))
+// sont TOUTES programmees via setTimeout brut (parfois eval'e en chaine) sans
+// identifiant recuperable -> impossible a annuler avec clearTimeout. Sans ce
+// garde-fou, elles continuent de s'executer en rafale au reveil des timers
+// (resumeTimers()), rejouant toute la fin de sequence (popup, rideau noir,
+// azkar) meme si elle ne correspond plus a la priere reelle courante. Chaque
+// fonction potentiellement replayee compare _ucIqamaSeqEpoch (vivant, ici) a
+// _ucActiveIqamaSeqEpoch (instantane pris au demarrage de LA sequence en cours,
+// via UC_EVT.IQAMA_TIME, cf. plus bas) ; en cas d'ecart, elle se sait perimee
+// et ne fait rien.
+// _ucActiveIqamaSeqEpoch est mis a jour directement dans les monkey-patches de
+// startIqamaSequenceFunction() plus bas (section UC_EVT bridge, EVENTS 2+6 et
+// _installJomoaIqamaSuppress) plutot que via ucOn(UC_EVT.IQAMA_TIME, ...) ici :
+// ucOn()/UC_EVT n'existent pas encore a ce point du fichier (definis plus bas).
+var _ucIqamaSeqEpoch = 0;
+var _ucActiveIqamaSeqEpoch = -1;
+
 (function _installResyncOnResume() {
     var HIDDEN_THRESHOLD_MS = 5000; // ignorer les coups d'oeil rapides (volet de notifications, etc.)
     var _ucHiddenAt = null;
 
-    function _ucResyncPrayerSequence() {
+    function _ucResyncPrayerSequence(reason) {
+        // 0) Perime toute continuation deja programmee par une sequence iqama
+        //    en cours (cf. commentaire _ucIqamaSeqEpoch ci-dessus).
+        _ucIqamaSeqEpoch++;
+
         // 1) Etat de base : masque toutes les surcouches transitoires via leurs
         //    vraies fonctions core (pas un toggle DOM brut) pour que le nettoyage
         //    associe (audio, ecouteurs UC_EVT, etc.) se declenche normalement.
@@ -1131,6 +1156,15 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
             window.hideElementFunction('iqamaCounterContainerVertical');
             window.hideElementFunction('iqamaCounterContainerHorizontal');
         }
+        // Popup texte iqama (verset/hadith) : masque directement via la MEME
+        // classe que hideElementFunction() (m2body.js) plutot que via
+        // window.hideElementFunction() -- cet appel passerait par l'extension
+        // "+5s" (custom.js, plus bas) qui RETARDERAIT ce masquage de 5s de
+        // plus au lieu de l'appliquer immediatement.
+        ['iqamaPopupVertical', 'iqamaPopupHorizontal'].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.className = 'hiddenClass';
+        });
         window.isIqamaCounterActive = false;
         // Doua post-azan (custom.js _installPostAzanDoua) : son propre timer
         // de fermeture (20s) est lui aussi suspendu en arriere-plan — meme
@@ -1150,13 +1184,28 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
         //    valeurs (et l'affiche) ; sinon ne fait rien de plus qu'un
         //    rafraichissement normal (meme appel que window.onfocus, m2body.js
         //    ~L8845).
-        if (typeof window.checkAndRestoreIqamaCounter === 'function') {
-            window.checkAndRestoreIqamaCounter();
-        } else if (typeof window.updateTimeAndPrayersFunction === 'function') {
+        //
+        //    IMPORTANT : rafraichir currentTimeInMinutes de facon SYNCHRONE
+        //    en premier. checkAndRestoreIqamaCounter() (core, m2body.js
+        //    ~L8233) decide de la priere "active" en lisant currentTimeInMinutes
+        //    tout de suite dans un switch(true), mais ne fait que PROGRAMMER
+        //    (setTimeout) le rafraichissement de cette variable -- si elle est
+        //    encore figee sur l'heure d'avant la mise en arriere-plan (JS gele),
+        //    la fonction peut matcher la fenetre d'iqama de la PRIERE PRECEDENTE
+        //    (perimee) et rejouer tout son affichage (compteur, seuils hadith,
+        //    popup verset, ecran noir) avant que la correction n'arrive.
+        //    Constate en pratique : popup+sequence iqama Asr entierement
+        //    rejouee au retour au premier plan alors que Maghreb venait de
+        //    sonner. En rafraichissant nous-memes AVANT, checkAndRestoreIqamaCounter()
+        //    lit directement la bonne priere des le premier appel.
+        if (typeof window.updateTimeAndPrayersFunction === 'function') {
             window.updateTimeAndPrayersFunction(true);
         }
+        if (typeof window.checkAndRestoreIqamaCounter === 'function') {
+            window.checkAndRestoreIqamaCounter();
+        }
 
-        _L('RESYNC', 'FIRE', { action: 'resync_prayer_sequence' });
+        _L('RESYNC', 'FIRE', { action: 'resync_prayer_sequence', reason: reason || 'visibilitychange' });
     }
 
     document.addEventListener('visibilitychange', function() {
@@ -1167,8 +1216,17 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
         if (_ucHiddenAt === null) return; // jamais masque depuis le chargement
         var hiddenMs = Date.now() - _ucHiddenAt;
         _ucHiddenAt = null;
-        if (hiddenMs > HIDDEN_THRESHOLD_MS) _ucResyncPrayerSequence();
+        if (hiddenMs > HIDDEN_THRESHOLD_MS) _ucResyncPrayerSequence('visibilitychange');
     });
+
+    // Expose pour un declenchement fiable depuis le natif (MainActivity.onResume,
+    // via evaluateJavascript) : sur WebView Android, `document.visibilitychange`
+    // ne se synchronise pas de facon fiable avec le cycle de vie de l'Activity
+    // (onPause/onResume), qui est pourtant ce qui suspend/reprend reellement les
+    // timers JS (webView.pauseTimers()/resumeTimers()) -- voir MainActivity.kt.
+    // Le seuil de 5s (HIDDEN_THRESHOLD_MS) est duplique cote natif ; garder les
+    // deux en phase si l'un des deux change.
+    window._ucResyncPrayerSequence = _ucResyncPrayerSequence;
 
     _L('CUSTOM', 'INIT', { item: 'resyncOnResume' });
 })();
@@ -1474,7 +1532,7 @@ function _ucRegisterCleanup(fn) { if (typeof fn === 'function') _ucCleanupFns.pu
 const _lightFiredSet = {};
 const _lightLastFireMs = {};   // horodatage dernier FIRE par item (anti-double-tir)
 
-// Anti-répétition pour la bannière "alerte avant azan" (onglet الإعدادات) —
+// Anti-répétition pour la bannière "alerte avant azan" (modale Réglages) —
 // même schéma de garde double que _lightFiredSet/_lightLastFireMs ci-dessus.
 let _azanAlertFired     = false;
 let _azanAlertLastFireMs = 0;
@@ -1957,7 +2015,7 @@ function _applyLightTriggers(remainingMinutes) {
     });
 }
 
-// ── Alerte avant azan (onglet الإعدادات, modale info-mosquée) ────────────
+// ── Alerte avant azan (onglet "الأذان والإشعارات", modale Réglages) ────────
 //  Appelée à chaque tick depuis applyNextPrayerHighlight(remainingMinutes),
 //  même point d'entrée que _applyLightTriggers ci-dessus. Affiche un bandeau
 //  plein écran (_ucShowAzanAlertBanner) quand il reste <= ucAzanAlertMinutes
@@ -2158,7 +2216,7 @@ function applyNextPrayerHighlight(remainingMinutes) {
     // ── Déclenchements programmation lumineuse ───────────────────────────
     _applyLightTriggers(remainingMinutes);
 
-    // ── Alerte avant azan (onglet الإعدادات) ──────────────────────────────
+    // ── Alerte avant azan (onglet "الأذان والإشعارات", modale Réglages) ────
     _applyAzanAlertNotification(remainingMinutes, nextKey);
 
     if (JS_CUSTOM.ucStartQuranBeforeAzan == 1 && nextKey && _quranAutoStartConfig[nextKey]) {
@@ -2292,7 +2350,7 @@ updateNextPrayerDisplay = function(remainingMinutes) {
         isMenuOpen = true;   // toujours "fermé", jamais toggle
         hideElementByIdFunction('mainMenuContainer');
         // Restaure les boutons localisateur + qibla (masqués quand menu était ouvert)
-        var _mlBm = document.getElementById('mapLocatorButtonVertical');
+        var _mlBm = document.getElementById('ucSettingsButtonVertical');
         if (_mlBm) _mlBm.style.display = '';
         var _qbBm = document.getElementById('qiblaButtonVertical');
         if (_qbBm) _qbBm.style.display = '';
@@ -2300,7 +2358,7 @@ updateNextPrayerDisplay = function(remainingMinutes) {
     console.log('[MENU] patch closeMenuFunction installé');
 })();
 
-// ── Menu hamburger → masquer/restaurer mapLocatorButtonVertical + qiblaButtonVertical ──
+// ── Menu hamburger → masquer/restaurer ucSettingsButtonVertical + qiblaButtonVertical ──
 // toggleMenuFunction() (m2body.js) ne peut pas être patché ici de façon fiable
 // (exécution avant DOMContentLoaded) ; on intercepte le clic sur les boutons.
 // Après le clic, isMenuOpen === false signifie que le menu est AFFICHÉ (naming
@@ -2308,7 +2366,7 @@ updateNextPrayerDisplay = function(remainingMinutes) {
 (function _bindMenuLocatorBtn() {
     function _syncOnMenuToggle() {
         var menuVisible = (typeof window.isMenuOpen !== 'undefined' && !window.isMenuOpen);
-        var mlBtn = document.getElementById('mapLocatorButtonVertical');
+        var mlBtn = document.getElementById('ucSettingsButtonVertical');
         if (mlBtn) mlBtn.style.display = menuVisible ? 'none' : '';
         var qbBtn = document.getElementById('qiblaButtonVertical');
         if (qbBtn) qbBtn.style.display = menuVisible ? 'none' : '';
@@ -4563,18 +4621,40 @@ function _qpRestorePosition() {
             <div id="qpReadTabBody" style="display:none;">
                 <div id="qpReadRiwayaRow"></div>
                 <div id="qpReadNavRow">
-                    <select id="qpReadNavMode">
-                        <option value="surah">سورة</option>
-                        <option value="juz">جزء</option>
-                        <option value="hizb">حزب</option>
-                        <option value="page">صفحة</option>
-                    </select>
-                    <select id="qpReadNavList"></select>
+                    <div id="qrFahrasBtn" title="الفهرس">&#128214; الفهرس</div>
+                    <div id="qrTajweedToggleBtn" title="تلوين أحكام التجويد (تجريبي، قالون فقط)">&#127912; تجويد</div>
                     <input id="qpReadSearchInput" type="text" placeholder="بحث في القرآن..." />
                     <div id="qpReadSearchBtn" title="بحث">&#128269;</div>
                 </div>
                 <div id="qpReadTextArea">
                     <div id="qpReadStateMsg">حدد رواية للبدء</div>
+                </div>
+                <!-- Fahras plein écran (سورة / جزء / حزب / المرجعيات) — remplace les deux
+                     <select> historiques ; s'ouvre au-dessus de qpReadTextArea via
+                     _qrOpenFahras()/_qrCloseFahras() (cf. plus bas dans ce fichier). -->
+                <div id="qrFahrasPanel" class="qrFahrasHidden">
+                    <div id="qrFahrasHeader">
+                        <div id="qrFahrasClose" title="إغلاق">&#10006;</div>
+                        <div id="qrFahrasTitle">الفهرس</div>
+                    </div>
+                    <div id="qrFahrasTabs">
+                        <div class="qrFahrasTabBtn qrFahrasTabActive" data-ftab="surah">سورة</div>
+                        <div class="qrFahrasTabBtn" data-ftab="juz">جزء</div>
+                        <div class="qrFahrasTabBtn" data-ftab="hizb">حزب</div>
+                        <div class="qrFahrasTabBtn" data-ftab="bookmarks">المرجعيات</div>
+                    </div>
+                    <div id="qrFahrasBody"></div>
+                </div>
+                <!-- Modale d'aide "légende تجويد" — liste complète des règles avec
+                     pastille de couleur + description, ouverte via la bande de
+                     légende contextuelle en bas de page (cf. _qrOpenTajInfo() /
+                     _qrBuildTajInfoPanel() plus bas dans ce fichier). -->
+                <div id="qrTajInfoPanel" class="qrFahrasHidden">
+                    <div id="qrTajInfoHeader">
+                        <div id="qrTajInfoClose" title="إغلاق">&#10006;</div>
+                        <div id="qrTajInfoTitle">ألوان أحكام التجويد</div>
+                    </div>
+                    <div id="qrTajInfoBody"></div>
                 </div>
             </div>
 
@@ -4737,13 +4817,30 @@ function _qpRestorePosition() {
             if (e.key === 'Enter') { e.preventDefault(); _qrSearch(_qpReadSearchInput.value.trim()); }
         });
     }
-    var _qpReadNavMode = document.getElementById('qpReadNavMode');
-    if (_qpReadNavMode) _qpReadNavMode.addEventListener('change', function() {
-        _qrRenderNavList();
-        if (_qrPageBoundaries.length) _qrGoToPage(_qrCurrentPage);
-    });
-    var _qpReadNavList = document.getElementById('qpReadNavList');
-    if (_qpReadNavList) _qpReadNavList.addEventListener('change', function() { _qrGoToNavSelection(); });
+    // ── Fahras plein écran (سورة / جزء / حزب / المرجعيات) ─────────────────────
+    var _qrFahrasBtnEl = document.getElementById('qrFahrasBtn');
+    if (_qrFahrasBtnEl) _qrFahrasBtnEl.addEventListener('click', function() { _qrOpenFahras('surah'); });
+    var _qrFahrasCloseEl = document.getElementById('qrFahrasClose');
+    if (_qrFahrasCloseEl) _qrFahrasCloseEl.addEventListener('click', function() { _qrCloseFahras(); });
+    var _qrTajInfoCloseEl = document.getElementById('qrTajInfoClose');
+    if (_qrTajInfoCloseEl) _qrTajInfoCloseEl.addEventListener('click', function() { _qrCloseTajInfo(); });
+    var _qrFahrasTabBtns = document.querySelectorAll('.qrFahrasTabBtn');
+    for (var _fti = 0; _fti < _qrFahrasTabBtns.length; _fti++) {
+        (function(btn) {
+            btn.addEventListener('click', function() { _qrSwitchFahrasTab(btn.getAttribute('data-ftab')); });
+        })(_qrFahrasTabBtns[_fti]);
+    }
+    // ── Coloration tajwid (expérimental, Qaloun uniquement) ───────────────────
+    var _qrTajweedToggleBtnEl = document.getElementById('qrTajweedToggleBtn');
+    if (_qrTajweedToggleBtnEl) {
+        _qrTajweedToggleBtnEl.classList.toggle('qrTajweedToggleOn', !!JS_CUSTOM.ucQrTajweedColors);
+        _qrTajweedToggleBtnEl.addEventListener('click', function() {
+            JS_CUSTOM.ucQrTajweedColors = JS_CUSTOM.ucQrTajweedColors ? 0 : 1;
+            saveCustomSettingsFunction();
+            _qrTajweedToggleBtnEl.classList.toggle('qrTajweedToggleOn', !!JS_CUSTOM.ucQrTajweedColors);
+            if (_qrActiveData) _qrRenderPage(_qrCurrentPage);
+        });
+    }
 
     // ── Confort de lecture : boutons A−/A+ (onglet القراءة uniquement) ────────
     // Mêmes conventions que _QP_LARGE_KEY (clé localStorage tawkit_*, état
@@ -5168,7 +5265,7 @@ function _qpRestorePosition() {
         var qpOverlay = document.getElementById('quranPlayerOverlay');
         if (qpOverlay && !qpOverlay.classList.contains('qpHidden')) {
             qpOverlay.classList.add('qpHidden');
-            var _mlB = document.getElementById('mapLocatorButtonVertical');
+            var _mlB = document.getElementById('ucSettingsButtonVertical');
             if (_mlB) _mlB.style.display = '';
             var _qbB = document.getElementById('qiblaButtonVertical');
             if (_qbB) _qbB.style.display = '';
@@ -5182,7 +5279,7 @@ function _qpRestorePosition() {
         var infoModal = document.getElementById('ucMosqueInfoModal');
         if (infoModal && infoModal.classList.contains('ucMosqueModalOpen')) {
             infoModal.classList.remove('ucMosqueModalOpen');
-            var _mlB2 = document.getElementById('mapLocatorButtonVertical');
+            var _mlB2 = document.getElementById('ucSettingsButtonVertical');
             if (_mlB2) _mlB2.style.display = '';
             var _qbB2 = document.getElementById('qiblaButtonVertical');
             if (_qbB2) _qbB2.style.display = '';
@@ -5207,11 +5304,11 @@ function openQuranPlayerModal() {
     // potentiellement différer/rater la mise à jour visuelle. Inoffensif si le
     // WebView n'a pas ce bug (juste une lecture de layout supplémentaire).
     void _qpOv.offsetHeight;
-    // mapLocatorButtonVertical / qiblaButtonVertical ont un z-index supérieur à
+    // ucSettingsButtonVertical / qiblaButtonVertical ont un z-index supérieur à
     // celui de la modale du Coran (9999333 vs 10000) : sans ceci ils resteraient
     // visibles au-dessus. menuToggleButton (vertical et horizontal) partage le
     // même plan -> même traitement.
-    var mlBtn = document.getElementById('mapLocatorButtonVertical');
+    var mlBtn = document.getElementById('ucSettingsButtonVertical');
     if (mlBtn) mlBtn.style.display = 'none';
     var qbBtn = document.getElementById('qiblaButtonVertical');
     if (qbBtn) qbBtn.style.display = 'none';
@@ -5243,7 +5340,7 @@ function closeQuranPlayerModal() {
     // Ferme la boîte SANS toucher à l'audio — la lecture continue en arrière-plan
     if (typeof window._popBack === 'function') window._popBack();
     document.getElementById('quranPlayerOverlay').classList.add('qpHidden');
-    var mlBtn = document.getElementById('mapLocatorButtonVertical');
+    var mlBtn = document.getElementById('ucSettingsButtonVertical');
     if (mlBtn) mlBtn.style.display = '';
     var qbBtn = document.getElementById('qiblaButtonVertical');
     if (qbBtn) qbBtn.style.display = '';
@@ -5280,10 +5377,133 @@ var _QR_LABELS = { hafs: 'حفص عن عاصم', qaloun: 'قالون عن ناف
 var _qrCatalog = [];        // chargé depuis JS_CUSTOM.ucRiwayaCatalogUrl (riwayatCatalog.json)
 var _qrActiveData = null;   // contenu (JSON) de la riwaya actuellement chargée depuis IndexedDB
 var _qrCatalogLoaded = false;
-var _qrCurrentSurahIdx = 0; // index (0-based) de la sourate affichée — mis à jour par _qrRenderSurah
 var _qrPageBoundaries  = []; // [{s:surahIdx0, a:ayahIdx0}] — limites de pages (mode صفحة)
 var _qrCurrentPage     = 0;  // page en cours (0-based) en mode صفحة
 var _QR_PAGE_IDX_KEY   = 'tawkit_qp_read_pageidx';
+
+// ── Coloration tajwid (expérimental, Qaloun uniquement) ────────────────────
+// Classificateur par règles adapté de cpfair/quran-tajweed (CC-BY-4.0), appliqué
+// à notre Qaloun.json — cf. investigation de session (normalisation du tanwin
+// Qaloun/Warsh + garde-fous sur idghaam_mutaqaribayn et idghaam_mutajanisayn).
+// Statut : premier jet, à valider/corriger à la lecture réelle dans l'appli,
+// PAS encore relu par une personne maîtrisant le tajwid — cf. bouton توجويد
+// pour activer/désactiver la coloration à la volée pendant la validation.
+// Chargé en <script> dynamique (comme spec/mosques-registry.js) car l'API
+// Fetch rejette file:// dans la WebView — cf. note _qrLoadActiveRiwayaAndRender.
+(function() {
+    var s = document.createElement('script');
+    s.src = 'spec/qaloun_tajweed_data.js';
+    document.head.appendChild(s);
+})();
+
+// Construit le HTML d'un verset Qaloun avec les lettres colorées par règle de
+// tajwid. sIdx/aIdx : mêmes indices 0-based que _qrActiveData[sIdx].ayats[aIdx].
+// rawText : texte brut du verset (= surah.ayats[aIdx]). Les indices start/end
+// du dataset sont calculés sur ce même texte brut (mapping 1:1, cf. script de
+// génération) donc directement utilisables ici sans transformation.
+// Règles rencontrées sur la page en cours de rendu (repeuplé à chaque appel
+// _qrRenderPage, cf. plus bas) — sert à construire la bande de légende
+// contextuelle en pied de page (uniquement les couleurs réellement présentes
+// sur CETTE page, pas les 17 d'un coup).
+var _qrLastPageTajRules = {};
+
+function _qrTajweedHtml(sIdx, aIdx, rawText) {
+    if (!JS_CUSTOM.ucQrTajweedColors) return rawText;
+    if (JS_CUSTOM.ucRiwayaActive !== 'qaloun') return rawText; // dataset limité à Qaloun pour l'instant
+    var TJ = window.QR_TAJWEED_QALOUN;
+    if (!TJ || !TJ.data || !TJ.data[sIdx]) return rawText;
+    var annots = TJ.data[sIdx][aIdx];
+    if (!annots || !annots.length) return rawText;
+    var sorted = annots.slice().sort(function(a, b) { return a[1] - b[1]; });
+    var html = '', pos = 0;
+    for (var i = 0; i < sorted.length; i++) {
+        var ruleIdx = sorted[i][0], start = sorted[i][1], end = sorted[i][2];
+        if (start < pos || end > rawText.length) continue; // garde-fou défensif (chevauchement/désync inattendu)
+        if (start > pos) html += rawText.slice(pos, start);
+        var ruleName = TJ.rules[ruleIdx];
+        html += '<span class="qrTaj qrTaj-' + ruleName + '">' + rawText.slice(start, end) + '</span>';
+        _qrLastPageTajRules[ruleName] = true;
+        pos = end;
+    }
+    html += rawText.slice(pos);
+    return html;
+}
+
+// Infos affichées dans la bande de légende + la modale détaillée. Ordre fixe
+// (pas l'ordre d'apparition) pour une légende stable d'une page à l'autre.
+// Définitions générales du tajwid (manuels usuels) — indépendantes de notre
+// classificateur, qui lui reste expérimental (cf. commentaire plus haut).
+// hamzat_wasl n'apparaît jamais dans les données actuelles (Qaloun.json
+// n'utilise pas le caractère ٱ dont dépend cette règle) — exclue de la liste.
+var _QR_TAJ_ORDER = [
+    'ghunnah', 'idghaam_ghunnah', 'idghaam_no_ghunnah', 'idghaam_shafawi',
+    'idghaam_mutajanisayn', 'idghaam_mutaqaribayn', 'ikhfa', 'ikhfa_shafawi',
+    'iqlab', 'qalqalah', 'madd_2', 'madd_246', 'madd_muttasil',
+    'madd_munfasil', 'madd_6', 'lam_shamsiyyah', 'silent'
+];
+var _QR_TAJ_INFO = {
+    ghunnah:              { label: 'غنة',                 desc: 'غنة النون والميم المشددتين، تمتد بمقدار حركتين في الخيشوم.' },
+    idghaam_ghunnah:      { label: 'إدغام بغنة',           desc: 'إدغام النون الساكنة أو التنوين في أحد حروف (ي ن م و) مع بقاء الغنة.' },
+    idghaam_no_ghunnah:   { label: 'إدغام بلا غنة',        desc: 'إدغام النون الساكنة أو التنوين في اللام أو الراء بدون غنة.' },
+    idghaam_shafawi:      { label: 'إدغام شفوي',           desc: 'إدغام الميم الساكنة في ميم بعدها مع غنة.' },
+    idghaam_mutajanisayn: { label: 'إدغام متجانسين',       desc: 'إدغام حرفين من نفس المخرج (مثل الدال في التاء).' },
+    idghaam_mutaqaribayn: { label: 'إدغام متقاربين',       desc: 'إدغام حرفين متقاربين في المخرج والصفة (مثل اللام في الراء، أو القاف في الكاف).' },
+    ikhfa:                { label: 'إخفاء',                 desc: 'إخفاء النون الساكنة أو التنوين مع غنة عند أحد الحروف الخمسة عشر المتبقية.' },
+    ikhfa_shafawi:        { label: 'إخفاء شفوي',           desc: 'إخفاء الميم الساكنة عند الباء مع غنة.' },
+    iqlab:                { label: 'إقلاب',                 desc: 'قلب النون الساكنة أو التنوين ميمًا مخفاة عند الباء.' },
+    qalqalah:             { label: 'قلقلة',                 desc: 'اضطراب الصوت عند النطق بأحد حروف (ق ط ب ج د) الساكنة.' },
+    madd_2:               { label: 'مد طبيعي',              desc: 'مد بمقدار حركتين، بلا سبب زائد.' },
+    madd_246:             { label: 'مد عارض للسكون',        desc: 'مد يقع قبل الوقف بمقدار حركتين أو أربع أو ست.' },
+    madd_muttasil:        { label: 'مد واجب متصل',          desc: 'حرف المد والهمزة في كلمة واحدة، بمقدار أربع أو خمس حركات.' },
+    madd_munfasil:        { label: 'مد جائز منفصل',         desc: 'حرف المد آخر كلمة والهمزة أول الكلمة التالية، بمقدار أربع أو خمس حركات.' },
+    madd_6:                { label: 'مد لازم',               desc: 'مد بمقدار ست حركات بسبب سكون أصلي بعد حرف المد.' },
+    lam_shamsiyyah:       { label: 'لام شمسية',             desc: 'لام "ال" التعريف تُدغم في الحرف الشمسي الذي بعدها فلا تُنطق.' },
+    silent:               { label: 'حرف ساكن لا يُنطق',      desc: 'حرف مرسوم في الكتابة لكنه لا يُنطق في الوصل أو الوقف.' }
+};
+
+function _qrBuildTajLegendRow() {
+    var keys = [];
+    for (var i = 0; i < _QR_TAJ_ORDER.length; i++) {
+        if (_qrLastPageTajRules[_QR_TAJ_ORDER[i]]) keys.push(_QR_TAJ_ORDER[i]);
+    }
+    if (!keys.length) return '';
+    var html = '<div class="qrTajLegendRow" id="qrTajLegendRow" title="اضغط لمعرفة المزيد عن ألوان أحكام التجويد">';
+    for (var j = 0; j < keys.length; j++) {
+        var info = _QR_TAJ_INFO[keys[j]];
+        if (!info) continue;
+        html += '<span class="qrTajLegendChip"><span class="qrTajDot qrTaj-' + keys[j] + '"></span>' + info.label + '</span>';
+    }
+    html += '</div>';
+    return html;
+}
+
+function _qrBuildTajInfoPanel() {
+    var body = document.getElementById('qrTajInfoBody');
+    if (!body) return;
+    var html = '<div class="qrTajInfoIntro">تلوين تجريبي لأحكام التجويد على رواية قالون، لتسهيل المراجعة أثناء القراءة.</div>';
+    for (var i = 0; i < _QR_TAJ_ORDER.length; i++) {
+        var key = _QR_TAJ_ORDER[i], info = _QR_TAJ_INFO[key];
+        if (!info) continue;
+        html += '<div class="qrTajInfoRow">'
+              + '<span class="qrTajDot qrTaj-' + key + '"></span>'
+              + '<div class="qrTajInfoText"><div class="qrTajInfoLabel">' + info.label + '</div>'
+              + '<div class="qrTajInfoDesc">' + info.desc + '</div></div>'
+              + '</div>';
+    }
+    body.innerHTML = html;
+}
+
+function _qrOpenTajInfo() {
+    var panel = document.getElementById('qrTajInfoPanel');
+    if (!panel) return;
+    if (!panel.dataset.built) { _qrBuildTajInfoPanel(); panel.dataset.built = '1'; }
+    panel.classList.remove('qrFahrasHidden');
+}
+
+function _qrCloseTajInfo() {
+    var panel = document.getElementById('qrTajInfoPanel');
+    if (panel) panel.classList.add('qrFahrasHidden');
+}
 
 function _qpSwitchTab(tab) {
     // 'settings' n'est pas persisté comme dernier onglet visité au même titre que
@@ -5547,10 +5767,14 @@ function _qrLoadActiveRiwayaAndRender() {
         return;
     }
     _qrPageBoundaries = _QR_PAGE_STARTS.map(function(p){ return { s: p[0], a: p[1] }; });
-    _qrRenderNavList();
     if (msgEl) { msgEl.style.display = 'none'; }
-    var _savedPage = parseInt(localStorage.getItem(_QR_PAGE_IDX_KEY), 10);
+    var _savedRaw  = localStorage.getItem(_QR_PAGE_IDX_KEY);
+    var _savedPage = parseInt(_savedRaw, 10);
     _qrGoToPage(isNaN(_savedPage) ? 0 : _savedPage);
+    // Première visite jamais enregistrée : ouvre le fahras plein écran au lieu
+    // d'atterrir silencieusement page 1 — même effet "premium" que les autres
+    // applis Mushaf qui s'ouvrent directement sur leur sommaire.
+    if (_savedRaw === null) _qrOpenFahras('surah');
 }
 
 // Début de chaque جزء : [numéroSourate(1-114), numéroVerset(1-based)] — numérotation Hafs.
@@ -5606,6 +5830,7 @@ function _qrRenderPage(pageIdx) {
     var area = document.getElementById('qpReadTextArea');
     if (!area || !_qrActiveData || !_qrPageBoundaries.length) return;
 
+    _qrLastPageTajRules = {}; // repeuplée par _qrTajweedHtml() pendant la boucle des versets ci-dessous
     _qrCurrentPage = pageIdx;
     var total    = _qrPageBoundaries.length;
     var pageNum1 = pageIdx + 1;
@@ -5645,8 +5870,11 @@ function _qrRenderPage(pageIdx) {
     var html = '<div class="qrPageView">';
 
     // Barre supérieure
+    var _isBookmarked = _qrIsBookmarked(pageIdx);
     html += '<div class="qrTopBar">'
           + '<span class="qrTopJuz">جزء ' + _qrToArabicDigits(juzNum) + '</span>'
+          + '<span class="qrBookmarkToggle' + (_isBookmarked ? ' qrBookmarked' : '') + '" id="qrBookmarkToggle" title="حفظ هذه الصفحة">'
+          + (_isBookmarked ? '&#9733;' : '&#9734;') + '</span>'
           + '<span class="qrTopSurahLabel">' + surahNames.join(' · ') + '</span>'
           + hizbLabel
           + '</div>';
@@ -5672,7 +5900,10 @@ function _qrRenderPage(pageIdx) {
                   + '<div class="qrSurahBannerDeco"></div>'
                   + '<div class="qrSurahBannerText">'
                   + '<span class="qrSurahCircleNum">' + _qrToArabicDigits(sIdx + 1) + '</span>'
-                  + ' سُورَةُ ' + surah.name
+                  // surah.name (donnée téléchargée) inclut déjà le préfixe "سُورَةُ" —
+                  // ne pas le reconcaténer ici sous peine de doublon visuel
+                  // ("سُورَةُ سُورَةُ الفَاتِحَةِ").
+                  + ' ' + surah.name
                   + '</div>'
                   + (_type ? '<div class="qrSurahBannerMeta">' + _type + (_ayahs ? ' · ' + _ayahs : '') + '</div>' : '')
                   + '<div class="qrSurahBannerDeco"></div>'
@@ -5698,7 +5929,7 @@ function _qrRenderPage(pageIdx) {
                       + '</div>';
             }
             html += '<span class="qrAyah">'
-                  + surah.ayats[aIdx]
+                  + _qrTajweedHtml(sIdx, aIdx, surah.ayats[aIdx])
                   + (_isSajdah ? ' <span class="qrSajdahMark">۩</span>' : '')
                   + ' <span class="qrAyahNum">&#64831;' + _qrToArabicDigits(aIdx + 1) + '&#64830;</span>'
                   + '</span> ';
@@ -5708,6 +5939,12 @@ function _qrRenderPage(pageIdx) {
     }
 
     html += '</div>'; // .qrPageContent
+
+    // Bande de légende تجويد : uniquement les couleurs réellement présentes
+    // sur cette page (_qrLastPageTajRules, peuplée pendant la boucle ci-dessus),
+    // vide (donc invisible) si coloration désactivée / riwaya ≠ Qaloun / aucune
+    // règle sur la page. Appui -> modale détaillée (_qrOpenTajInfo()).
+    html += _qrBuildTajLegendRow();
 
     // Pied de page — Mushaf RTL :
     //   ❯ à GAUCHE = page précédente (aller vers le début du Mushaf, à droite)
@@ -5725,31 +5962,14 @@ function _qrRenderPage(pageIdx) {
     area.innerHTML = html;
     area.scrollTop = 0;
 
-    // Sync sélecteur de navigation (fonctionne pour tous les modes)
-    var navList = document.getElementById('qpReadNavList');
-    var _navMode = (document.getElementById('qpReadNavMode') || {}).value || 'surah';
-    if (navList) {
-        if (_navMode === 'page') {
-            navList.value = pageIdx;
-        } else if (_navMode === 'surah' && _QR_FAHRAS) {
-            navList.value = _QR_FAHRAS[from.s] ? (_QR_FAHRAS[from.s].page - 1) : pageIdx;
-        } else if (_navMode === 'juz' && _QR_PAGE_JUZ) {
-            var _curJuz = _QR_PAGE_JUZ[pageIdx] || 1;
-            for (var _pg = 0; _pg < _QR_PAGE_JUZ.length; _pg++) {
-                if (_QR_PAGE_JUZ[_pg] === _curJuz) { navList.value = _pg; break; }
-            }
-        } else if (_navMode === 'hizb') {
-            // Trouve l'option dont la valeur (page de début du حزب) est la plus
-            // grande sans dépasser pageIdx — les options sont en ordre croissant.
-            var _opts = navList.options;
-            var _bestIdx = 0;
-            for (var _oi = 0; _oi < _opts.length; _oi++) {
-                if (parseInt(_opts[_oi].value, 10) <= pageIdx) _bestIdx = _oi;
-                else break;
-            }
-            navList.selectedIndex = _bestIdx;
-        }
-    }
+    // Bouton marque-page (⭐/☆) — cf. _qrToggleBookmark/_qrIsBookmarked plus bas.
+    var bmEl = document.getElementById('qrBookmarkToggle');
+    if (bmEl) bmEl.addEventListener('click', function() {
+        _qrToggleBookmark(pageIdx);
+        var _nowSet = _qrIsBookmarked(pageIdx);
+        bmEl.classList.toggle('qrBookmarked', _nowSet);
+        bmEl.innerHTML = _nowSet ? '&#9733;' : '&#9734;';
+    });
 
     // Boutons nav
     var prevEl = document.getElementById('qrPagePrev');
@@ -5757,77 +5977,180 @@ function _qrRenderPage(pageIdx) {
     if (prevEl && !_isFirst) prevEl.addEventListener('click', function(){ _qrGoToPage(_qrCurrentPage - 1); });
     if (nextEl && !_isLast)  nextEl.addEventListener('click', function(){ _qrGoToPage(_qrCurrentPage + 1); });
 
+    // Bande de légende تجويد (régénérée à chaque page -> réécoute à chaque fois).
+    var tajLegendEl = document.getElementById('qrTajLegendRow');
+    if (tajLegendEl) tajLegendEl.addEventListener('click', function() { _qrOpenTajInfo(); });
+
     _L('QR', 'PAGE_RENDER', { page: pageNum1, total: total });
 }
 
-function _qrRenderNavList() {
-    var list = document.getElementById('qpReadNavList');
-    var mode = (document.getElementById('qpReadNavMode') || {}).value || 'surah';
-    if (!list || !_qrActiveData) return;
-    list.innerHTML = '';
-    if (mode === 'page') {
-        // valeur = index de page (0-based)
-        var total = _qrPageBoundaries.length;
-        for (var p = 0; p < total; p++) {
-            var opt = document.createElement('option');
-            opt.value = p;
-            opt.textContent = 'الصفحة ' + _qrToArabicDigits(p + 1);
-            list.appendChild(opt);
-        }
-    } else if (mode === 'juz') {
-        // valeur = index de la première page de chaque جزء (0-based)
-        var juzFirstPage = [];
-        if (_QR_PAGE_JUZ) {
-            for (var pg = 0; pg < _QR_PAGE_JUZ.length; pg++) {
-                var jz = _QR_PAGE_JUZ[pg];
-                if (juzFirstPage[jz] === undefined) juzFirstPage[jz] = pg;
-            }
-        }
-        for (var j = 1; j <= 30; j++) {
-            var opt = document.createElement('option');
-            opt.value = (juzFirstPage[j] !== undefined) ? juzFirstPage[j] : 0;
-            opt.textContent = 'الجزء ' + _qrToArabicDigits(j);
-            list.appendChild(opt);
-        }
-    } else if (mode === 'hizb') {
-        // valeur = index de la première page de chaque حزب (0-based)
-        // Le حزب N+1 commence à la page portant la marque h=N.0 (type 'hizb')
-        var hizbFirstPage = { 1: 0 }; // حزب 1 commence à la page 0
-        if (_QR_HIZB_MARKS) {
-            Object.keys(_QR_HIZB_MARKS).forEach(function(pageKey) {
-                _QR_HIZB_MARKS[pageKey].forEach(function(m) {
-                    if (m.t === 'hizb') {
-                        var nextH = Math.round(m.h) + 1;
-                        if (nextH <= 60) hizbFirstPage[nextH] = parseInt(pageKey, 10) - 1;
-                    }
-                });
-            });
-        }
-        for (var h = 1; h <= 60; h++) {
-            var opt = document.createElement('option');
-            opt.value = (hizbFirstPage[h] !== undefined) ? hizbFirstPage[h] : 0;
-            opt.textContent = 'الحزب ' + _qrToArabicDigits(h);
-            list.appendChild(opt);
-        }
-    } else {
-        // mode sourate : valeur = index de la page de début de chaque sourate (0-based)
-        _qrActiveData.forEach(function(surah, idx) {
-            var opt = document.createElement('option');
-            var pageIdx = (_QR_FAHRAS && _QR_FAHRAS[idx]) ? (_QR_FAHRAS[idx].page - 1) : 0;
-            opt.value = pageIdx;
-            opt.textContent = _qrToArabicDigits(idx + 1) + ' - ' + surah.name;
-            list.appendChild(opt);
-        });
+// ── Marque-pages (⭐) ────────────────────────────────────────────────────
+// Un marque-page est un simple index de page (0-based, même référentiel que
+// _qrPageBoundaries) : comme la navigation جزء/حزب existante retombe déjà sur
+// "la page où ça commence", marquer cette page-là couvre aussi le besoin
+// "marquer un جزء/حزب pour y revenir" sans dupliquer de modèle de données.
+var _QR_BOOKMARKS_KEY = 'tawkit_qp_read_bookmarks';
+var _qrBookmarks = [];
+(function _qrLoadBookmarks() {
+    try { _qrBookmarks = JSON.parse(localStorage.getItem(_QR_BOOKMARKS_KEY) || '[]'); }
+    catch (e) { _qrBookmarks = []; }
+    if (!Array.isArray(_qrBookmarks)) _qrBookmarks = [];
+})();
+function _qrSaveBookmarks() {
+    try { localStorage.setItem(_QR_BOOKMARKS_KEY, JSON.stringify(_qrBookmarks)); } catch (e) {}
+}
+function _qrIsBookmarked(pageIdx) {
+    return _qrBookmarks.indexOf(pageIdx) !== -1;
+}
+function _qrToggleBookmark(pageIdx) {
+    var i = _qrBookmarks.indexOf(pageIdx);
+    if (i === -1) { _qrBookmarks.push(pageIdx); _qrBookmarks.sort(function(a, b) { return a - b; }); }
+    else { _qrBookmarks.splice(i, 1); }
+    _qrSaveBookmarks();
+    _L('QR', 'BOOKMARK_TOGGLE', { page: pageIdx + 1, active: i === -1 });
+}
+function _qrRemoveBookmark(pageIdx) {
+    var i = _qrBookmarks.indexOf(pageIdx);
+    if (i !== -1) { _qrBookmarks.splice(i, 1); _qrSaveBookmarks(); }
+}
+// Nom de la sourate en cours à la page donnée (dernière sourate dont la page
+// de début est <= pageNum1) — utilisé pour étiqueter un marque-page.
+function _qrSurahNameForPage(pageIdx) {
+    var pageNum1 = pageIdx + 1;
+    var name = '';
+    for (var i = 0; i < _QR_FAHRAS.length; i++) {
+        if (_QR_FAHRAS[i].page <= pageNum1) name = _QR_FAHRAS[i].name; else break;
     }
+    return name;
 }
 
-function _qrGoToNavSelection() {
-    var list = document.getElementById('qpReadNavList');
-    if (!list || !_qrActiveData) return;
-    var val = parseInt(list.value, 10);
-    if (isNaN(val)) return;
-    // Tous les modes utilisent la vue paginée ; la valeur est toujours un index de page (0-based)
-    _qrGoToPage(val);
+// Page de début (0-based) de chaque جزء 1..30.
+function _qrJuzFirstPages() {
+    var arr = [];
+    if (_QR_PAGE_JUZ) {
+        for (var pg = 0; pg < _QR_PAGE_JUZ.length; pg++) {
+            var jz = _QR_PAGE_JUZ[pg];
+            if (arr[jz] === undefined) arr[jz] = pg;
+        }
+    }
+    return arr;
+}
+// Page de début (0-based) de chaque حزب 1..60 — le حزب N+1 commence à la page
+// portant la marque h=N.0 (type 'hizb').
+function _qrHizbFirstPages() {
+    var map = { 1: 0 };
+    if (_QR_HIZB_MARKS) {
+        Object.keys(_QR_HIZB_MARKS).forEach(function(pageKey) {
+            _QR_HIZB_MARKS[pageKey].forEach(function(m) {
+                if (m.t === 'hizb') {
+                    var nextH = Math.round(m.h) + 1;
+                    if (nextH <= 60) map[nextH] = parseInt(pageKey, 10) - 1;
+                }
+            });
+        });
+    }
+    return map;
+}
+
+// ── Fahras plein écran (سورة / جزء / حزب / المرجعيات) ──────────────────────
+function _qrOpenFahras(tab) {
+    var panel = document.getElementById('qrFahrasPanel');
+    if (!panel) return;
+    panel.classList.remove('qrFahrasHidden');
+    _qrSwitchFahrasTab(tab || 'surah');
+}
+window._qrOpenFahras = _qrOpenFahras;
+
+function _qrCloseFahras() {
+    var panel = document.getElementById('qrFahrasPanel');
+    if (panel) panel.classList.add('qrFahrasHidden');
+}
+window._qrCloseFahras = _qrCloseFahras;
+
+function _qrSwitchFahrasTab(tab) {
+    var btns = document.querySelectorAll('.qrFahrasTabBtn');
+    for (var i = 0; i < btns.length; i++) {
+        btns[i].classList.toggle('qrFahrasTabActive', btns[i].getAttribute('data-ftab') === tab);
+    }
+    var body = document.getElementById('qrFahrasBody');
+    if (!body) return;
+    if (tab === 'juz')            body.innerHTML = _qrBuildFahrasJuzList();
+    else if (tab === 'hizb')      body.innerHTML = _qrBuildFahrasHizbList();
+    else if (tab === 'bookmarks') body.innerHTML = _qrBuildFahrasBookmarksList();
+    else                          body.innerHTML = _qrBuildFahrasSurahList();
+    body.onclick = function(e) {
+        var rm = e.target.closest('[data-remove-bookmark]');
+        if (rm) {
+            e.stopPropagation();
+            _qrRemoveBookmark(parseInt(rm.getAttribute('data-remove-bookmark'), 10));
+            body.innerHTML = _qrBuildFahrasBookmarksList();
+            return;
+        }
+        var item = e.target.closest('[data-goto-page]');
+        if (item) {
+            _qrGoToPage(parseInt(item.getAttribute('data-goto-page'), 10));
+            _qrCloseFahras();
+        }
+    };
+}
+window._qrSwitchFahrasTab = _qrSwitchFahrasTab;
+
+function _qrBuildFahrasSurahList() {
+    if (!_qrActiveData) return '<div class="qrFahrasEmpty">اختر رواية أعلاه أولاً</div>';
+    var html = '<div class="qrFahrasGrid">';
+    _QR_FAHRAS.forEach(function(fi) {
+        var pageIdx = fi.page - 1;
+        html += '<div class="qrFahrasItem" data-goto-page="' + pageIdx + '">'
+              + '<span class="qrFahrasItemNum">' + _qrToArabicDigits(fi.num) + '</span>'
+              + '<span class="qrFahrasItemName">' + fi.name + '</span>'
+              + '<span class="qrFahrasItemMeta">' + (fi.type === 'مك' ? 'مكية' : 'مدنية') + ' · ' + _qrToArabicDigits(fi.ayahs) + '</span>'
+              + '</div>';
+    });
+    html += '</div>';
+    return html;
+}
+function _qrBuildFahrasJuzList() {
+    var firstPages = _qrJuzFirstPages();
+    var html = '<div class="qrFahrasList">';
+    for (var j = 1; j <= 30; j++) {
+        var pageIdx = (firstPages[j] !== undefined) ? firstPages[j] : 0;
+        html += '<div class="qrFahrasRow" data-goto-page="' + pageIdx + '">'
+              + '<span class="qrFahrasRowLabel">الجزء ' + _qrToArabicDigits(j) + '</span>'
+              + '<span class="qrFahrasRowPage">ص ' + _qrToArabicDigits(pageIdx + 1) + '</span>'
+              + '</div>';
+    }
+    html += '</div>';
+    return html;
+}
+function _qrBuildFahrasHizbList() {
+    var firstPages = _qrHizbFirstPages();
+    var html = '<div class="qrFahrasList">';
+    for (var h = 1; h <= 60; h++) {
+        var pageIdx = (firstPages[h] !== undefined) ? firstPages[h] : 0;
+        html += '<div class="qrFahrasRow" data-goto-page="' + pageIdx + '">'
+              + '<span class="qrFahrasRowLabel">الحزب ' + _qrToArabicDigits(h) + '</span>'
+              + '<span class="qrFahrasRowPage">ص ' + _qrToArabicDigits(pageIdx + 1) + '</span>'
+              + '</div>';
+    }
+    html += '</div>';
+    return html;
+}
+function _qrBuildFahrasBookmarksList() {
+    if (!_qrBookmarks.length) {
+        return '<div class="qrFahrasEmpty">لا توجد صفحات محفوظة بعد.<br>اضغط على ⭐ أثناء القراءة لحفظ الصفحة الحالية.</div>';
+    }
+    var html = '<div class="qrFahrasList">';
+    _qrBookmarks.forEach(function(pageIdx) {
+        var juz   = (_QR_PAGE_JUZ && _QR_PAGE_JUZ[pageIdx]) || '';
+        var sName = _qrSurahNameForPage(pageIdx);
+        html += '<div class="qrFahrasRow" data-goto-page="' + pageIdx + '">'
+              + '<span class="qrFahrasRowLabel">ص ' + _qrToArabicDigits(pageIdx + 1) + ' — ' + sName + '</span>'
+              + '<span class="qrFahrasRowPage">جزء ' + _qrToArabicDigits(juz) + '</span>'
+              + '<span class="qrFahrasRowRemove" data-remove-bookmark="' + pageIdx + '" title="حذف">&#10006;</span>'
+              + '</div>';
+    });
+    html += '</div>';
+    return html;
 }
 
 // Retourne l'index de page (0-based) contenant l'ayat (surahIdx0, ayahIdx0).
@@ -5847,43 +6170,6 @@ function _qrFindPageForAyah(surahIdx, ayahIdx) {
 // direction : +1 (page suivante) ou -1 (page précédente).
 function _qrSwipeToSurah(direction) {
     _qrGoToPage(_qrCurrentPage + direction);
-}
-
-// Affiche la sourate à l'index surahIdx (0-based). highlightAyahIdx (0-based,
-// optionnel) fait défiler jusqu'à ce verset et le surligne brièvement —
-// utilisé par la navigation par جزء et par les résultats de recherche.
-function _qrRenderSurah(surahIdx, highlightAyahIdx) {
-    var area = document.getElementById('qpReadTextArea');
-    if (!area || !_qrActiveData || !_qrActiveData[surahIdx]) return;
-    _qrCurrentSurahIdx = surahIdx;  // mémorisé pour la navigation par swipe
-    var surah = _qrActiveData[surahIdx];
-    var html = '<div class="qrSurahTitle">' + surah.name + ' — ' + _qrToArabicDigits(surahIdx + 1) + '</div>';
-    if (surah.basmalah) html += '<div class="qrBasmalah">' + surah.basmalah + '</div>';
-    html += '<div class="qrAyatBlock">';
-    surah.ayats.forEach(function(text, i) {
-        html += '<span class="qrAyah" id="qrAyah-' + surahIdx + '-' + i + '">' + text +
-                // &#65020;/&#65020; (﷼ ARABIC LIGATURE RIAL SIGN) était une erreur :
-                // ce sont les parenthèses ornementales utilisées pour encadrer un
-                // numéro de verset (﴿2﴾) qu'il fallait utiliser : &#64831;/&#64830;.
-                ' <span class="qrAyahNum">&#64831;' + _qrToArabicDigits(i + 1) + '&#64830;</span></span> ';
-    });
-    html += '</div>';
-    area.innerHTML = html;
-
-    var navList = document.getElementById('qpReadNavList');
-    var navMode = (document.getElementById('qpReadNavMode') || {}).value || 'surah';
-    if (navList && navMode === 'surah') navList.value = surahIdx;
-
-    if (typeof highlightAyahIdx === 'number') {
-        var target = document.getElementById('qrAyah-' + surahIdx + '-' + highlightAyahIdx);
-        if (target) {
-            target.scrollIntoView({ block: 'center' });
-            target.classList.add('qrAyahHighlight');
-            setTimeout(function() { target.classList.remove('qrAyahHighlight'); }, 2500);
-        }
-    } else {
-        area.scrollTop = 0;
-    }
 }
 
 function _qrSearch(query) {
@@ -6652,6 +6938,7 @@ function _ucPrayerMinutes(key) {
     const _origIqamaSeq = startIqamaSequenceFunction;
     startIqamaSequenceFunction = function() {
         const prayer = _ucPrayerNow();
+        _ucActiveIqamaSeqEpoch = _ucIqamaSeqEpoch; // cf. _installResyncOnResume plus haut
         _ucFire(UC_EVT.IQAMA_TIME, { prayer: prayer });   // avant l'affichage
         _origIqamaSeq();
         _ucFire(UC_EVT.IQAMA_SHOW, { prayer: prayer });   // après l'affichage
@@ -6747,6 +7034,7 @@ function _ucPrayerMinutes(key) {
             setTimeout('animateBlackScreenCountdown()',    15000);
         }
         var _pr = (typeof _ucPrayerNow === 'function') ? _ucPrayerNow() : 'JOMOA';
+        _ucActiveIqamaSeqEpoch = _ucIqamaSeqEpoch; // cf. _installResyncOnResume plus haut
         _ucFire(UC_EVT.IQAMA_TIME, { prayer: _pr });
         _ucFire(UC_EVT.IQAMA_SHOW, { prayer: _pr });
 
@@ -7684,7 +7972,8 @@ function _doAudioUnlock() {
 // ── COUNTER DRIFT CORRECTION ──────────────────────────────────
 // Recale remainingSeconds sur Date.now() si l’intervalle setInterval d’rive
 // (CPU chargé, tab brièvement en arrière-plan).
-// Déclenche une correction si dérive > 2 s, trace [CTR] DRIFT_CORR dans le debug.
+// Déclenche une correction si dérive > 2 s. Silencieuse (pas de trace debug) :
+// la correction elle-même reste active, seul le bruit console a été retiré.
 
 (function _installCounterDriftCorrection() {
 
@@ -7714,7 +8003,6 @@ function _doAudioUnlock() {
             // Forcer 0 directement ferait passer le check et glisser en negatif.
             var _corrected = Math.max(1, expected);
             remainingSeconds = _corrected;
-            _L('CTR','DRIFT_CORR',{drift:drift+'s',rem:rem,expected:expected,corrected:_corrected});
         }
     });
 
@@ -9916,7 +10204,10 @@ function forceHijriSyncFunction() {
     if (typeof _orig !== 'function') return;
 
     window.playAzanSoundFunction = function() {
-        console.log('[AZAN] WEBVIEW_PLAY_START voiceMode=' + (JS_DATA.ucAzanIqamaByVoice == 1));
+        _L('AZAN', 'WEBVIEW_PLAY_START', {
+            prayer:    _ucPrayerAtMinutes(currentTimeInMinutes),
+            voiceMode: (JS_DATA.ucAzanIqamaByVoice == 1)
+        });
         return _orig.apply(this, arguments);
     };
 })();
@@ -10088,14 +10379,14 @@ function forceHijriSyncFunction() {
             var el = document.getElementById(elId);
             if (!el || !el.src) { _origRedirectToAudio(xfile); return; }
 
-            _L('AUDIO', 'PATCH_AZAN_PLAY', {xfile: xfile,
+            _L('AZAN', 'PATCH_AZAN_PLAY', {xfile: xfile,
                 src: el.src.replace(/^https?:\/\/[^\/]+/, '...8080')});
 
             el.currentTime = 0;
             var p = el.play();
             if (p && typeof p.catch === 'function') {
                 p.catch(function(err) {
-                    _L('AUDIO', 'PATCH_AZAN_ERR', {xfile: xfile, reason: String(err)});
+                    _L('AZAN', 'PATCH_AZAN_ERR', {xfile: xfile, reason: String(err)});
                     _origRedirectToAudio(xfile);   // repli sur handler natif
                 });
             }
@@ -10134,7 +10425,7 @@ function forceHijriSyncFunction() {
     var _origHideAzanCustom = hideAzanPopupFunction;
     hideAzanPopupFunction = function() {
         if (_ucBlockAzanHide) {
-            _L('POPUP','SKIP',{item:'azan_hide',reason:'audio_in_progress'});
+            _L('AZAN','POPUP_HIDE_BLOCKED',{reason:'audio_in_progress'});
             return;
         }
         _origHideAzanCustom();
@@ -10158,15 +10449,13 @@ function forceHijriSyncFunction() {
         var isCore = cur.indexOf('/assets/audio/audio_') !== -1;
 
         function _trySrc(fromLabel, src) {
-            _L('AUDIO','FALLBACK',{action:'azan_audio_fallback',
-                from:fromLabel, to:src});
+            _L('AZAN','AUDIO_FALLBACK',{from:fromLabel, to:src});
             el.src = src;
             el.load();
             var p = el.play();
             if (p && typeof p.catch === 'function') {
                 p.catch(function(err) {
-                    _L('AUDIO','FALLBACK_ERR',{action:'azan_audio_fallback',
-                        src:src, err:String(err)});
+                    _L('AZAN','AUDIO_FALLBACK_ERR',{src:src, err:String(err)});
                     // L'événement 'error' sur l'élément se déclenchera et appellera
                     // _ucAzanFallbackOrHold pour le niveau suivant
                 });
@@ -10184,8 +10473,7 @@ function forceHijriSyncFunction() {
             return;
         }
         // Niveau 3 : tout épuisé → popup maintenu jusqu'au safety-timer (300 s)
-        _L('AUDIO','FALLBACK_EXHAUST',{action:'azan_audio_fallback',
-            note:'popup_held_until_safety_300s'});
+        _L('AZAN','AUDIO_FALLBACK_EXHAUST',{note:'popup_held_until_safety_300s'});
         // Ne PAS appeler _ucReleaseAzanBlock : le safety-timer (300 s) fermera le popup
     }
 
@@ -10198,7 +10486,7 @@ function forceHijriSyncFunction() {
             _ucLastAzanAudioEl.removeEventListener('ended', _ucAzanReleaseFunc);
             _ucLastAzanAudioEl.removeEventListener('error', _ucAzanFallbackOrHold);
         }
-        _L('AUDIO','STOP',{action:'azan_audio',result:'ended_closing_popup'});
+        _L('AZAN','WEBVIEW_AUDIO_END',{result:'ended_closing_popup'});
         hideAzanPopupFunction();
     }
 
@@ -10211,10 +10499,10 @@ function forceHijriSyncFunction() {
             _ucBlockAzanHide = true;
             if (_ucAzanSafetyTimer) clearTimeout(_ucAzanSafetyTimer);
             _ucAzanSafetyTimer = setTimeout(function() {
-                _L('POPUP','STOP',{item:'azan',reason:'silent_mode_180s',result:'forced_close'});
+                _L('AZAN','POPUP_FORCE_CLOSE',{prayer:e.prayer,reason:'silent_mode_timeout_180s'});
                 _ucReleaseAzanBlock();
             }, 180000);
-            _L('AUDIO','SKIP',{action:'azan_audio',reason:'voice_disabled',popup_hold:'180s'});
+            _L('AZAN','WEBVIEW_AUDIO_SKIP',{prayer:e.prayer,reason:'voice_disabled',popup_hold:'180s'});
             return;
         }
         if (JS_DATA.ucShortAzanActive  ==  1)   return;   // azan court : durée connue d'avance
@@ -10242,11 +10530,11 @@ function forceHijriSyncFunction() {
         // Safety : fermeture forcée après 300 s au plus
         //   (couvre le cas où tous les fallbacks échouent silencieusement)
         _ucAzanSafetyTimer = setTimeout(function() {
-            _L('POPUP','STOP',{item:'azan',reason:'safety_timeout_300s',result:'forced_close'});
+            _L('AZAN','POPUP_FORCE_CLOSE',{prayer:e.prayer,reason:'safety_timeout_300s'});
             _ucReleaseAzanBlock();
         }, 300000);
 
-        _L('AUDIO','FIRE',{action:'azan_audio',prayer:e.prayer,result:'popup_blocked_until_end'});
+        _L('AZAN','WEBVIEW_AUDIO_FIRE',{prayer:e.prayer,result:'popup_blocked_until_end'});
     });
 
 
@@ -10457,24 +10745,37 @@ function forceHijriSyncFunction() {
     (function _installAzanAudioForceStop() {
         var _AZAN_POPUP_IDS = { 'azanPopupVertical': 1, 'azanPopupHorizontal': 1 };
 
+        // Une meme fermeture de popup declenche _stopAzanAudio jusqu'a 3 fois
+        // (AZAN_HIDE + hideElementFunction sur azanPopupVertical ET
+        // azanPopupHorizontal), quasi simultanement -- avant, chacun logguait
+        // sa propre ligne (3 lignes [AUDIO] pour 1 seule fermeture reelle,
+        // et jusqu'a 3 appels stopAzanPlayback natifs pour rien). Le nettoyage
+        // (pause audio, stop natif) reste execute a chaque appel -- idempotent,
+        // donc sans risque -- seul le LOG est deduplique, pour qu'une fermeture
+        // = une ligne dans le journal.
+        var _lastStopLogAt = 0;
+        var _STOP_DEDUP_MS = 500;
+
         function _stopAzanAudio(reason) {
-            var stopped = false;
+            var stoppedEls = [];
             ['audioAzanElement', 'audioFajrElement'].forEach(function(id) {
                 var el = document.getElementById(id);
                 if (el && !el.paused) {
                     try { el.pause(); el.currentTime = 0; } catch(e) {}
-                    _L('AUDIO','STOP',{action:'azan_audio_forced',
-                                      element:id, reason:reason});
-                    stopped = true;
+                    stoppedEls.push(id);
                 }
             });
             // Coupe aussi la lecture NATIVE de l'azan (AzanPlaybackService,
             // MediaPlayer natif utilise pour que l'azan sonne meme appli en
             // arriere-plan) : sans cet appel, seul le bouton "Arreter" de la
             // notification pouvait la stopper -- fermer la popup dans l'appli
-            // ne faisait rien cote natif.
+            // ne faisait rien cote natif. prayer/source transmis pour que
+            // NATIVE_STOP_USER (journal natif) distingue cette source du
+            // bouton "Arreter" de la notification (cf. AzanPlaybackService.kt).
+            var nativeStopIssued = false;
             if (window.AndroidMobile && typeof window.AndroidMobile.stopAzanPlayback === 'function') {
-                window.AndroidMobile.stopAzanPlayback();
+                window.AndroidMobile.stopAzanPlayback(_ucPrayerAtMinutes(currentTimeInMinutes), 'webview_popup_close');
+                nativeStopIssued = true;
             }
             // Nettoyer l'etat du bloc pour eviter un blocage futur
             _ucBlockAzanHide   = false;
@@ -10483,8 +10784,16 @@ function forceHijriSyncFunction() {
                 clearTimeout(_ucAzanSafetyTimer);
                 _ucAzanSafetyTimer = null;
             }
-            if (!stopped) _L('AUDIO','SKIP',{action:'azan_audio_forced',
-                                             reason:reason, note:'already_paused'});
+
+            var now = Date.now();
+            if (now - _lastStopLogAt > _STOP_DEDUP_MS) {
+                _lastStopLogAt = now;
+                _L('AZAN', stoppedEls.length ? 'WEBVIEW_STOP' : 'WEBVIEW_STOP_NOOP', {
+                    reason: reason,
+                    elements: stoppedEls.join(',') || 'none_playing',
+                    nativeStopIssued: nativeStopIssued
+                });
+            }
         }
 
         // Chemin 1 : AZAN_HIDE emis par hideAzanPopupFunction (flux normal)
@@ -10970,19 +11279,34 @@ function forceHijriSyncFunction() {
    On intercepte hideElementFunction (pour les IDs iqama) et
    activateBlackScreenIfEnabled afin d'ajouter 5 s supplémentaires,
    sans toucher aux fichiers core.
+
+   Garde-fou perimption (cf. _ucIqamaSeqEpoch, _installResyncOnResume tout en
+   haut du fichier) : startIqamaSequenceFunction() (core) programme TOUTE sa
+   suite (ce hideElementFunction differe, activateBlackScreenIfEnabled,
+   onIqamaEndFunction, animateBlackScreenCountdown) via setTimeout brut, sans
+   identifiant recuperable -> aucun clearTimeout possible. Si l'appli passe en
+   arriere-plan (timers geles) puis revient alors qu'une PRIERE DIFFERENTE est
+   desormais en cours (ou plus aucune), ces callbacks perimes se declenchaient
+   quand meme en rafale au reveil des timers, rejouant popup/rideau
+   noir/azkar de l'ANCIENNE sequence. Chaque callback verifie maintenant qu'il
+   appartient toujours a la sequence active (_ucIqamaSeqEpoch inchange depuis
+   son demarrage) avant de faire quoi que ce soit.
    ═══════════════════════════════════════════════════════════════════════════ */
 (function () {
     var EXTRA_MS   = 5000;   // 5 secondes de plus
     var IQAMA_IDS  = ['iqamaPopupVertical', 'iqamaPopupHorizontal'];
     var _delayBlackScreen = false;
 
+    function _ucIqamaSeqStale() { return _ucIqamaSeqEpoch !== _ucActiveIqamaSeqEpoch; }
+
     /* ── 1. Intercept hideElementFunction pour les popups iqama ───────────── */
     var _origHide = window.hideElementFunction;
     window.hideElementFunction = function (elementId) {
         if (IQAMA_IDS.indexOf(elementId) !== -1) {
+            if (_ucIqamaSeqStale()) return; // deja masque directement par le resync
             _delayBlackScreen = true;   // signaler qu'il faut aussi retarder le rideau
             //_L('IQAMA','FIRE',{action:'hide_delayed',element:elementId,extra:'+10s'});
-            setTimeout(function () { _origHide(elementId); }, EXTRA_MS);
+            setTimeout(function () { if (!_ucIqamaSeqStale()) _origHide(elementId); }, EXTRA_MS);
         } else {
             _origHide(elementId);
         }
@@ -10996,14 +11320,35 @@ function forceHijriSyncFunction() {
     /* ── 2. Intercept activateBlackScreenIfEnabled pour retarder le rideau ── */
     var _origActivate = window.activateBlackScreenIfEnabled;
     window.activateBlackScreenIfEnabled = function () {
+        if (_ucIqamaSeqStale()) { _delayBlackScreen = false; return; }
         if (_delayBlackScreen) {
             _delayBlackScreen = false;
             //_L('IQAMA','FIRE',{action:'black_screen_delayed',extra:'+10s'});
-            setTimeout(function () { _origActivate(); }, EXTRA_MS);
+            setTimeout(function () { if (!_ucIqamaSeqStale()) _origActivate(); }, EXTRA_MS);
         } else {
             _origActivate();
         }
     };
+
+    /* ── 3. Intercept onIqamaEndFunction / animateBlackScreenCountdown ─────
+       Ces deux-la ne sont normalement appeles qu'une fois, en toute fin de
+       sequence (fin de priere -> azkar ; animation du compte a rebours du
+       rideau noir) -- jamais ailleurs dans le code, donc aucun risque de
+       bloquer un usage legitime independant en les rendant no-op perimes. */
+    var _origIqamaEnd = window.onIqamaEndFunction;
+    if (typeof _origIqamaEnd === 'function') {
+        window.onIqamaEndFunction = function () {
+            if (_ucIqamaSeqStale()) return;
+            _origIqamaEnd();
+        };
+    }
+    var _origAnimateCountdown = window.animateBlackScreenCountdown;
+    if (typeof _origAnimateCountdown === 'function') {
+        window.animateBlackScreenCountdown = function () {
+            if (_ucIqamaSeqStale()) return;
+            _origAnimateCountdown();
+        };
+    }
 }());
 
 
@@ -11464,8 +11809,8 @@ function forceHijriSyncFunction() {
         if (_prevWallMin !== -1 && _wallMin !== _prevWallMin) {
             // La minute vient de changer — vérifier si currentTimeInMinutes a suivi
             if (typeof currentTimeInMinutes !== 'undefined' && currentTimeInMinutes !== _wallMin) {
-                // Le tick :00 a été manqué → forcer la mise à jour
-                _L('NPT', 'TICK_MISS', { expected: _wallMin, got: currentTimeInMinutes });
+                // Le tick :00 a été manqué → forcer la mise à jour (silencieux :
+                // pas de trace debug, seule la correction reste active)
                 if (typeof updateTimeAndPrayersFunction === 'function')
                     updateTimeAndPrayersFunction(false);
             }
@@ -13794,7 +14139,6 @@ function selectQPTakbir() {
                 '<div class="ucMosqueInfoTabBtn ucMosqueInfoTabBtnActive" data-tab="info" onclick="window._ucMosqueInfoSwitchTab(\'info\')">&#9432; معلومات</div>' +
                 '<div class="ucMosqueInfoTabBtn" data-tab="news" onclick="window._ucMosqueInfoSwitchTab(\'news\')">&#128240; أخبار</div>' +
                 '<div class="ucMosqueInfoTabBtn" data-tab="calendar" onclick="window._ucMosqueInfoSwitchTab(\'calendar\')">&#128197; التقويم</div>' +
-                '<div class="ucMosqueInfoTabBtn" data-tab="settings" onclick="window._ucMosqueInfoSwitchTab(\'settings\')">&#9881; الإعدادات</div>' +
             '</div>' +
             '<div id="ucMosqueInfoBody">' +
                 '<div class="ucMosqueInfoPane ucMosqueInfoPaneActive" data-pane="info">' +
@@ -13834,7 +14178,160 @@ function selectQPTakbir() {
                         '</div>' +
                     '</div>' +
                 '</div>' +
-                '<div class="ucMosqueInfoPane" data-pane="settings">' +
+            '</div>';
+        document.body.appendChild(modal);
+        _modal = modal;
+
+        // Clic sur la photo → ouvre mapLocatorModal centré sur la mosquée
+        var _imgEl = document.getElementById('ucMosqueInfoImage');
+        if (_imgEl) {
+            var _mCoords = (window.MOSQUE_CONFIG || {}).MOSQUE_COORDS
+                        || (window.MOSQUE_CONFIG || {}).WEATHER_COORDS;
+            if (_mCoords && _mCoords.latitude && _mCoords.longitude) {
+                _imgEl.style.cursor = 'pointer';
+                _imgEl.title = 'عرض الموقع على الخريطة';
+                (function(_lat, _lng) {
+                    _imgEl.addEventListener('click', function() {
+                        if (typeof window.openMapLocatorModalAt === 'function') {
+                            window.openMapLocatorModalAt(_lat, _lng);
+                        }
+                    });
+                })(_mCoords.latitude, _mCoords.longitude);
+            }
+        }
+
+        if (typeof window._ucRenderMosqueNotifLists === 'function') window._ucRenderMosqueNotifLists();
+        _relocateAdminRow();
+        _renderRecentNotifList();
+        _ucApplyNotifLargeText();
+        _calInit();
+    }
+
+    // ── Bascule d'onglet ───────────────────────────────────────────────────
+    window._ucMosqueInfoSwitchTab = function(tab) {
+        if (!_modal) return;
+        var btns  = _modal.querySelectorAll('.ucMosqueInfoTabBtn');
+        var panes = _modal.querySelectorAll('.ucMosqueInfoPane');
+        for (var i = 0; i < btns.length; i++) {
+            btns[i].classList.toggle('ucMosqueInfoTabBtnActive', btns[i].getAttribute('data-tab') === tab);
+        }
+        for (var j = 0; j < panes.length; j++) {
+            panes[j].classList.toggle('ucMosqueInfoPaneActive', panes[j].getAttribute('data-pane') === tab);
+        }
+    };
+
+    // ── Ouverture / fermeture ──────────────────────────────────────────────
+    // !!! Verrouillage orientation : impossible d'ouvrir en mode horizontal.
+    window._ucOpenMosqueInfoModal = function() {
+        if (typeof detectOrientationFunction === 'function') detectOrientationFunction();
+        if (isHorizontalOrientation) return;
+        _buildModal();
+        if (typeof window._ucRenderMosqueNotifLists === 'function') window._ucRenderMosqueNotifLists();
+        _renderRecentNotifList();
+        _ucApplyNotifLargeText();
+        _calInit();
+        window._ucMosqueInfoSwitchTab('info');
+        if (_modal) _modal.classList.add('ucMosqueModalOpen');
+        // ucSettingsButtonVertical / qiblaButtonVertical (z-index 9999333) dépassent
+        // le modal (99999) : on les masque pendant l'affichage, comme pour le modal Coran.
+        var _mlBtn = document.getElementById('ucSettingsButtonVertical');
+        if (_mlBtn) _mlBtn.style.display = 'none';
+        var _qbBtn = document.getElementById('qiblaButtonVertical');
+        if (_qbBtn) _qbBtn.style.display = 'none';
+        if (typeof window._pushBack === 'function') window._pushBack();
+    };
+
+    window._ucCloseMosqueInfoModal = function() {
+        if (_modal) _modal.classList.remove('ucMosqueModalOpen');
+        var _mlBtn = document.getElementById('ucSettingsButtonVertical');
+        if (_mlBtn) _mlBtn.style.display = '';
+        var _qbBtn = document.getElementById('qiblaButtonVertical');
+        if (_qbBtn) _qbBtn.style.display = '';
+        if (typeof window._popBack === 'function') window._popBack();
+    };
+
+    // ── Déclencheur : clic sur le nom de la mosquée (mode vertical) ───────
+    (function _bindTrigger() {
+        var el = document.getElementById('mosqueNameDisplayVertical');
+        if (el) el.addEventListener('click', function() { window._ucOpenMosqueInfoModal(); });
+    })();
+
+    // ── Fermeture de la modale au clic sur le bouton menu (hamburger) ──────
+    // N'interfère pas avec son comportement natif (toggleMenuFunction() reste
+    // déclenché via son propre onclick inline dans index.html) : on ajoute
+    // simplement un listener en plus, équivalent à un clic sur ucMosqueInfoClose.
+    (function _bindMenuToggleClose() {
+        var el = document.getElementById('menuToggleButton');
+        if (el) el.addEventListener('click', function() { window._ucCloseMosqueInfoModal(); });
+    })();
+
+    // !!! Fermeture forcée si passage en mode horizontal — vérifié à chaque
+    // resize, sans debounce, pour une réaction immédiate. On rafraîchit
+    // nous-mêmes isHorizontalOrientation (detectOrientationFunction) au cas
+    // où notre listener s'exécuterait avant celui de m2body.js (l'ordre des
+    // listeners 'resize' dépend de l'ordre d'enregistrement, pas du script).
+    window.addEventListener('resize', function() {
+        if (typeof detectOrientationFunction === 'function') detectOrientationFunction();
+        if (isHorizontalOrientation) window._ucCloseMosqueInfoModal();
+    });
+
+    // ── Construction immédiate (mais invisible) de la modale ────────────────
+    // Sans ceci, _buildModal() (et donc _relocateAdminRow()) n'aurait lieu
+    // qu'à la PREMIÈRE ouverture de la modale (clic utilisateur) — un moment
+    // arbitrairement tardif. Or #ucAdminBtnRow/#ucAdminLockBtn sont créés par
+    // _installAdminNotifyPanel/_installAdminBtnLockGate plus bas dans ce
+    // fichier, à l'exécution initiale du script : tant que la modale n'a pas
+    // été construite, #ucMosqueInfoAdminSection n'existe pas encore et ces
+    // éléments restaient visibles (et non stylés) dans
+    // adjustmentsContentContainer jusqu'au premier clic. On construit donc la
+    // modale dès maintenant (elle reste masquée via CSS, comme toujours) afin
+    // que le conteneur admin existe déjà quand ces IIFE plus bas s'exécutent.
+    _buildModal();
+    // Exposé pour que _installAdminNotifyPanel/_installAdminBtnLockGate
+    // puissent re-déclencher le rattachement juste après avoir créé les VRAIS
+    // #ucAdminBtnRow/#ucAdminLockBtn (filet de sécurité, en plus du rattachement
+    // direct fait à leur création).
+    window._ucRelocateAdminRow = _relocateAdminRow;
+
+    console.log('[MOSQUE_INFO] modale installée');
+
+})();
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── MODALE "RÉGLAGES" (⚙) — hub de paramétrage général de l'application ────
+// Ouverte depuis la barre flottante du logo (icône roue dentée en première
+// position, cf. _installLogoQuickBar / window._ucOpenSettingsModal). Regroupe
+// ce qui était jusque-là l'onglet "⚙ الإعدادات" de la modale info-mosquée
+// (alerte avant azan, silencieux automatique autour de l'azan, coupure courte
+// après azan, flip-to-mute, démarrage automatique silencieux) : des réglages
+// généraux de l'application, sans rapport avec UNE mosquée en particulier,
+// donc mieux à leur place ici. Structure en onglets dès le départ (un seul
+// onglet pour l'instant, "الأذان والإشعارات") pour accueillir facilement de
+// futurs onglets de paramétrage — même schéma que la modale info-mosquée
+// (data-tab/data-pane + classes .ucSettingsModalTabBtn/.ucSettingsModalPane).
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installSettingsModal() {
+
+    var _modal = null;
+
+    function _buildModal() {
+        if (document.getElementById('ucSettingsModal')) {
+            _modal = document.getElementById('ucSettingsModal');
+            return;
+        }
+        var modal = document.createElement('div');
+        modal.id = 'ucSettingsModal';
+        modal.innerHTML =
+            '<div id="ucSettingsModalHeader">' +
+                '<span id="ucSettingsModalTitle">الإعدادات</span>' +
+                '<span id="ucSettingsModalClose" onclick="window._ucCloseSettingsModal()">&#10006;</span>' +
+            '</div>' +
+            '<div id="ucSettingsModalTabs">' +
+                '<div class="ucSettingsModalTabBtn ucSettingsModalTabBtnActive" data-tab="azan" onclick="window._ucSettingsModalSwitchTab(\'azan\')">&#128276; الأذان والإشعارات</div>' +
+            '</div>' +
+            '<div id="ucSettingsModalBody">' +
+                '<div class="ucSettingsModalPane ucSettingsModalPaneActive" data-pane="azan">' +
                     '<div id="ucSettingsSection">' +
                         '<div class="ucSettingsRow">' +
                             '<label class="ucSettingsToggleWrap">' +
@@ -13920,33 +14417,9 @@ function selectQPTakbir() {
             '</div>';
         document.body.appendChild(modal);
         _modal = modal;
-
-        // Clic sur la photo → ouvre mapLocatorModal centré sur la mosquée
-        var _imgEl = document.getElementById('ucMosqueInfoImage');
-        if (_imgEl) {
-            var _mCoords = (window.MOSQUE_CONFIG || {}).MOSQUE_COORDS
-                        || (window.MOSQUE_CONFIG || {}).WEATHER_COORDS;
-            if (_mCoords && _mCoords.latitude && _mCoords.longitude) {
-                _imgEl.style.cursor = 'pointer';
-                _imgEl.title = 'عرض الموقع على الخريطة';
-                (function(_lat, _lng) {
-                    _imgEl.addEventListener('click', function() {
-                        if (typeof window.openMapLocatorModalAt === 'function') {
-                            window.openMapLocatorModalAt(_lat, _lng);
-                        }
-                    });
-                })(_mCoords.latitude, _mCoords.longitude);
-            }
-        }
-
-        if (typeof window._ucRenderMosqueNotifLists === 'function') window._ucRenderMosqueNotifLists();
-        _relocateAdminRow();
-        _renderRecentNotifList();
-        _ucApplyNotifLargeText();
-        _calInit();
     }
 
-    // ── Onglet الإعدادات : alerte avant azan (toggle + jauge minutes) ──────
+    // ── Alerte avant azan (toggle + jauge minutes) ──────────────────────────
     //  Lit/écrit JS_CUSTOM.ucAzanAlertEnabled / ucAzanAlertMinutes (cf.
     //  JS_CUSTOM_DEFAULTS). Le moteur de déclenchement réel est
     //  _applyAzanAlertNotification(), appelé depuis applyNextPrayerHighlight().
@@ -13993,7 +14466,7 @@ function selectQPTakbir() {
         _L('CFG', 'SET', {ucAzanAlertMinutes: mins});
     };
 
-    // ── Onglet الإعدادات : silencieux automatique autour de l'azan ─────────
+    // ── Silencieux automatique autour de l'azan ─────────────────────────────
     //  Lit/écrit JS_CUSTOM.ucSilentBeforeAzanEnabled / ucSilentBeforeAzanMinutes
     //  / ucSilentAfterAzanMinutes (cf. JS_CUSTOM_DEFAULTS). La 2e jauge (remise
     //  du son) n'est active que si le toggle (1ère fonction) est activé — gérée
@@ -14071,7 +14544,7 @@ function selectQPTakbir() {
         _L('CFG', 'SET', {ucSilentAfterAzanMinutes: mins});
     };
 
-    // ── Onglet الإعدادات : coupure courte et indépendante après l'azan ─────
+    // ── Coupure courte et indépendante après l'azan ─────────────────────────
     //  Lit/écrit JS_CUSTOM.ucMuteAfterAzanEnabled / ucMuteAfterAzanMinutes
     //  (0-30, défaut 5). Indépendante du toggle "كتم صوت الهاتف قبل الأذان"
     //  ci-dessus : les deux peuvent être actives en même temps, leurs fenêtres
@@ -14124,7 +14597,7 @@ function selectQPTakbir() {
         _L('CFG', 'SET', {ucMuteAfterAzanMinutes: mins});
     };
 
-    // ── Onglet الإعدادات : couper l'azan en retournant le telephone ────────
+    // ── Couper l'azan en retournant le telephone ────────────────────────────
     //  Lit/ecrit JS_CUSTOM.ucFlipToMuteAzan. La detection elle-meme (capteur
     //  accelerometre) tourne cote natif, uniquement pendant la lecture reelle
     //  de l'azan (AzanPlaybackService) -- le reglage est simplement pousse
@@ -14146,13 +14619,12 @@ function selectQPTakbir() {
         _L('CFG', 'SET', {ucFlipToMuteAzan: JS_CUSTOM.ucFlipToMuteAzan});
     };
 
-    // ── Onglet الإعدادات : démarrage automatique silencieux (téléphone) ────
+    // ── Démarrage automatique silencieux (téléphone) ────────────────────────
     //  Lit/écrit JS_CUSTOM.ucAutoStartEnabled, poussé vers le natif via
     //  setAutoStartEnabled() (SharedPreferences, cf. AutoStartPrefs.kt) — lu
     //  par BootReceiver sans jamais démarrer le WebView. Absent sur boîtier
     //  Android TV (isAndroidTv(), qui garde son propre comportement toujours
-    //  actif) ; cette modale de toute façon ne s'ouvre jamais en horizontal
-    //  (cf. _ucOpenMosqueInfoModal), donc masquage surtout défensif ici.
+    //  actif).
     function _ucSyncAutoStartUI() {
         if (!_modal) return;
         var cb = _modal.querySelector('#ucAutoStartToggle');
@@ -14186,109 +14658,70 @@ function selectQPTakbir() {
         }
     };
 
-    // ── Bascule d'onglet ───────────────────────────────────────────────────
-    window._ucMosqueInfoSwitchTab = function(tab) {
+    // ── Bascule d'onglet ─────────────────────────────────────────────────────
+    window._ucSettingsModalSwitchTab = function(tab) {
         if (!_modal) return;
-        var btns  = _modal.querySelectorAll('.ucMosqueInfoTabBtn');
-        var panes = _modal.querySelectorAll('.ucMosqueInfoPane');
+        var btns  = _modal.querySelectorAll('.ucSettingsModalTabBtn');
+        var panes = _modal.querySelectorAll('.ucSettingsModalPane');
         for (var i = 0; i < btns.length; i++) {
-            btns[i].classList.toggle('ucMosqueInfoTabBtnActive', btns[i].getAttribute('data-tab') === tab);
+            btns[i].classList.toggle('ucSettingsModalTabBtnActive', btns[i].getAttribute('data-tab') === tab);
         }
         for (var j = 0; j < panes.length; j++) {
-            panes[j].classList.toggle('ucMosqueInfoPaneActive', panes[j].getAttribute('data-pane') === tab);
+            panes[j].classList.toggle('ucSettingsModalPaneActive', panes[j].getAttribute('data-pane') === tab);
         }
     };
 
-    // ── Ouverture / fermeture ──────────────────────────────────────────────
-    // !!! Verrouillage orientation : impossible d'ouvrir en mode horizontal.
-    window._ucOpenMosqueInfoModal = function() {
-        if (typeof detectOrientationFunction === 'function') detectOrientationFunction();
-        if (isHorizontalOrientation) return;
+    // ── Ouverture / fermeture ─────────────────────────────────────────────────
+    window._ucOpenSettingsModal = function() {
         _buildModal();
-        if (typeof window._ucRenderMosqueNotifLists === 'function') window._ucRenderMosqueNotifLists();
-        _renderRecentNotifList();
-        _ucApplyNotifLargeText();
-        _calInit();
         _ucSyncAzanAlertUI();
         _ucSyncSilentModeUI();
         _ucSyncQuickMuteAfterUI();
         _ucSyncFlipToMuteUI();
         _ucSyncAutoStartUI();
-        window._ucMosqueInfoSwitchTab('info');
-        if (_modal) _modal.classList.add('ucMosqueModalOpen');
-        // mapLocatorButtonVertical / qiblaButtonVertical (z-index 9999333) dépassent
-        // le modal (99999) : on les masque pendant l'affichage, comme pour le modal Coran.
-        var _mlBtn = document.getElementById('mapLocatorButtonVertical');
-        if (_mlBtn) _mlBtn.style.display = 'none';
+        window._ucSettingsModalSwitchTab('azan');
+        if (_modal) _modal.classList.add('ucSettingsModalOpen');
+        // ucSettingsButtonVertical / qiblaButtonVertical (z-index 9999333) dépassent
+        // le modal (99999) : on les masque pendant l'affichage, comme pour les autres modales.
+        var _sBtn = document.getElementById('ucSettingsButtonVertical');
+        if (_sBtn) _sBtn.style.display = 'none';
         var _qbBtn = document.getElementById('qiblaButtonVertical');
         if (_qbBtn) _qbBtn.style.display = 'none';
         if (typeof window._pushBack === 'function') window._pushBack();
     };
 
-    window._ucCloseMosqueInfoModal = function() {
-        if (_modal) _modal.classList.remove('ucMosqueModalOpen');
-        var _mlBtn = document.getElementById('mapLocatorButtonVertical');
-        if (_mlBtn) _mlBtn.style.display = '';
+    window._ucCloseSettingsModal = function() {
+        if (_modal) _modal.classList.remove('ucSettingsModalOpen');
+        var _sBtn = document.getElementById('ucSettingsButtonVertical');
+        if (_sBtn) _sBtn.style.display = '';
         var _qbBtn = document.getElementById('qiblaButtonVertical');
         if (_qbBtn) _qbBtn.style.display = '';
         if (typeof window._popBack === 'function') window._popBack();
     };
 
-    // ── Déclencheur : clic sur le nom de la mosquée (mode vertical) ───────
-    (function _bindTrigger() {
-        var el = document.getElementById('mosqueNameDisplayVertical');
-        if (el) el.addEventListener('click', function() { window._ucOpenMosqueInfoModal(); });
-    })();
-
     // ── Fermeture de la modale au clic sur le bouton menu (hamburger) ──────
-    // N'interfère pas avec son comportement natif (toggleMenuFunction() reste
-    // déclenché via son propre onclick inline dans index.html) : on ajoute
-    // simplement un listener en plus, équivalent à un clic sur ucMosqueInfoClose.
     (function _bindMenuToggleClose() {
         var el = document.getElementById('menuToggleButton');
-        if (el) el.addEventListener('click', function() { window._ucCloseMosqueInfoModal(); });
+        if (el) el.addEventListener('click', function() { window._ucCloseSettingsModal(); });
     })();
 
-    // !!! Fermeture forcée si passage en mode horizontal — vérifié à chaque
-    // resize, sans debounce, pour une réaction immédiate. On rafraîchit
-    // nous-mêmes isHorizontalOrientation (detectOrientationFunction) au cas
-    // où notre listener s'exécuterait avant celui de m2body.js (l'ordre des
-    // listeners 'resize' dépend de l'ordre d'enregistrement, pas du script).
-    window.addEventListener('resize', function() {
-        if (typeof detectOrientationFunction === 'function') detectOrientationFunction();
-        if (isHorizontalOrientation) window._ucCloseMosqueInfoModal();
-    });
-
-    // ── Construction immédiate (mais invisible) de la modale ────────────────
-    // Sans ceci, _buildModal() (et donc _relocateAdminRow()) n'aurait lieu
-    // qu'à la PREMIÈRE ouverture de la modale (clic utilisateur) — un moment
-    // arbitrairement tardif. Or #ucAdminBtnRow/#ucAdminLockBtn sont créés par
-    // _installAdminNotifyPanel/_installAdminBtnLockGate plus bas dans ce
-    // fichier, à l'exécution initiale du script : tant que la modale n'a pas
-    // été construite, #ucMosqueInfoAdminSection n'existe pas encore et ces
-    // éléments restaient visibles (et non stylés) dans
-    // adjustmentsContentContainer jusqu'au premier clic. On construit donc la
-    // modale dès maintenant (elle reste masquée via CSS, comme toujours) afin
-    // que le conteneur admin existe déjà quand ces IIFE plus bas s'exécutent.
+    // ── Construction immédiate (mais invisible), même raison que pour la
+    // modale info-mosquée : dispo dès le départ plutôt qu'à la première
+    // ouverture (pas de dépendance externe ici, mais garde la cohérence).
     _buildModal();
-    // Exposé pour que _installAdminNotifyPanel/_installAdminBtnLockGate
-    // puissent re-déclencher le rattachement juste après avoir créé les VRAIS
-    // #ucAdminBtnRow/#ucAdminLockBtn (filet de sécurité, en plus du rattachement
-    // direct fait à leur création).
-    window._ucRelocateAdminRow = _relocateAdminRow;
 
-    console.log('[MOSQUE_INFO] modale installée');
+    console.log('[SETTINGS] modale installée');
 
 })();
 
 
 // ==========================================================================
-// -- SILENCIEUX AUTOMATIQUE AUTOUR DE L'AZAN (onglet الإعدادات) -----------
+// -- SILENCIEUX AUTOMATIQUE AUTOUR DE L'AZAN (modale Réglages) ------------
 //  1) coupe la sonnerie X minutes avant l'azan de la prochaine prière
 //  2) la remet Y minutes après (uniquement si 1 est actif)
 //  Réglages : JS_CUSTOM.ucSilentBeforeAzanEnabled / ucSilentBeforeAzanMinutes
 //  (0-60) / ucSilentAfterAzanMinutes (1-180) — cf. UI dans
-//  _installMosqueInfoModal ci-dessus (toggle + 2 jauges sous ucAzanAlertSlider).
+//  _installSettingsModal ci-dessus (toggle + 2 jauges sous ucAzanAlertSlider).
 //
 //  Planification via AlarmManager natif (MobileJsBridge.scheduleSilentModeAlarms
 //  + SilentModeReceiver.kt), PAS de simple setTimeout JS : survit à la
@@ -14359,7 +14792,7 @@ function selectQPTakbir() {
         }
     }
 
-    // Appelé depuis les handlers du toggle/jauges (onglet الإعدادات) pour
+    // Appelé depuis les handlers du toggle/jauges (modale Réglages) pour
     // reprogrammer immédiatement après un changement de réglage.
     window._ucRescheduleSilentMode = _ucScheduleSilentModeAlarms;
 
@@ -14380,7 +14813,7 @@ function selectQPTakbir() {
 
 
 // ==========================================================================
-// -- COUPURE COURTE ET INDÉPENDANTE APRÈS L'AZAN (onglet الإعدادات) ------
+// -- COUPURE COURTE ET INDÉPENDANTE APRÈS L'AZAN (modale Réglages) --------
 //  Coupe la sonnerie pile à l'heure de l'azan, la remet N minutes après
 //  (jauge 0-30, défaut 5). Entièrement indépendante de
 //  _installSilentModeAroundAzan() ci-dessus (réglages, toggle et
@@ -14584,27 +15017,104 @@ function selectQPTakbir() {
         if (_lastAyaVwValue === null) return;
         var container = document.getElementById('ayaDisplayContainerVertical');
         if (!container) return;
-        container.style.fontSize = _isWidePortrait()
-            ? (_lastAyaVwValue * REF_ASPECT) + 'vh'
-            : _lastAyaVwValue + 'vw';
+        var isWide  = _isWidePortrait();
+        var unit    = isWide ? 'vh' : 'vw';
+        var baseNum = isWide ? (_lastAyaVwValue * REF_ASPECT) : _lastAyaVwValue;
+        container.style.fontSize = baseNum + unit;
+        _ucFitAyaToBox(container, baseNum, unit);
+    }
+
+    // Garde-fou générique (tous écrans, pas seulement Fold) : calculateFontSizeFunction
+    // (core) dimensionne le verset selon son nombre de caractères, une formule, jamais
+    // une mesure du rendu reel. #ayaDisplayContainerVertical est display:table avec
+    // height:8% mais SANS overflow:hidden (style1.css/style2.css, core) : un verset
+    // legerement surestime ne se fait jamais "couper" -- la boite s'agrandit
+    // silencieusement au-dela de ses 8% et chevauche l'element suivant. On mesure donc
+    // la hauteur REELLEMENT RENDUE de #ayaTextDisplayVertical (getBoundingClientRect,
+    // fiable meme sans clipping CSS) contre le budget declare par le core (8% de la
+    // hauteur d'ecran), et on reduit la police par petits pas jusqu'a rentrer dans la
+    // boite -- meme principe de mesure-et-retrecissement que _installMosqueNameFit /
+    // _installDateDisplayFit plus bas dans ce fichier, applique ici a l'axe vertical.
+    var AYA_BOX_HEIGHT_RATIO = 0.08; // cf. height:8% de #ayaDisplayContainerVertical
+    var AYA_MIN_RATIO        = 0.6;  // plancher : jamais moins de 60% de la taille calculee par le core
+
+    function _ucFitAyaToBox(container, startNum, unit) {
+        var textEl = document.getElementById('ayaTextDisplayVertical');
+        if (!textEl) return;
+        var budgetPx = window.innerHeight * AYA_BOX_HEIGHT_RATIO;
+        if (!budgetPx) return;
+
+        var step   = unit === 'vh' ? 0.05 : 0.1;
+        var minNum = startNum * AYA_MIN_RATIO;
+        var num    = startNum;
+        var guard  = 0;
+        while (textEl.getBoundingClientRect().height > budgetPx && num > minNum && guard < 30) {
+            num -= step;
+            container.style.fontSize = num + unit;
+            guard++;
+        }
+        if (guard) _L('AYA', 'FIT', { action: 'shrink_to_box', finalNum: num.toFixed(2), unit: unit, guard: guard });
     }
 
     if (typeof window.displayRandomAyaFunction === 'function') {
         var _origDisplayRandomAya = window.displayRandomAyaFunction;
+        // displayRandomAyaFunction (core) est RECURSIVE : un verset rejete (deja
+        // affiche, trop long pour l'ecran, periode speciale...) se relance via
+        // `displayRandomAyaFunction(); return;` en appelant le nom global tel
+        // quel -- qui, une fois patche ici, pointe vers CE wrapper, pas vers le
+        // core brut. Chaque niveau de recursion re-executait donc AUSSI notre
+        // post-traitement (capture + conversion vw->vh), y compris les niveaux
+        // intermediaires ou le core n'a pas encore reecrit un font-size frais
+        // (retour anticipe avant les lignes qui l'ecrivent). Resultat : le
+        // niveau imbrique capturait le vh DEJA converti par le niveau du dessous
+        // comme s'il etait un vw brut, et le reconvertissait -- une contamination
+        // qui composait a chaque niveau de recursion (verifie : decroissance
+        // exponentielle, ex. 7.8vw -> 3.6vh -> 1.66vh -> 0.77vh -> ... jusqu'a
+        // un texte quasi invisible). Invisible sur telephone normal (la branche
+        // vw ne multiplie jamais par REF_ASPECT, donc la contamination ne fait
+        // que recopier la meme valeur) ; visible uniquement en portrait large
+        // (Fold, ou test de redimensionnement continu comme les DevTools Chrome)
+        // ou la branche vh multiplie reellement a chaque appel contamine.
+        // Fix : ne capturer/reconvertir qu'au niveau le PLUS EXTERIEUR, une fois
+        // la recursion entierement resolue et le DOM dans son etat final.
+        var _ayaWrapperDepth = 0;
         window.displayRandomAyaFunction = function() {
-            var ret = _origDisplayRandomAya.apply(this, arguments);
-            var container = document.getElementById('ayaDisplayContainerVertical');
-            var freshVal = container ? parseFloat(container.style.fontSize) : NaN;
-            if (!isNaN(freshVal)) _lastAyaVwValue = freshVal;
-            _rescaleAyaFont();
+            _ayaWrapperDepth++;
+            var isOutermost = (_ayaWrapperDepth === 1);
+            var ret;
+            try {
+                ret = _origDisplayRandomAya.apply(this, arguments);
+            } finally {
+                _ayaWrapperDepth--;
+            }
+            if (isOutermost) {
+                var container = document.getElementById('ayaDisplayContainerVertical');
+                var freshVal = container ? parseFloat(container.style.fontSize) : NaN;
+                if (!isNaN(freshVal)) _lastAyaVwValue = freshVal;
+                _rescaleAyaFont();
+            }
             return ret;
         };
     }
 
     // Corrige aussi le rendu déjà en place lors d'une rotation/redimensionnement
-    // (ex. dépliage du Fold en cours d'utilisation) sans attendre le prochain
-    // changement de verset.
-    window.addEventListener('resize', function() { setTimeout(_rescaleAyaFont, 300); });
+    // (ex. dépliage du Fold en cours d'utilisation, ou redimensionnement continu
+    // de la fenêtre) sans attendre le prochain changement de verset.
+    //
+    // requestAnimationFrame, PAS setTimeout(fn, 300) : un redimensionnement continu
+    // (ex. glisser le séparateur des DevTools) déclenche des dizaines de 'resize'
+    // par seconde. Avec setTimeout non annulé, CHAQUE événement empilait son propre
+    // timer 300ms indépendant -- pendant un drag prolongé, des dizaines de timers
+    // s'accumulaient et finissaient par se déclencher en rafale, chacun relisant une
+    // taille de fenêtre différente (celle du moment, pas celle prévue au départ) et
+    // réécrivant font-size à la suite -- d'où l'impression de taille qui "saute"
+    // pendant/après le drag selon l'instant exact où le curseur s'arrêtait. C'est le
+    // seul élément avec ce probleme car mosqueNameDisplayVertical/dateDisplayVertical
+    // (cf. _installMosqueNameFit/_installDateDisplayFit plus bas) utilisent déjà
+    // requestAnimationFrame, qui coalesce nativement a un seul recalcul par frame
+    // de rendu, toujours avec la taille la plus recente -- pas de pile de rappels
+    // perimes possible.
+    window.addEventListener('resize', function() { requestAnimationFrame(_rescaleAyaFont); });
 })();
 
 
@@ -17762,6 +18272,19 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     // de repositionnement boucle inutilement sur le garde-fou ci-dessus).
     function _tourAutoStart() {
         if (_tourIsDone()) return;
+        // Ne pas amorcer le tour tant qu'aucune mosquee n'est choisie (etat
+        // MOSQUE_CONFIG._NO_MOSQUE_SELECTED, pose par spec/mosquee.js) :
+        // plusieurs etapes ciblent des elements/textes lies a la mosquee
+        // (nom, infos...) qui n'ont pas de sens avant ce choix. Verifie
+        // directement window.MOSQUE_CONFIG plutot que via _isAndroidBoxMode()
+        // (meme condition) : cette derniere est une fonction PRIVEE a la
+        // fermeture de injectTechOptionsUI (pas exposee sur window), donc
+        // invisible ici -- un premier essai basé dessus (typeof === 'function')
+        // echouait silencieusement et laissait le tour demarrer quand meme.
+        // Pas besoin de retenter plus tard : choisir une mosquee declenche
+        // toujours un location.reload() (_installMosqueSelector), qui relance
+        // cette meme verification au prochain chargement, mosquee choisie.
+        if (!window.MOSQUE_CONFIG || window.MOSQUE_CONFIG._NO_MOSQUE_SELECTED) return;
         setTimeout(function() { window._ucStartOnboardingTour(); }, 1500);
     }
     if (document.readyState === 'complete') _tourAutoStart();
@@ -18071,12 +18594,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ═════════════════════════════════════════════════════════════════════════════
-// LOCALISATION — bouton "ma position" + carte Google Maps (mode vertical)
+// LOCALISATION — modale carte Google Maps "ma position" (mode vertical)
 // ─────────────────────────────────────────────────────────────────────────────
-// Bouton injecté juste à côté de #menuToggleButton, dans #mainVerticalContainer
-// -> visible UNIQUEMENT en mode vertical par héritage (même mécanisme CSS que
-// le reste du conteneur, cf. style1.css/style2.css @media orientation), sans
-// règle CSS dédiée nécessaire pour cacher/afficher selon l'orientation.
+// Le bouton dédié en haut à droite a été reconverti en bouton "Réglages" (cf.
+// _installSettingsModal) : cette fonctionnalité reste accessible via l'icône
+// GPS de la barre flottante du logo (ucLQBLocator, cf. _installLogoQuickBar),
+// qui appelle exactement openMapLocatorModal() ci-dessous — aucune perte
+// d'accès, juste un raccourci direct en moins.
 //
 // 100% GRATUIT, sans clé API ni facturation :
 // - Carte interactive (pan/zoom complet comme dans l'appli Google Maps) via
@@ -18094,37 +18618,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
 (function injectMapLocatorFeature() {
 
-    var SVG_LOCATE_ICON =
-        '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6">' +
-            '<circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/>' +
-            '<circle cx="12" cy="12" r="7"/>' +
-            '<line x1="12" y1="1" x2="12" y2="4"/>' +
-            '<line x1="12" y1="20" x2="12" y2="23"/>' +
-            '<line x1="1" y1="12" x2="4" y2="12"/>' +
-            '<line x1="20" y1="12" x2="23" y2="12"/>' +
-        '</svg>';
-
-    // ── 1) Bouton, inséré juste après #menuToggleButton (même parent) ──────
-    var btn = document.createElement('div');
-    btn.id = 'mapLocatorButtonVertical';
-    btn.title = 'الموقع على الخريطة';
-    btn.innerHTML = SVG_LOCATE_ICON;
-    btn.onclick = function () { openMapLocatorModal(); };
-
-    function _insertButton() {
-        if (document.getElementById('mapLocatorButtonVertical')) return true;
-        var menuBtn = document.getElementById('menuToggleButton');
-        if (!menuBtn || !menuBtn.parentNode) return false;
-        menuBtn.parentNode.insertBefore(btn, menuBtn.nextSibling);
-        return true;
-    }
-    if (!_insertButton()) {
-        document.addEventListener('DOMContentLoaded', function () {
-            if (!_insertButton()) setTimeout(_insertButton, 300);
-        });
-    }
-
-    // ── 2) Modale (overlay appendé à <html> pour ne pas subir la rotation
+    // ── Modale (overlay appendé à <html> pour ne pas subir la rotation
     //      appliquée à <body> en mode vrRIGHT/vrLEFT — même technique que
     //      #quranPlayerOverlay) ─────────────────────────────────────────────
     var overlay = document.createElement('div');
@@ -18295,7 +18789,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 // ═════════════════════════════════════════════════════════════════════════════
 // QIBLA — bouton "direction de la Qibla" (mode vertical, bas à droite)
 // ─────────────────────────────────────────────────────────────────────────────
-// Bouton jumeau de #mapLocatorButtonVertical (même conteneur, même mécanisme
+// Bouton jumeau de #ucSettingsButtonVertical (même conteneur, même mécanisme
 // d'affichage exclusif au mode vertical par héritage), positionné en bas à
 // droite. Ouvre une modale à deux onglets :
 //
@@ -18342,7 +18836,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
     }
 
-    // ── 1) Bouton, jumeau de mapLocatorButtonVertical, bas-droite ──────────
+    // ── 1) Bouton, jumeau de ucSettingsButtonVertical, bas-droite ──────────
     var SVG_QIBLA_ICON =
         '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6">' +
             '<circle cx="12" cy="12" r="9.2"/>' +
@@ -19030,6 +19524,28 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var obj = prayerTimesMinutesObject;
         if (!obj || typeof obj.FAJR !== 'number') return; // pas encore calcule
 
+        // Reglage "Afficher l'ecran Adhan" (showAzanScreenCheckbox, JS_DATA.
+        // ucShowAzanWindow) : seul flag "azan on/off" expose dans l'appli. Le
+        // core (m2body.js ~L2904) ne s'en sert QUE pour masquer le popup dans
+        // la fenetre ouverte -- le son (playAzanSoundFunction) et, ici, la
+        // programmation de l'alarme NATIVE (son MediaPlayer + notification,
+        // qui tourne meme appli fermee, cf. AzanPlaybackService) ignoraient ce
+        // reglage jusqu'ici : un utilisateur decochant "Afficher l'ecran Adhan"
+        // pensant desactiver l'azan continuait de recevoir le son natif + la
+        // notification en arriere-plan, sans aucun moyen de le desactiver.
+        // Desactive : annule toute alarme native deja programmee (heure exacte
+        // ET rappel "N min avant") et ne reprogramme rien.
+        var azanEnabled = (JS_DATA.ucShowAzanWindow != 0);
+        if (!azanEnabled) {
+            if (typeof window.AndroidMobile.cancelAllNotifications === 'function') {
+                window.AndroidMobile.cancelAllNotifications();
+            }
+            if (typeof window.AndroidMobile.log === 'function') {
+                window.AndroidMobile.log('[NativeAlarms] ucShowAzanWindow=0 -> alarmes natives annulees, rien reprogramme');
+            }
+            return;
+        }
+
         var keys = [
             { k: 'FAJR', name: 'Fajr' },
             { k: 'DOHR', name: 'Dhuhr' },
@@ -19112,6 +19628,19 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     // pouvait laisser la fonction "activee" sans alarme reellement programmee
     // pendant plusieurs heures.
     window._ucRescheduleNativeAzanAlarms = _sendToNative;
+
+    // Meme raisonnement que _ucRescheduleNativeAzanAlarms ci-dessus, applique
+    // au bouton "Afficher l'ecran Adhan" (showAzanScreenCheckbox, core) : sans
+    // ce hook, decocher ucShowAzanWindow annulait bien les alarmes au prochain
+    // UC_EVT.AZAN_TIME (jusqu'a plusieurs heures plus tard), pas immediatement.
+    if (typeof window.toggleAzanScreenFunction === 'function') {
+        var _origToggleAzanScreen = window.toggleAzanScreenFunction;
+        window.toggleAzanScreenFunction = function() {
+            var ret = _origToggleAzanScreen.apply(this, arguments);
+            _sendToNative();
+            return ret;
+        };
+    }
 
     _L('CUSTOM', 'INIT', { item: 'nativeAzanAlarms' });
 })();
@@ -19987,18 +20516,40 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ═════════════════════════════════════════════════════════════════════════════
-// BARRE FLOTTANTE DU LOGO (#appLogoImage, mode vertical uniquement)
+// BARRE FLOTTANTE DU LOGO (#appLogoImage + #ucSettingsButtonVertical, vertical uniquement)
 // ─────────────────────────────────────────────────────────────────────────────
 // Auparavant, un tap sur le logo ouvrait directement la modale Coran. Ce
-// comportement est remplacé par une petite barre flottante à 4 grandes icônes
-// (son azan, Coran, localisation GPS, boussole/Qibla) + une croix de
-// fermeture — chaque icône ouvre la modale déjà existante correspondante.
-// Même palette anthracite/or que les modales Qibla/Localisation (cf.
-// #qiblaModal dans custom.css) pour rester cohérent visuellement.
+// comportement est remplacé par une petite barre flottante VERTICALE (icônes
+// empilées, centrée à l'écran) à 6 grandes icônes (réglages, info mosquée, son
+// azan, Coran, localisation GPS, boussole/Qibla) + une croix de fermeture —
+// chaque icône ouvre la modale déjà existante correspondante. "Réglages"
+// ouvre _ucOpenSettingsModal (cf. _installSettingsModal) ; "Info mosquée"
+// ouvre la même modale que le tap sur #mosqueNameDisplayVertical (cf.
+// _installMosqueInfoModal / window._ucOpenMosqueInfoModal). Deux déclencheurs
+// pour cette même barre : le logo (comportement historique) ET le bouton
+// #ucSettingsButtonVertical en haut à droite (ex-bouton "ma position", cf.
+// injectMapLocatorFeature) — la barre horizontale d'origine n'avait plus lieu
+// d'être une fois ce second déclencheur ajouté, remplacée ici par cette
+// version verticale unique. Même palette anthracite/or que les modales
+// Qibla/Localisation (cf. #qiblaModal dans custom.css) pour rester cohérent
+// visuellement.
 (function _installLogoQuickBar() {
     var logoEl = document.getElementById('appLogoImage');
     if (!logoEl) return;
 
+    var SVG_GEAR = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor">' +
+        '<circle cx="12" cy="12" r="4.5"/>' +
+        '<rect x="10.7" y="2" width="2.6" height="6" rx="1"/>' +
+        '<rect x="10.7" y="16" width="2.6" height="6" rx="1"/>' +
+        '<rect x="10.7" y="2" width="2.6" height="6" rx="1" transform="rotate(45 12 12)"/>' +
+        '<rect x="10.7" y="16" width="2.6" height="6" rx="1" transform="rotate(45 12 12)"/>' +
+        '<rect x="10.7" y="2" width="2.6" height="6" rx="1" transform="rotate(90 12 12)"/>' +
+        '<rect x="10.7" y="16" width="2.6" height="6" rx="1" transform="rotate(90 12 12)"/>' +
+        '<rect x="10.7" y="2" width="2.6" height="6" rx="1" transform="rotate(135 12 12)"/>' +
+        '<rect x="10.7" y="16" width="2.6" height="6" rx="1" transform="rotate(135 12 12)"/>' +
+        '</svg>';
+    var SVG_MOSQUE = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor">' +
+        '<path d="M4,14 H18 V20 H4 Z M7,14 A4,4 0 0 1 15,14 Z M19,7 H21 V20 H19 Z M19,7 A1,1 0 0 1 21,7 Z"/></svg>';
     var SVG_SPEAKER = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor">' +
         '<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>';
     var SVG_QURAN = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor">' +
@@ -20013,6 +20564,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     overlay.className = 'ucLQBHidden';
     overlay.innerHTML =
         '<div id="ucLogoQuickBar">' +
+            '<div class="ucLQBIcon" id="ucLQBSettings">' + SVG_GEAR + '</div>' +
+            '<div class="ucLQBIcon" id="ucLQBMosqueInfo">' + SVG_MOSQUE + '</div>' +
             '<div class="ucLQBIcon" id="ucLQBSpeaker">' + SVG_SPEAKER + '</div>' +
             '<div class="ucLQBIcon" id="ucLQBQuran">' + SVG_QURAN + '</div>' +
             '<div class="ucLQBIcon" id="ucLQBLocator">' + SVG_GPS + '</div>' +
@@ -20020,6 +20573,32 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             '<div class="ucLQBIcon ucLQBClose" id="ucLQBClose">&#10006;</div>' +
         '</div>';
     document.documentElement.appendChild(overlay);
+
+    // ── Bouton déclencheur en haut à droite (#ucSettingsButtonVertical) ────
+    // Ex-bouton "ma position" (cf. injectMapLocatorFeature, qui ne crée plus
+    // que la modale carte désormais) — repositionné/repurposé ici en second
+    // déclencheur de cette même barre, à côté du logo. Insertion identique à
+    // l'ancien bouton : juste après #menuToggleButton, même conteneur.
+    (function _installSettingsTriggerButton() {
+        var btn = document.createElement('div');
+        btn.id = 'ucSettingsButtonVertical';
+        btn.title = 'الإعدادات';
+        btn.innerHTML = SVG_GEAR;
+        btn.onclick = function () { openLogoQuickBar(); };
+
+        function _insertButton() {
+            if (document.getElementById('ucSettingsButtonVertical')) return true;
+            var menuBtn = document.getElementById('menuToggleButton');
+            if (!menuBtn || !menuBtn.parentNode) return false;
+            menuBtn.parentNode.insertBefore(btn, menuBtn.nextSibling);
+            return true;
+        }
+        if (!_insertButton()) {
+            document.addEventListener('DOMContentLoaded', function () {
+                if (!_insertButton()) setTimeout(_insertButton, 300);
+            });
+        }
+    })();
 
     function openLogoQuickBar() {
         overlay.classList.remove('ucLQBHidden');
@@ -20042,6 +20621,16 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         if (typeof fn === 'function') fn();
     }
 
+    document.getElementById('ucLQBSettings').addEventListener('click', function() {
+        _openTarget(function() {
+            if (typeof window._ucOpenSettingsModal === 'function') window._ucOpenSettingsModal();
+        });
+    });
+    document.getElementById('ucLQBMosqueInfo').addEventListener('click', function() {
+        _openTarget(function() {
+            if (typeof window._ucOpenMosqueInfoModal === 'function') window._ucOpenMosqueInfoModal();
+        });
+    });
     document.getElementById('ucLQBSpeaker').addEventListener('click', function() {
         _openTarget(function() {
             if (typeof window.openAzanCatalogModal === 'function') window.openAzanCatalogModal();

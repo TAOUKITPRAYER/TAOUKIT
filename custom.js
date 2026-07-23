@@ -21276,6 +21276,37 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         };
     }
 
+    // Meme raisonnement, applique aux boutons +/- d'ajustement de l'heure de
+    // l'azan par priere (onglet "azanAdj", core -> JS_DATA.ucAthanMinutesXXX,
+    // incrementAthanMinutesFunction/decrementAthanMinutesFunction). Constate
+    // en pratique (test Fajr, 24/07/2026) : ajuster ce decalage pour amener
+    // l'azan a une heure de test proche ne reprogrammait PAS l'alarme
+    // native -- celle-ci restait figee sur l'ancienne heure (calculee au
+    // dernier _sendToNative(), potentiellement des heures plus tot), donc ne
+    // se declenchait jamais au nouvel horaire affiche/utilise cote JS. Le
+    // popup azan JS, lui, se declenchait bien (pilote par JS_DATA en temps
+    // reel) mais restait MUET (mode "source unique", cf. plus haut) en
+    // attendant un natif qui ne jouait jamais -- silence total malgre volume
+    // au maximum, jusqu'au timer de securite / au declenchement de l'iqama.
+    if (typeof window.incrementAthanMinutesFunction === 'function') {
+        var _origIncrementAthanMinutes = window.incrementAthanMinutesFunction;
+        window.incrementAthanMinutesFunction = function() {
+            var ret = _origIncrementAthanMinutes.apply(this, arguments);
+            _L('AZAN', 'RESCHEDULE', { reason: 'athan_time_adjusted', prayerKey: arguments[0] });
+            _sendToNative();
+            return ret;
+        };
+    }
+    if (typeof window.decrementAthanMinutesFunction === 'function') {
+        var _origDecrementAthanMinutes = window.decrementAthanMinutesFunction;
+        window.decrementAthanMinutesFunction = function() {
+            var ret = _origDecrementAthanMinutes.apply(this, arguments);
+            _L('AZAN', 'RESCHEDULE', { reason: 'athan_time_adjusted', prayerKey: arguments[0] });
+            _sendToNative();
+            return ret;
+        };
+    }
+
     _L('CUSTOM', 'INIT', { item: 'nativeAzanAlarms' });
 })();
 // ═══ FIN NATIVE AZAN ALARMS ═══

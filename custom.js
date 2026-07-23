@@ -116,7 +116,7 @@ if (typeof _L === 'undefined') {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.51';
+var CUSTOM_APP_VERSION = '11.71';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -183,6 +183,23 @@ if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l
 
 
 const JS_CUSTOM_DEFAULTS = {
+    // ── Profil mosquée éditable (ucMosqueInfoAddress, cf. _installMosqueInfoModal) :
+    // visible par tous, modifiable seulement si mosquée anonyme ou admin PIN
+    // déverrouillé (window._ucAdminUnlocked). Fait partie de JS_DATA_CUSTOM,
+    // donc automatiquement inclus dans l'export/import/proposition de mosquée
+    // (aucune colonne Supabase dédiée nécessaire).
+    ucMosqueAddress:        '',
+    ucMosquePhone:          '',
+    ucMosqueEmail:          '',
+    ucMosqueLat:            '',
+    ucMosqueLng:            '',
+    ucMosqueWomenAllowed:   0,
+    ucMosqueWomenAblution:  0,
+    ucMosqueJanaza:         0,   // Prestation : salat al Janaza disponible
+    ucMosqueKottab:         0,   // Prestation : kottab (école coranique) disponible
+    ucMosqueParking:        0,
+    ucMosqueSocialUrl:      '',
+    ucMosqueImageUrl:       '',   // URL Supabase Storage (photo personnalisee, cf. _openMosquePhotoPicker)
     ucBlinkingEnabled:      1,
     ucStartPrayerBlinking:  60,
     ucShowSpeakerIcon:      1,
@@ -608,6 +625,13 @@ const MOSQUE_CONFIG = (typeof window.MOSQUE_CONFIG !== 'undefined')
         console.log('[CFG] Aucune mosquee selectionnee — _applyMosqueConfig ignore');
         return;
     }
+    // Mosquée gérée à distance (cf. spec/mosquee.js) : JS_DATA/JS_DATA_CUSTOM
+    // ont déjà été entièrement écrits par _restoreFromJson (custom.js) avant
+    // le reload qui a amené ici -- pas de config statique à (ré)appliquer.
+    if (MOSQUE_CONFIG._UC_REMOTE_MANAGED) {
+        console.log('[CFG] Mosquee geree a distance — _applyMosqueConfig ignore');
+        return;
+    }
     var storedVersion = JS_CUSTOM.ucMosqueConfigVersion || '';
 
     if (storedVersion === MOSQUE_CONFIG.VERSION) {
@@ -754,16 +778,26 @@ function _ucGetMosqueHistory() {
         return Array.isArray(arr) ? arr : [];
     } catch(e) { return []; }
 }
+// Une mosquée anonyme n'a pas de mosque_id réel côté serveur (OneSignal tag,
+// Supabase...) — elle ne doit jamais entrer dans l'historique de notifications
+// (UC_MOSQUE_HISTORY), sans quoi elle apparaît à tort dans ucMosqueInfoNotifList
+// / ucMosqueNotifList (panneau "Mes notifications").
+function _ucIsAnonymousMosqueId(id) {
+    if (!id || id === 'anonymous.generic') return true;
+    var reg = window.MOSQUES_REGISTRY || {};
+    return !!(reg[id] && reg[id]._UC_ANONYMOUS);
+}
 function _ucAddMosqueToHistory(id) {
     var hist = _ucGetMosqueHistory();
-    if (id && hist.indexOf(id) === -1) {
+    if (id && !_ucIsAnonymousMosqueId(id) && hist.indexOf(id) === -1) {
         hist.push(id);
         try { localStorage.setItem('UC_MOSQUE_HISTORY', JSON.stringify(hist)); } catch(e) {}
     }
     return hist;
 }
-window._ucGetMosqueHistory   = _ucGetMosqueHistory;
-window._ucAddMosqueToHistory = _ucAddMosqueToHistory;
+window._ucGetMosqueHistory      = _ucGetMosqueHistory;
+window._ucAddMosqueToHistory    = _ucAddMosqueToHistory;
+window._ucIsAnonymousMosqueId   = _ucIsAnonymousMosqueId;
 
 // ── MOSQUÉES EN SOURDINE (opt-out de notifications par mosquée) ─────────────
 // L'utilisateur peut choisir de ne plus recevoir les notifications d'une
@@ -878,6 +912,44 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
         _el.innerHTML = convertToArabicDigitsFunction(convertTo12HourFormat(_jt));
     };
     console.log('[CFG] patch jomoaTimeDisplayHorizontal installé');
+})();
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── PATCH checkInternetConnectionFunction ────────────────────────────────────
+// Problème : la fonction core (m2body.js) sonde https://www.tawkit.net/version/
+// (const versionCheckUrl, index.html) — ce serveur timeout régulièrement
+// (ERR_CONNECTION_TIMED_OUT en console), ce qui fait passer l'indicateur
+// internet au rouge alors que la connexion est bien active.
+// Solution : remplacer la cible par le projet Supabase (tjmjmlzwzebocfdmifrg,
+// mêmes URL/clé anon déjà utilisées partout ailleurs dans ce fichier), plus
+// fiable/rapide que tawkit.net pour une simple sonde de connectivité — même
+// mécanique que le core (fetch + response.ok), simplement retargetée.
+(function _patchInternetCheck() {
+    if (typeof checkInternetConnectionFunction !== 'function') return;
+    var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+               || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+    var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+               || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+    window.checkInternetConnectionFunction = function() {
+        if (JS_DATA.ucVerifyInternet == 0) return;
+        if (!window.navigator.onLine) {
+            dolog('___navigator_NOT_onLine');
+            setInternetStatus(false);
+            return;
+        }
+        try {
+            fetch(_SB_URL + '/rest/v1/mosques?select=mosque_id&limit=1', {
+                method: 'HEAD',
+                headers: { apikey: _SB_KEY, Authorization: 'Bearer ' + _SB_KEY }
+            })
+            .then(function(response) { setInternetStatus(response.ok); })
+            .catch(function() { dolog('error_catch_fetch'); setInternetStatus(false); });
+        } catch (e) {
+            dolog('error_catch_fetch');
+            setInternetStatus(false);
+        }
+    };
+    console.log('[CFG] patch checkInternetConnectionFunction (Supabase) installé');
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1144,10 +1216,44 @@ var _ucActiveIqamaSeqEpoch = -1;
         //    en cours (cf. commentaire _ucIqamaSeqEpoch ci-dessus).
         _ucIqamaSeqEpoch++;
 
+        // Diagnostic AVANT nettoyage : capture ce qui etait effectivement
+        // bloque/visible a cet instant -- permet de confirmer, dans les logs,
+        // si ce resync avait bien quelque chose a rattraper (et quoi) plutot
+        // que de deviner apres coup.
+        var _wasAzanBlocked   = (typeof window._ucIsAzanBlocked === 'function') && window._ucIsAzanBlocked();
+        var _wasSalatNabiVis  = (typeof window._ucIsSalatNabiVisible === 'function') && window._ucIsSalatNabiVisible();
+        var _iqamaTextWasShown = ['iqamaPopupVertical', 'iqamaPopupHorizontal'].some(function(id) {
+            var el = document.getElementById(id);
+            return el && el.className === 'visibleTransitionClass';
+        });
+        _L('RESYNC', 'STATE_BEFORE', {
+            reason: reason || 'visibilitychange',
+            azanBlocked: _wasAzanBlocked, salatNabiVisible: _wasSalatNabiVis, iqamaTextShown: _iqamaTextWasShown
+        });
+
         // 1) Etat de base : masque toutes les surcouches transitoires via leurs
         //    vraies fonctions core (pas un toggle DOM brut) pour que le nettoyage
         //    associe (audio, ecouteurs UC_EVT, etc.) se declenche normalement.
         //    Idempotent : ne rien changer visuellement si deja masque.
+        // Lever D'ABORD le verrou "audio azan en cours" (cf. custom.js,
+        // _ucReleaseAzanBlock) : sinon hideAzanPopupFunction() ci-dessous
+        // refuse de fermer (POPUP_HIDE_BLOCKED) si l'ecran s'est eteint
+        // PENDANT la lecture -- le <audio> JS (desormais muet, cf. source
+        // audio unique cote natif) gele avant son 'ended' et ne relache
+        // jamais le verrou tout seul. Meme raisonnement pour SalatNabi.
+        if (typeof window._ucReleaseAzanBlock === 'function') window._ucReleaseAzanBlock('resync_' + (reason || 'visibilitychange'));
+        // IMPORTANT : ne fermer SalatNabi que s'il etait DEJA visible avant ce
+        // resync (etat vraiment perime, cf. _wasSalatNabiVis capture plus haut)
+        // -- pas inconditionnellement. La ligne precedente peut, en cascade
+        // (hideAzanPopupFunction -> AZAN_HIDE), declencher un TOUT NOUVEAU
+        // SalatNabi legitime (jeudi soir) ; l'appeler sans condition ici le
+        // refermerait immediatement, une fraction de seconde apres son
+        // ouverture normale -- constate en test (cf. STATE_AFTER montrant
+        // salatNabiVisible=false alors qu'un salatNabi venait tout juste
+        // d'etre correctement declenche par la cascade).
+        if (_wasSalatNabiVis && typeof window._ucSalatNabiForceHide === 'function') {
+            window._ucSalatNabiForceHide('resync_' + (reason || 'visibilitychange'));
+        }
         if (typeof window.hideAzanPopupFunction === 'function') window.hideAzanPopupFunction();
         if (typeof window.deactivateBlackScreen === 'function') window.deactivateBlackScreen();
         if (typeof window.hideAzkarDisplayFunction === 'function') window.hideAzkarDisplayFunction();
@@ -1170,6 +1276,50 @@ var _ucActiveIqamaSeqEpoch = -1;
         // de fermeture (20s) est lui aussi suspendu en arriere-plan — meme
         // logique que les surcouches core ci-dessus.
         if (typeof window._ucForceHidePostAzanDoua === 'function') window._ucForceHidePostAzanDoua();
+
+        // Rattrapage : Coran auto-demarre resté en lecture au-delà de son
+        // azan (constate en pratique via rapport debug — Isha jamais
+        // arrêté). Cause : applyNextPrayerHighlight() (custom.js) ne réagit
+        // QU'AU FRANCHISSEMENT EN TEMPS RÉEL du seuil d'arrêt (remainingMinutes
+        // <= thresholdMin) — si l'écran s'éteint PILE à ce moment, le check
+        // n'est jamais évalué, et il ne "rattrape" jamais après coup : une
+        // fois réveillé, la prière suivante (_getUpcomingPrayerKey) a déjà
+        // changé, donc le seuil de l'ANCIENNE prière n'est plus jamais
+        // atteignable. Ici : si le Coran auto-démarré est toujours audible
+        // ET que la prière suivante a changé depuis son déclenchement
+        // (_sqaPrayerKey), l'azan pour laquelle il avait été lancé est
+        // nécessairement déjà passé -> on l'arrête maintenant, tardivement
+        // mais proprement (même chaîne que l'arrêt normal : pause + fin.mp3).
+        if (typeof _sqaPrayerKey !== 'undefined' && _sqaPrayerKey &&
+            typeof _getUpcomingPrayerKey === 'function') {
+            var _freshNextKey = _getUpcomingPrayerKey();
+            var _qAudio = document.getElementById('quranAudioPlayer');
+            var _qStillPlaying = (typeof _qpPlayedThisCycle !== 'undefined' && _qpPlayedThisCycle) ||
+                                  (_qAudio && !_qAudio.paused);
+            if (_qStillPlaying && _freshNextKey !== _sqaPrayerKey) {
+                _L('AUDIO', 'STOP', {
+                    action: 'stopBeforeAzan', prayer: _sqaPrayerKey, reason: 'resync_catchup',
+                    note: 'prayer_changed_while_frozen_never_reached_stop_threshold'
+                });
+                if (_qAudio && !_qAudio.paused) _qAudio.pause();
+                if (typeof window._qpStopEq === 'function') window._qpStopEq();
+                if (typeof window._playFinAudio === 'function') window._playFinAudio();
+                if (typeof window._pendingAutoStart !== 'undefined') window._pendingAutoStart = false;
+                if (typeof window._hideAutoplayUnlockModal === 'function') window._hideAutoplayUnlockModal();
+                // Repart propre pour le prochain cycle (celui de _freshNextKey) :
+                // sans ceci, _sqaFired/_sqbFired resteraient a l'etat de l'ANCIEN
+                // cycle et pourraient empecher a tort le prochain declenchement.
+                _sqaPrayerKey = _freshNextKey;
+                _sqaFired = false;
+                _sqbFired = false;
+                _qpPlayedThisCycle = false;
+            } else {
+                _L('AUDIO', 'INFO', {
+                    action: 'resync_quran_check', stillPlaying: _qStillPlaying,
+                    prayerAtStart: _sqaPrayerKey, prayerNow: _freshNextKey
+                });
+            }
+        }
 
         // 2) Neutralise l'unique continuation deja programmee (setTimeout avec
         //    chaine eval'ee, donc impossible a annuler via clearTimeout) pour les
@@ -1204,6 +1354,16 @@ var _ucActiveIqamaSeqEpoch = -1;
         if (typeof window.checkAndRestoreIqamaCounter === 'function') {
             window.checkAndRestoreIqamaCounter();
         }
+
+        // Diagnostic APRES nettoyage : confirme que rien n'est reste bloque
+        // (a comparer avec STATE_BEFORE plus haut -- tout doit etre a false ici).
+        var _stillAzanBlocked  = (typeof window._ucIsAzanBlocked === 'function') && window._ucIsAzanBlocked();
+        var _stillSalatNabiVis = (typeof window._ucIsSalatNabiVisible === 'function') && window._ucIsSalatNabiVisible();
+        _L('RESYNC', 'STATE_AFTER', {
+            reason: reason || 'visibilitychange',
+            azanBlocked: _stillAzanBlocked, salatNabiVisible: _stillSalatNabiVis,
+            recovered: (_wasAzanBlocked && !_stillAzanBlocked) || (_wasSalatNabiVis && !_stillSalatNabiVis)
+        });
 
         _L('RESYNC', 'FIRE', { action: 'resync_prayer_sequence', reason: reason || 'visibilitychange' });
     }
@@ -1543,11 +1703,18 @@ const _quranAutoStartConfig = {
     ASSR:  { daysSetting: 'ucStartQuranBeforeAzanAsrDays',  setting: 'ucStartQuranBeforeAzanAsr',   label: 'العصر'  },
     MGRB:  { daysSetting: 'ucStartQuranBeforeAzanMgrbDays', setting: 'ucStartQuranBeforeAzanMgrb',  label: 'المغرب' },
     ISHA:  { daysSetting: 'ucStartQuranBeforeAzanIshaDays', setting: 'ucStartQuranBeforeAzanIsha',  label: 'العشاء' },
-    JOMOA: { buttonId: 'startQuranBeforeAzanJomoaButton',   setting: 'ucStartQuranBeforeAzanJomoa', label: 'الجمعة' }
+    // الجمعة remplace الظهر le vendredi (cf. _getUpcomingPrayerKey) — plutôt que
+    // de garder un réglage séparé (ancien ucStartQuranBeforeAzanJomoa, ancienne
+    // ligne autonome ucQAJomoaRow), on réutilise ICI directement le même délai
+    // ET le même jour (case "الجمعة" déjà présente dans la grille sous la
+    // colonne الظهر) : au final c'est la même case du tableau qui pilote les
+    // deux, il n'y a jamais de vendredi où الظهر ET الجمعة existeraient tous
+    // les deux en même temps pour cette mosquée.
+    JOMOA: { daysSetting: 'ucStartQuranBeforeAzanDohrDays', setting: 'ucStartQuranBeforeAzanDohr',  label: 'الجمعة' }
 };
-// Grille jours x prières (cf. _buildQuranAutoStartTableHtml) : الجمعة n'a pas
-// de sélecteur de jours (elle ne tombe que le vendredi) et reste donc hors
-// tableau, gérée à part (bouton simple, cf. refreshStartQuranBeforeAzanButtonsUI).
+// Grille jours x prières (cf. _buildQuranAutoStartTableHtml) : الجمعة réutilise
+// la case "vendredi" de la colonne الظهر (cf. _quranAutoStartConfig.JOMOA
+// ci-dessus) et reste donc hors grille visuelle (5 colonnes fixes).
 const _quranAutoStartGridKeys = ['FAJR', 'DOHR', 'ASSR', 'MGRB', 'ISHA'];
 
 // ── Libellés multilingues (cf. _ucMenuLinkLang) — remplacent les anciennes
@@ -1849,6 +2016,51 @@ function _startQuranAutoPlayback() {
 // Position 0=FAJR  1=DOHR  2=ASSR  3=MGRB  4=ISHA
 const _LIGHT_PRAYER_KEYS   = ['FAJR', 'DOHR', 'ASSR', 'MGRB', 'ISHA'];
 const _LIGHT_PRAYER_LABELS = ['الفجر', 'الظهر', 'العصر', 'المغرب', 'العشاء'];
+
+// ── Tableau de sélection des prières (remplace l'ancienne rangée de
+// checkboxes en ligne) — même style/structure que _buildTakbirTableHtml et
+// _buildQuranAutoStartTableHtml : ligne 1 = noms des prières, ligne 2 = case
+// cliquable "✕" (prière incluse dans le masque ou non). Un seul appelant
+// (refreshLightProgrammingUI), pas de miroir QP pour ce panneau.
+function _buildLightPrayerMaskTableHtml(item) {
+    const mask = String(JS_CUSTOM[item.prayersMaskSetting] || '11111');
+    let html = '<table class="ucLPMTable" dir="rtl"><tr>';
+    _LIGHT_PRAYER_LABELS.forEach(function (label) {
+        html += '<th>' + label + '</th>';
+    });
+    html += '</tr><tr>';
+    _LIGHT_PRAYER_KEYS.forEach(function (key, idx) {
+        const active = mask.charAt(idx) === '1';
+        html += '<td class="ucLPMCell" onclick="toggleLightPrayerMaskFunction(\'' + item.key + '\',' + idx + ');">' +
+            (active ? '&#10005;' : '') + '</td>';
+    });
+    html += '</tr></table>';
+    return html;
+}
+
+// ── Tableau du sélecteur de déclencheur (remplace la rangée de 3 cases
+// exclusives en ligne) — même style/structure que _buildLightPrayerMaskTableHtml :
+// ligne 1 = libellés, ligne 2 = case cliquable "✕" (choix exclusif, une seule
+// active à la fois). Seul mihrabOn définit triggerSetting actuellement, mais
+// la fonction reste générique pour tout item futur qui en définirait un.
+const _LIGHT_TRIGGER_VALUES = ['beforeAzan', 'afterAzanHide', 'beforeIqama'];
+const _LIGHT_TRIGGER_LABELS = ['قبل نافذة الأذان', 'بعد نافذة الأذان', 'قبل الإقامة'];
+
+function _buildLightTriggerTableHtml(item) {
+    const trig = JS_CUSTOM[item.triggerSetting] || item.trigger;
+    let html = '<table class="ucLPMTable" dir="rtl" style="margin:0 auto;"><tr>';
+    _LIGHT_TRIGGER_LABELS.forEach(function (label) {
+        html += '<th>' + label + '</th>';
+    });
+    html += '</tr><tr>';
+    _LIGHT_TRIGGER_VALUES.forEach(function (value) {
+        const active = (trig === value);
+        html += '<td class="ucLPMCell" onclick="toggleLightItemTriggerFunction(\'' + item.key + '\',\'' + value + '\');">' +
+            (active ? '&#10005;' : '') + '</td>';
+    });
+    html += '</tr></table>';
+    return html;
+}
 
 // Retourne true si l'item est autorisé pour la prière donnée
 function _lightPrayerAllowed(item, prayerKey) {
@@ -2349,32 +2561,72 @@ updateNextPrayerDisplay = function(remainingMinutes) {
     window.closeMenuFunction = function() {
         isMenuOpen = true;   // toujours "fermé", jamais toggle
         hideElementByIdFunction('mainMenuContainer');
-        // Restaure les boutons localisateur + qibla (masqués quand menu était ouvert)
+        // Restaure le bouton réglages (masqué quand le menu était ouvert) —
+        // sauf si un sous-menu/modal accessible depuis le menu vient de
+        // s'ouvrir à sa place (cf. _ucSyncSettingsBtnVisibility plus bas, qui
+        // recalcule l'état correct juste après, y compris ce cas précis).
         var _mlBm = document.getElementById('ucSettingsButtonVertical');
         if (_mlBm) _mlBm.style.display = '';
-        var _qbBm = document.getElementById('qiblaButtonVertical');
-        if (_qbBm) _qbBm.style.display = '';
+        if (typeof window._ucSyncSettingsBtnVisibility === 'function') {
+            setTimeout(window._ucSyncSettingsBtnVisibility, 0);
+        }
     };
     console.log('[MENU] patch closeMenuFunction installé');
 })();
 
-// ── Menu hamburger → masquer/restaurer ucSettingsButtonVertical + qiblaButtonVertical ──
+// ── Menu hamburger + tout sous-menu/modal accessible depuis lui → masquer/
+// restaurer ucSettingsButtonVertical ──────────────────────────────────────
 // toggleMenuFunction() (m2body.js) ne peut pas être patché ici de façon fiable
 // (exécution avant DOMContentLoaded) ; on intercepte le clic sur les boutons.
 // Après le clic, isMenuOpen === false signifie que le menu est AFFICHÉ (naming
 // inversé dans m2body.js : true = fermé, false = ouvert).
+// ucSettingsButtonVertical (z-index 9999333) dépasse aussi bien
+// #mainMenuContainer que TOUTE section .modalPopupClass ouverte depuis le
+// menu (optionsSectionId, locationSectionId, techOptionsSectionId,
+// lightProgrammingSectionId, etc.) — fermer le menu principal pour ouvrir
+// l'une de ces sections restaurait par erreur ce bouton par-dessus, d'où la
+// surveillance générique ci-dessous (plutôt qu'un patch par section).
 (function _bindMenuLocatorBtn() {
-    function _syncOnMenuToggle() {
-        var menuVisible = (typeof window.isMenuOpen !== 'undefined' && !window.isMenuOpen);
-        var mlBtn = document.getElementById('ucSettingsButtonVertical');
-        if (mlBtn) mlBtn.style.display = menuVisible ? 'none' : '';
-        var qbBtn = document.getElementById('qiblaButtonVertical');
-        if (qbBtn) qbBtn.style.display = menuVisible ? 'none' : '';
+    function _anyMenuModalOpen() {
+        var modals = document.querySelectorAll('.modalPopupClass');
+        for (var i = 0; i < modals.length; i++) {
+            if (modals[i].style.visibility === 'visible') return true;
+        }
+        return false;
     }
+    function _syncOnMenuToggle() {
+        // isMenuOpen est un `let` de portée module dans m2body.js, jamais posé
+        // sur window (cf. CLAUDE.md "const/let au scope module") — lire
+        // l'identifiant nu (résolu via la chaîne de portée globale partagée
+        // entre scripts classiques) plutôt que window.isMenuOpen (undefined).
+        var menuVisible = (typeof isMenuOpen !== 'undefined' && !isMenuOpen);
+        var mlBtn = document.getElementById('ucSettingsButtonVertical');
+        if (mlBtn) mlBtn.style.display = (menuVisible || _anyMenuModalOpen()) ? 'none' : '';
+    }
+    window._ucSyncSettingsBtnVisibility = _syncOnMenuToggle;
+
     var btn  = document.getElementById('menuToggleButton');
     var btnH = document.getElementById('menuToggleButtonHorizontal');
     if (btn)  btn.addEventListener('click',  _syncOnMenuToggle);
     if (btnH) btnH.addEventListener('click', _syncOnMenuToggle);
+
+    // Surveille l'ouverture/fermeture de TOUTE section .modalPopupClass
+    // (style.visibility, cf. showElementFunction/closeModalFunction core) —
+    // capte aussi les cas non déclenchés par un clic sur menuToggleButton
+    // (ex. fermeture via la croix propre à la section).
+    if (typeof MutationObserver === 'function') {
+        var _mpObserver = new MutationObserver(_syncOnMenuToggle);
+        function _watchModalPopups() {
+            var modals = document.querySelectorAll('.modalPopupClass');
+            for (var i = 0; i < modals.length; i++) {
+                _mpObserver.observe(modals[i], { attributes: true, attributeFilter: ['style'] });
+            }
+        }
+        _watchModalPopups();
+        // Rattrape les sections .modalPopupClass injectées après coup
+        // (custom.js : techOptionsSectionId, lightProgrammingSectionId...).
+        new MutationObserver(_watchModalPopups).observe(document.body, { childList: true });
+    }
 })();
 
 // ── Menu à onglets "Principal" / "Boîte à outils" ─────────────────────────
@@ -2601,9 +2853,18 @@ function _rmSetDownloadActive(id, active) {
     techBtn.onclick = function() { closeMenuFunction(); showElementFunction('techOptionsSectionId'); };
     document.getElementById('menuSectionsContainer').appendChild(techBtn);
 
+    // Visibilité conditionnée à l'état admin déverrouillé (ou mosquée anonyme),
+    // exactement comme ucMosqueProfileEditBtn — cf. _refreshUI() dans
+    // _installAdminBtnLockGate plus bas dans ce fichier, qui bascule
+    // lightBtn.style.display à chaque changement d'état. Plus de prompt PIN
+    // ponctuel au clic (l'ancien overlay ucLightPinOverlay est retiré) : la
+    // programmation lumineuse pilote du matériel physique de la mosquée
+    // (amplis, mihrab, minaret, ستارة), au même titre que le profil mosquée —
+    // même garde-fou, même mécanisme, pas un second système parallèle.
     const lightBtn = document.createElement('div');
     lightBtn.id = 'lightProgrammingButton';
     lightBtn.innerHTML = '💡 البرمجة الضوئية';
+    lightBtn.style.display = 'none'; // état initial ; _refreshUI() le corrige au chargement
     lightBtn.onclick = function() { closeMenuFunction(); showElementFunction('lightProgrammingSectionId'); };
     document.getElementById('menuSectionsContainer').appendChild(lightBtn);
 
@@ -2645,19 +2906,18 @@ function _rmSetDownloadActive(id, active) {
                 &nbsp;<span>تشغيل القرآن قبل الأذان</span>
             </div>
             <div id="ucQuranAutoStartTableHost" style="padding:6px 0 0 4px;"></div>
-            <div class="ucQAJomoaRow"><span id="ucQAJomoaLabel"></span>&nbsp;<span class='clickableWhiteClass' id='startQuranBeforeAzanJomoaButton' onclick="editStartQuranBeforeAzanDelayFunction('JOMOA');"></span></div>
             <hr>
 
             <!-- ═══ VARIABLE : ShowSpeakerIcon ═══ -->
-            <div><input type='checkbox' id='showSpeakerIconCheckbox' onchange='toggleShowSpeakerIconFunction();'> &nbsp;<span>تفعيل الأذان في الواجهة الرّئيسية</span></div>
+            <div><input type='checkbox' id='showSpeakerIconCheckbox' onchange='toggleShowSpeakerIconFunction();'> &nbsp;<span>تفعيل أيقونة الأذان في الواجهة الرّئيسية</span></div>
 
             <!-- ═══ VARIABLE : ShowQuranIcon ═══ -->
-            <div><input type='checkbox' id='showQuranIconCheckbox' onchange='toggleShowQuranIconFunction();'> &nbsp;<span>ترتيل القرآن</span></div>
+            <div><input type='checkbox' id='showQuranIconCheckbox' onchange='toggleShowQuranIconFunction();'> &nbsp;<span>تفعيل أيقونة ترتيل القرآن في الواجهة الرّئيسية</span></div>
 
             <hr>
 
             <!-- ═══ SERVEUR HTTP CORAN ═══ -->
-            <div>
+            <div id='quranServerEnabledDiv'>
                 <input type='checkbox' id='quranServerEnabledCheckbox' onchange='toggleQuranServerEnabledFunction();'>
                 &nbsp;<span>خادم القرآن (HTTP)</span>
                 &nbsp;<span class='clickableWhiteClass' id='quranServerUrlButton' onclick='editQuranServerUrlFunction();'></span>
@@ -2688,9 +2948,9 @@ function _rmSetDownloadActive(id, active) {
             <hr>
             <div>
                 <input type='checkbox' id='salatNabiEnabledCheckbox' onchange='toggleSalatNabiEnabledFunction();'>
-                &nbsp;<span>الصلاة على النبي ﷺ (ليلة الجمعة) — مع الصوت</span>
+                &nbsp;<span>تفعيل الصلاة على النبي ﷺ (ليلة الجمعة)</span>
             </div>
-            <div style='padding:4px 0 0 26px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;'>
+            <div style='padding:4px 0 0 26px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;'>
                 <label style='display:inline-flex;align-items:center;gap:4px;'>
                     <input type='checkbox' id='salatNabiMagrebCheckbox' onchange='toggleSalatNabiPrayerFunction("MGRB");'>
                     <span>المغرب</span>
@@ -2757,6 +3017,13 @@ function _rmSetDownloadActive(id, active) {
     initReciterManagerUI();
 
     // -- Checkbox : azan depuis le serveur HTTP --
+    // Masquée (cf. div.style.display plus bas) : l'azan est désormais géré
+    // via le catalogue (azanCatalogBody, cf. injectAzanCatalogFeature) ou par
+    // défaut spec/audio/ — ce réglage n'est plus exposé dans l'UI. La logique
+    // sous-jacente (JS_CUSTOM.ucAzanFromServer, lue par _redirectAzanAudio /
+    // _redirectSalatNabiAudio / _acRestoreDefaultAzan) reste INTACTE et gèle
+    // simplement à sa valeur actuelle (pas de migration forcée, pour ne rien
+    // changer au comportement audio déjà en place sur les mosquées existantes).
     (function _injectAzanFromServerCheckbox() {
         var azanCb = document.getElementById('azanIqamaByVoiceCheckbox');
         if (!azanCb) return;
@@ -2765,6 +3032,7 @@ function _rmSetDownloadActive(id, active) {
         var div = document.createElement('div');
         div.id = 'azanFromServerDiv';
         div.style.paddingRight = '22px';
+        div.style.display = 'none';
         div.innerHTML = '<input type="checkbox" id="azanFromServerCheckbox"'
             + ' onchange="toggleAzanFromServerFunction()">'
             + ' &nbsp;<label for="azanFromServerCheckbox">'
@@ -2772,6 +3040,24 @@ function _rmSetDownloadActive(id, active) {
         parentDiv.insertAdjacentElement('afterend', div);
         var cb = document.getElementById('azanFromServerCheckbox');
         if (cb) cb.checked = (JS_CUSTOM.ucAzanFromServer == 1);
+    })();
+
+    // -- Checkbox : serveur HTTP Coran --
+    // Dédiée aux boîtiers mosquée (Android TV box) et aux déploiements
+    // "kiosque" Windows/PC (navigateur, pas de bridge natif) — pas de sens sur
+    // un téléphone personnel. Même détection que _disableTvPointerOnPhone
+    // (custom.js) : ne masque QUE si le bridge natif confirme explicitement
+    // "téléphone" (isAndroidTv() === false) ; en l'absence du bridge
+    // (navigateur/PC), on ne touche à rien (traité comme "windows").
+    (function _hideQuranServerCheckboxOnPhone() {
+        var _isPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && !window.AndroidMobile.isAndroidTv());
+        if (!_isPhone) return;
+        var row = document.getElementById('quranServerEnabledDiv');
+        if (row) row.style.display = 'none';
+        // Le mirroir #quranServerEnabledDivQP (modale Lecteur Coran) n'existe
+        // pas encore à ce stade (injectQuranPlayerModal s'exécute plus tard) —
+        // masqué depuis cette IIFE-là (cf. _hideQuranServerCheckboxOnPhoneQP).
     })();
 
 
@@ -2822,6 +3108,10 @@ function refreshSalatNabiUI() {
     if (cb)  cb.checked  = (JS_CUSTOM.ucSalatNabiEnabled       == 1);
     if (cbM) cbM.checked = (JS_CUSTOM.ucSalatNabiMagrebEnabled == 1);
     if (cbI) cbI.checked = (JS_CUSTOM.ucSalatNabiIshaEnabled   == 1);
+    // Mgrb/Isha n'ont de sens que si la fonction est activée globalement.
+    var masterOff = (JS_CUSTOM.ucSalatNabiEnabled != 1);
+    if (cbM) cbM.disabled = masterOff;
+    if (cbI) cbI.disabled = masterOff;
 }
 
 // ── TAKBIR ذي الحجة — fonctions UI ────────────────────────────────────
@@ -2901,8 +3191,14 @@ function refreshTakbirUI() {
     if (cb1) cb1.checked = (JS_CUSTOM.ucTakbirM1Enabled == 1);
     var host0 = document.getElementById('ucTakbirM0TableHost');
     var host1 = document.getElementById('ucTakbirM1TableHost');
-    if (host0) host0.innerHTML = _buildTakbirTableHtml(0);
-    if (host1) host1.innerHTML = _buildTakbirTableHtml(1);
+    if (host0) {
+        host0.innerHTML = _buildTakbirTableHtml(0);
+        host0.classList.toggle('ucTakbirTableRowDisabled', JS_CUSTOM.ucTakbirM0Enabled != 1);
+    }
+    if (host1) {
+        host1.innerHTML = _buildTakbirTableHtml(1);
+        host1.classList.toggle('ucTakbirTableRowDisabled', JS_CUSTOM.ucTakbirM1Enabled != 1);
+    }
 }
 
 function toggleAzanFromServerFunction() {
@@ -3008,19 +3304,6 @@ function refreshStartQuranBeforeAzanButtonsUI() {
     if (host) host.innerHTML = tableHtml;
     const hostQP = document.getElementById('ucQuranAutoStartTableHostQP');
     if (hostQP) hostQP.innerHTML = tableHtml;
-
-    // الجمعة reste hors grille (pas de sélecteur de jours, cf.
-    // _quranAutoStartGridKeys) : simple bouton, minutes elles aussi.
-    const lang = _quranAutoStartLang();
-    const jomoaName = (L_QURAN_PRAYER_NAMES.JOMOA && L_QURAN_PRAYER_NAMES.JOMOA[lang]) || 'JOMOA';
-    const jomoaLabelEl = document.getElementById('ucQAJomoaLabel');
-    if (jomoaLabelEl) jomoaLabelEl.textContent = jomoaName;
-    _qpSyncMirrorEl('ucQAJomoaLabel');
-
-    const jomoaCfg = _quranAutoStartConfig.JOMOA;
-    const jomoaBtn = document.getElementById(jomoaCfg.buttonId);
-    if (jomoaBtn) jomoaBtn.textContent = _getAutoStartDelayMinutesLabel('JOMOA');
-    _qpSyncMirrorEl(jomoaCfg.buttonId);
 }
 
 function toggleStartQuranBeforeAzanFunction() {
@@ -3093,29 +3376,19 @@ function initLightProgrammingUI() {
         if (item.prayersMaskSetting) {
             const prayerRow = document.createElement('div');
             prayerRow.id = 'lightCfgPrayerMask_' + item.key;
-            prayerRow.style.cssText = 'padding:2px 0 4px 0;display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;';
+            prayerRow.className = 'ucTakbirTableRow';
             container.appendChild(prayerRow);
         }
 
-        // Sélecteur de déclencheur (si triggerSetting défini)
+        // Sélecteur de déclencheur (si triggerSetting défini) — tableau 3
+        // colonnes x 2 lignes (labels / case "✕" exclusive), cf.
+        // _buildLightTriggerTableHtml, même style que le masque prières.
         if (item.triggerSetting) {
             const trigRow = document.createElement('div');
             trigRow.id = 'lightCfgTrigRow_' + item.key;
-            trigRow.style.cssText = 'padding:3px 0 4px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;direction:rtl;font-size:.85em;';
-            trigRow.innerHTML =
-                "<span style='color:#aaa;'>موعد التشغيل :</span>"
-                + "<label style='display:inline-flex;align-items:center;gap:4px;'>"
-                + "<input type='checkbox' id='lightCfgTrigCb_" + item.key + "_before'"
-                + " onchange=\"toggleLightItemTriggerFunction('" + item.key + "','beforeAzan');\">"
-                + " قبل نافذة الأذان</label>"
-                + "<label style='display:inline-flex;align-items:center;gap:4px;'>"
-                + "<input type='checkbox' id='lightCfgTrigCb_" + item.key + "_after'"
-                + " onchange=\"toggleLightItemTriggerFunction('" + item.key + "','afterAzanHide');\">"
-                + " بعد نافذة الأذان</label>"
-                + "<label style='display:inline-flex;align-items:center;gap:4px;'>"
-                + "<input type='checkbox' id='lightCfgTrigCb_" + item.key + "_iqama'"
-                + " onchange=\"toggleLightItemTriggerFunction('" + item.key + "','beforeIqama');\">"
-                + " قبل الإقامة</label>";
+            trigRow.style.cssText = 'padding:3px 0 4px 24px;';
+            trigRow.innerHTML = "<div style='color:#aaa;font-size:.85em;padding-bottom:2px;'>موعد التشغيل :</div>"
+                + _buildLightTriggerTableHtml(item);
             container.appendChild(trigRow);
         }
 
@@ -3127,17 +3400,17 @@ function initLightProgrammingUI() {
     _iqamaZeroSection.innerHTML =
         "<hr>" +
         "<div style='text-align:center;font-size:0.85em;color:#aaa;padding:2px 0 4px 0;'>وميض عند انتهاء العد التنازلي للإقامة</div>" +
-        "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0;'>" +
-            "<input type='checkbox' id='iqamaZeroMinaretBlinkCb' onchange='toggleIqamaZeroMinaretBlinkFunction();'>" +
-            "<span style='min-width:16em;'>وميض المِأذنة عند الإقامة</span>" +
-            "<span class='clickableWhiteClass' id='iqamaZeroMinaretBlinkDurBtn' title='مدة الوميض (ثواني)' style='white-space:nowrap;' onclick=\"editIqamaZeroBlinkDurFunction('minaret');\"></span>" +
-            "<span style='cursor:pointer;font-size:0.8em;padding:1px 7px;border:1px solid #664;border-radius:4px;color:#fc9;user-select:none;flex-shrink:0;' title='اختبار وميض المِأذنة 10ث' onclick='ucTestMinaretBlinkFunction();'>⚡</span>" +
+        "<div style='display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow-x:auto;margin:6px 0;'>" +
+            "<input type='checkbox' id='iqamaZeroMinaretBlinkCb' style='flex-shrink:0;' onchange='toggleIqamaZeroMinaretBlinkFunction();'>" +
+            "<span style='white-space:nowrap;flex-shrink:0;'>وميض المِأذنة عند الإقامة</span>" +
+            "<span class='clickableWhiteClass' id='iqamaZeroMinaretBlinkDurBtn' title='مدة الوميض (ثواني)' style='white-space:nowrap;flex-shrink:0;' onclick=\"editIqamaZeroBlinkDurFunction('minaret');\"></span>" +
+            "<span style='cursor:pointer;font-size:0.8em;padding:1px 7px;border:1px solid #664;border-radius:4px;color:#fc9;user-select:none;flex-shrink:0;white-space:nowrap;' title='اختبار وميض المِأذنة 10ث' onclick='ucTestMinaretBlinkFunction();'>⚡</span>" +
         "</div>" +
-        "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0;'>" +
-            "<input type='checkbox' id='iqamaZeroMihrabBlinkCb' onchange='toggleIqamaZeroMihrabBlinkFunction();'>" +
-            "<span style='min-width:16em;'>وميض المحراب عند الإقامة</span>" +
-            "<span class='clickableWhiteClass' id='iqamaZeroMihrabBlinkDurBtn' title='مدة الوميض (ثواني)' style='white-space:nowrap;' onclick=\"editIqamaZeroBlinkDurFunction('mihrab');\"></span>" +
-            "<span style='cursor:pointer;font-size:0.8em;padding:1px 7px;border:1px solid #664;border-radius:4px;color:#fc9;user-select:none;flex-shrink:0;' title='اختبار وميض المحراب 10ث' onclick='ucTestMihrabBlinkFunction();'>⚡</span>" +
+        "<div style='display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow-x:auto;margin:6px 0;'>" +
+            "<input type='checkbox' id='iqamaZeroMihrabBlinkCb' style='flex-shrink:0;' onchange='toggleIqamaZeroMihrabBlinkFunction();'>" +
+            "<span style='white-space:nowrap;flex-shrink:0;'>وميض المحراب عند الإقامة</span>" +
+            "<span class='clickableWhiteClass' id='iqamaZeroMihrabBlinkDurBtn' title='مدة الوميض (ثواني)' style='white-space:nowrap;flex-shrink:0;' onclick=\"editIqamaZeroBlinkDurFunction('mihrab');\"></span>" +
+            "<span style='cursor:pointer;font-size:0.8em;padding:1px 7px;border:1px solid #664;border-radius:4px;color:#fc9;user-select:none;flex-shrink:0;white-space:nowrap;' title='اختبار وميض المحراب 10ث' onclick='ucTestMihrabBlinkFunction();'>⚡</span>" +
         "</div>";
     container.appendChild(_iqamaZeroSection);
 
@@ -3223,25 +3496,18 @@ function refreshLightProgrammingUI() {
         if (item.prayersMaskSetting) {
             const prayerRow = document.getElementById('lightCfgPrayerMask_' + item.key);
             if (prayerRow) {
-                const mask = String(JS_CUSTOM[item.prayersMaskSetting] || '11111');
-                prayerRow.innerHTML = _LIGHT_PRAYER_LABELS.map(function(label, idx) {
-                    const checked = (mask.charAt(idx) === '1') ? 'checked' : '';
-                    return "<label style='display:inline-flex;align-items:center;gap:2px;'>" +
-                           "<input type='checkbox' " + checked + " onchange=\"toggleLightPrayerMaskFunction('" + item.key + "'," + idx + ");\">" +
-                           "<span style='font-size:.82em;'>" + label + "</span></label>";
-                }).join('');
+                prayerRow.innerHTML = _buildLightPrayerMaskTableHtml(item);
             }
         }
 
-        // Sélecteur de déclencheur
+        // Sélecteur de déclencheur — ré-affiche le tableau (case "✕" exclusive)
         if (item.triggerSetting) {
             var trig = JS_CUSTOM[item.triggerSetting] || item.trigger;
-            var cbBefore = document.getElementById('lightCfgTrigCb_' + item.key + '_before');
-            var cbAfter  = document.getElementById('lightCfgTrigCb_' + item.key + '_after');
-            var cbIqama  = document.getElementById('lightCfgTrigCb_' + item.key + '_iqama');
-            if (cbBefore) cbBefore.checked = (trig === 'beforeAzan');
-            if (cbAfter)  cbAfter.checked  = (trig === 'afterAzanHide');
-            if (cbIqama)  cbIqama.checked  = (trig === 'beforeIqama');
+            var trigTableHost = document.getElementById('lightCfgTrigRow_' + item.key);
+            if (trigTableHost) {
+                trigTableHost.innerHTML = "<div style='color:#aaa;font-size:.85em;padding-bottom:2px;'>موعد التشغيل :</div>"
+                    + _buildLightTriggerTableHtml(item);
+            }
             // Mettre à jour le libellé du bouton délai selon le déclencheur actif
             var dBtn = document.getElementById('lightCfgDelayBtn_' + item.key);
             if (dBtn) {
@@ -4688,7 +4954,7 @@ function _qpRestorePosition() {
 
                 <div id="qpSettingsSection2" style="padding:10px 14px;">
                     <div style="font-weight:bold;color:#d4aa50;margin-bottom:6px;">خادم القرآن والقرّاء</div>
-                    <div>
+                    <div id='quranServerEnabledDivQP'>
                         <input type='checkbox' id='quranServerEnabledCheckboxQP' onchange='toggleQuranServerEnabledFunction();'>
                         &nbsp;<span>خادم القرآن (HTTP)</span>
                         &nbsp;<span class='clickableWhiteClass' id='quranServerUrlButtonQP' onclick='editQuranServerUrlFunction();'></span>
@@ -4705,7 +4971,6 @@ function _qpRestorePosition() {
                         &nbsp;<span>تشغيل القرآن قبل الأذان</span>
                     </div>
                     <div id="ucQuranAutoStartTableHostQP" style="padding:6px 0 0 4px;"></div>
-                    <div class="ucQAJomoaRow"><span id="ucQAJomoaLabelQP"></span>&nbsp;<span class='clickableWhiteClass' id='startQuranBeforeAzanJomoaButtonQP' onclick="editStartQuranBeforeAzanDelayFunction('JOMOA');"></span></div>
                 </div>
 
             </div>
@@ -4751,6 +5016,17 @@ function _qpRestorePosition() {
         xhr.onerror   = function() { _applyLocal('server_unreachable'); };
         xhr.ontimeout = function() { _applyLocal('server_timeout'); };
         xhr.send();
+    })();
+
+    // Mirroir de #quranServerEnabledDiv (cf. injectTechOptionsUI /
+    // _hideQuranServerCheckboxOnPhone) — même case, dupliquée ici via
+    // _qpSyncMirrorEl ; masquée pour rester cohérente sur téléphone.
+    (function _hideQuranServerCheckboxOnPhoneQP() {
+        var _isPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && !window.AndroidMobile.isAndroidTv());
+        if (!_isPhone) return;
+        var rowQP = document.getElementById('quranServerEnabledDivQP');
+        if (rowQP) rowQP.style.display = 'none';
     })();
 
     var closeBtn = document.getElementById('quranPlayerClose');
@@ -5265,24 +5541,22 @@ function _qpRestorePosition() {
         var qpOverlay = document.getElementById('quranPlayerOverlay');
         if (qpOverlay && !qpOverlay.classList.contains('qpHidden')) {
             qpOverlay.classList.add('qpHidden');
-            var _mlB = document.getElementById('ucSettingsButtonVertical');
-            if (_mlB) _mlB.style.display = '';
-            var _qbB = document.getElementById('qiblaButtonVertical');
-            if (_qbB) _qbB.style.display = '';
             var _mtB = document.getElementById('menuToggleButton');
             if (_mtB) _mtB.style.display = '';
             var _mtBhr = document.getElementById('menuToggleButtonHorizontal');
             if (_mtBhr) _mtBhr.style.display = '';
+            // cf. _ucSyncSettingsBtnVisibility (_bindMenuLocatorBtn) : ne pas
+            // réafficher inconditionnellement, sinon un menu principal/une autre
+            // section ouverte en même temps que le lecteur Coran (rare mais
+            // possible via le bouton retour) verrait le bouton réapparaître à tort.
+            if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
             return;
         }
         // 3. Infos mosquée
         var infoModal = document.getElementById('ucMosqueInfoModal');
         if (infoModal && infoModal.classList.contains('ucMosqueModalOpen')) {
             infoModal.classList.remove('ucMosqueModalOpen');
-            var _mlB2 = document.getElementById('ucSettingsButtonVertical');
-            if (_mlB2) _mlB2.style.display = '';
-            var _qbB2 = document.getElementById('qiblaButtonVertical');
-            if (_qbB2) _qbB2.style.display = '';
+            if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
             return;
         }
     });
@@ -5304,14 +5578,12 @@ function openQuranPlayerModal() {
     // potentiellement différer/rater la mise à jour visuelle. Inoffensif si le
     // WebView n'a pas ce bug (juste une lecture de layout supplémentaire).
     void _qpOv.offsetHeight;
-    // ucSettingsButtonVertical / qiblaButtonVertical ont un z-index supérieur à
-    // celui de la modale du Coran (9999333 vs 10000) : sans ceci ils resteraient
-    // visibles au-dessus. menuToggleButton (vertical et horizontal) partage le
-    // même plan -> même traitement.
+    // ucSettingsButtonVertical a un z-index supérieur à celui de la modale du
+    // Coran (9999333 vs 10000) : sans ceci il resterait visible au-dessus.
+    // menuToggleButton (vertical et horizontal) partage le même plan -> même
+    // traitement.
     var mlBtn = document.getElementById('ucSettingsButtonVertical');
     if (mlBtn) mlBtn.style.display = 'none';
-    var qbBtn = document.getElementById('qiblaButtonVertical');
-    if (qbBtn) qbBtn.style.display = 'none';
     var mtBtn = document.getElementById('menuToggleButton');
     if (mtBtn) mtBtn.style.display = 'none';
     var mtBtnHR = document.getElementById('menuToggleButtonHorizontal');
@@ -5340,10 +5612,11 @@ function closeQuranPlayerModal() {
     // Ferme la boîte SANS toucher à l'audio — la lecture continue en arrière-plan
     if (typeof window._popBack === 'function') window._popBack();
     document.getElementById('quranPlayerOverlay').classList.add('qpHidden');
-    var mlBtn = document.getElementById('ucSettingsButtonVertical');
-    if (mlBtn) mlBtn.style.display = '';
-    var qbBtn = document.getElementById('qiblaButtonVertical');
-    if (qbBtn) qbBtn.style.display = '';
+    // cf. _ucSyncSettingsBtnVisibility (_bindMenuLocatorBtn) : ne pas réafficher
+    // inconditionnellement — appelée aussi depuis _closeAllMenuSections quand le
+    // menu principal s'ouvre pendant que le lecteur Coran était affiché, auquel
+    // cas le bouton doit rester masqué (menu ouvert), pas réapparaître.
+    if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
     var mtBtn = document.getElementById('menuToggleButton');
     if (mtBtn) mtBtn.style.display = '';
     var mtBtnHR = document.getElementById('menuToggleButtonHorizontal');
@@ -7558,7 +7831,8 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
         }, 2000);
     }
 
-    function _forceHide() {
+    function _forceHide(reason) {
+        _L('POPUP','FORCE_HIDE',{item:'salatNabi',reason:reason||'unspecified',wasVisible:_snVisible});
         _audio.pause();
         _audio.currentTime = 0;
         _audio.onended  = null;
@@ -7569,6 +7843,14 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
         window._salatNabiActive = false;
         window._salatNabiOnEndCallbacks = [];  // abandon des callbacks si fermeture forcée
     }
+    // État lisible depuis l'extérieur (diagnostic resync).
+    window._ucIsSalatNabiVisible = function() { return _snVisible; };
+    // Exposé pour _ucResyncPrayerSequence (tout en haut du fichier) : même
+    // classe de bug que l'azan (audio JS gelé par pauseTimers() avant son
+    // 'ended' si l'écran s'éteint pendant la lecture) pourrait laisser cet
+    // overlay bloqué indéfiniment au retour. Idempotent (no-op si déjà masqué,
+    // hormis le reset ci-dessus qui est sans effet visuel si déjà à l'état bas).
+    window._ucSalatNabiForceHide = _forceHide;
 
     function _show(withAudio) {
         if (_snVisible) return;
@@ -7671,12 +7953,12 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
     // ── Sécurité : réinitialiser le flag à chaque nouvel azan ────────────
     ucOn(UC_EVT.AZAN_TIME, function() {
         _snFired = false;
-        _forceHide();
+        _forceHide('new_azan_cycle');
     });
 
     // ── Fermer proprement si l'iqama démarre ─────────────────────────────
     ucOn(UC_EVT.IQAMA_SHOW, function() {
-        if (_snVisible) _forceHide();
+        if (_snVisible) _forceHide('iqama_started');
     });
 
     // ── Fonction de test console (bypass gardes) ──────────────────────────
@@ -7685,6 +7967,28 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
         _snFired = false;
         _show(withAudio === true);
     };
+
+    // ── Interruption manuelle : tap n'importe où sur l'overlay + petite
+    //    croix en haut (repère visuel). Réutilise _forceHide (déjà utilisée
+    //    pour les fermetures automatiques) : coupe l'audio ET la popup
+    //    ensemble, jamais l'un sans l'autre. pointer-events:none tant que
+    //    l'overlay n'est pas visible (cf. CSS) : sans effet si masqué.
+    (function _installDismiss() {
+        var _btn = document.createElement('div');
+        _btn.id = 'ucSalatNabiClose';
+        _btn.innerHTML = '&#10006;';
+        _btn.style.cssText =
+            'position:absolute;top:3vh;left:50%;transform:translateX(-50%);' +
+            'font-size:2.2em;color:#a89060;opacity:0.8;cursor:pointer;' +
+            'padding:0.2em 0.5em;z-index:1;user-select:none;';
+        _overlay.appendChild(_btn);
+
+        function _dismiss(reason) {
+            _forceHide('user_' + reason);
+        }
+        _overlay.addEventListener('click', function() { _dismiss('tap'); });
+        _btn.addEventListener('click', function(e) { e.stopPropagation(); _dismiss('close_btn'); });
+    })();
 
 })();
 
@@ -8502,12 +8806,17 @@ function _doAudioUnlock() {
         if (!anchor) return;
         var row = anchor.closest('div');
         if (!row) return;
+        // Ligne séparatrice de bloc (même convention que les <hr> déjà présents
+        // entre les groupes de réglages) entre counterBlackBgCheckbox et
+        // swapAzanIqamaCheckbox.
+        var sep = document.createElement('hr');
+        row.insertAdjacentElement('afterend', sep);
         var div = document.createElement('div');
         div.innerHTML =
             '<input type="checkbox" id="swapAzanIqamaCheckbox"' +
             ' onchange="toggleSwapAzanIqamaFunction()"> &nbsp;' +
             '<label for="swapAzanIqamaCheckbox">' + t('label') + '</label>';
-        row.insertAdjacentElement('afterend', div);
+        sep.insertAdjacentElement('afterend', div);
     }
 
     window.toggleSwapAzanIqamaFunction = function () {
@@ -10477,8 +10786,11 @@ function forceHijriSyncFunction() {
         // Ne PAS appeler _ucReleaseAzanBlock : le safety-timer (300 s) fermera le popup
     }
 
-    function _ucReleaseAzanBlock() {
-        if (!_ucBlockAzanHide) return;         // déjà libéré
+    function _ucReleaseAzanBlock(reason) {
+        if (!_ucBlockAzanHide) {
+            _L('AZAN','RELEASE_BLOCK_SKIP',{reason:reason||'audio_ended',note:'already_released'});
+            return;         // déjà libéré
+        }
         _ucBlockAzanHide = false;
         _ucAzanFbEl      = null;
         if (_ucAzanSafetyTimer) { clearTimeout(_ucAzanSafetyTimer); _ucAzanSafetyTimer = null; }
@@ -10486,9 +10798,19 @@ function forceHijriSyncFunction() {
             _ucLastAzanAudioEl.removeEventListener('ended', _ucAzanReleaseFunc);
             _ucLastAzanAudioEl.removeEventListener('error', _ucAzanFallbackOrHold);
         }
-        _L('AZAN','WEBVIEW_AUDIO_END',{result:'ended_closing_popup'});
+        _L('AZAN','WEBVIEW_AUDIO_END',{result:'closing_popup',reason:reason||'audio_ended'});
         hideAzanPopupFunction();
     }
+    // État lisible depuis l'extérieur (diagnostic resync) : true si le popup
+    // est actuellement retenu ouvert par ce verrou (audio en cours/gelé).
+    window._ucIsAzanBlocked = function() { return _ucBlockAzanHide; };
+    // Exposé pour _ucResyncPrayerSequence (tout en haut du fichier) : sans
+    // lever ce verrou AVANT d'appeler hideAzanPopupFunction() au réveil, le
+    // popup restait bloqué indéfiniment si l'écran s'était éteint PENDANT la
+    // lecture (audio JS muet gelé par pauseTimers() avant son 'ended' ->
+    // _ucBlockAzanHide jamais relâché ; même le safety-timer 300s/180s ne
+    // sauve pas, lui aussi gelé). Idempotent (no-op si déjà relâché).
+    window._ucReleaseAzanBlock = _ucReleaseAzanBlock;
 
     ucOn(UC_EVT.AZAN_TIME, function(e) {
         if (e.isDohaPrayer)                     return;   // shuruq : pas d'audio long
@@ -10510,6 +10832,23 @@ function forceHijriSyncFunction() {
         var isFajr   = (e.prayer === 'FAJR');
         var audioEl  = document.getElementById(isFajr ? 'audioFajrElement' : 'audioAzanElement');
         if (!audioEl) return;
+
+        // Source audio UNIQUE : sur l'appli native (AndroidMobile present), le
+        // vrai son est desormais TOUJOURS joue cote natif (AzanPlaybackService,
+        // MediaPlayer) -- foreground ET background -- au lieu de dependre d'un
+        // garde-fou "premier plan ?" evalue une seule fois par l'alarme (ancien
+        // bug : sortir l'appli PENDANT la lecture ne faisait rien reprendre
+        // cote natif puisque la decision avait deja ete prise). Ce <audio> JS
+        // continue de jouer (muted) pour piloter exactement comme avant tout
+        // ce qui en depend (equalizer, evenement 'ended' -> fermeture popup,
+        // timer de securite) -- seule la sortie audible est coupee, evitant un
+        // double son avec le natif. On atteint ce point uniquement en mode
+        // "voix complete" (ucAzanIqamaByVoice==1, ucShortAzanActive!=1, cf. les
+        // 2 "return" ci-dessus) : azan court/bip restent sur l'ancien
+        // comportement (JS foreground uniquement, natif background seulement).
+        audioEl.muted = !!window.AndroidMobile;
+        _L('AZAN','AUDIO_SOURCE',{prayer:e.prayer,muted:audioEl.muted,
+            reason:(audioEl.muted ? 'native_takeover' : 'no_native_bridge')});
 
         // Nettoyer une éventuelle session précédente
         if (_ucLastAzanAudioEl && _ucAzanReleaseFunc) {
@@ -11234,6 +11573,28 @@ function forceHijriSyncFunction() {
 }());
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   LABEL "الأرقام العربية" -> "الأرقام الهندية" (terminologie correcte : les
+   chiffres ٠١٢٣٤٥٦٧٨٩ sont appelés "الأرقام الهندية" en arabe ; "الأرقام
+   العربية" désigne en réalité les chiffres 0123456789). Arabe uniquement —
+   les autres langues (EN, FR...) restent inchangées, leur formulation est
+   correcte dans leur propre langue.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    var LABEL_TEXT = "تفعيل الأرقام الهندية (أو أرقام اللغة المستعملة)";
+
+    /* ① Mettre à jour l'objet JS_eLang (arabe uniquement) */
+    if (typeof JS_eLang !== 'undefined' && typeof JS_DATA !== 'undefined' && JS_DATA.ucLangNOW === 'AR') {
+        JS_eLang.cx_UseArabicDIGITS = LABEL_TEXT;
+    }
+
+    /* ② Mettre à jour le DOM directement (initUILabels s'est exécuté avant custom.js) */
+    if (typeof JS_DATA !== 'undefined' && JS_DATA.ucLangNOW === 'AR') {
+        var domLabel = document.getElementById('arabicDigitsLabel');
+        if (domLabel) { domLabel.innerHTML = LABEL_TEXT; }
+    }
+}());
+
+/* ═══════════════════════════════════════════════════════════════════════════
    IQAMA POPUP — texte coranique (sourate Al-Mu'minûn 23:1-2)
    Remplace le texte standard "إقامة الصلاة" par les deux premiers versets.
    Exécuté après le chargement complet de l'app et de JS_eLang.
@@ -11349,6 +11710,32 @@ function forceHijriSyncFunction() {
             _origAnimateCountdown();
         };
     }
+}());
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   IQAMA POPUP — tap-to-dismiss INSTANTANÉ (corrige un effet de bord du bloc
+   "extension de durée (+5s)" ci-dessus). Le popup a déjà, en dur dans le
+   core (index.html), onclick="hideElementFunction(this.id)" — mais
+   window.hideElementFunction est monkey-patché juste au-dessus pour RETARDER
+   le masquage de 5s pour ces IDs, y compris pour cet appel-là : un tap
+   manuel semblait donc ne rien faire pendant 5 secondes (régression
+   involontaire du patch +5s, pas un manque de fonctionnalité).
+   On remplace l'onclick (propriété IDL — remplace entièrement le handler
+   inline, n'affecte PAS les appels internes du core qui appellent
+   hideElementFunction(...) directement pour le masquage AUTOMATIQUE en fin
+   de séquence, toujours retardés comme prévu) par un masquage immédiat,
+   identique à ce que fait hideElementFunction (className = 'hiddenClass'),
+   sans passer par le patch +5s.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function () {
+    ['iqamaPopupVertical', 'iqamaPopupHorizontal'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.onclick = function() {
+            _L('POPUP', 'DISMISS', { item: 'texte_iqama', reason: 'tap' });
+            this.className = 'hiddenClass';
+        };
+    });
 }());
 
 
@@ -11878,7 +12265,7 @@ function forceHijriSyncFunction() {
             { p:'ASSR',  e:'ucStartQuranBeforeAzanAsrEnabled',   d:'ucStartQuranBeforeAzanAsr',   dd:'ucStartQuranBeforeAzanAsrDays'   },
             { p:'MGRB',  e:'ucStartQuranBeforeAzanMgrbEnabled',  d:'ucStartQuranBeforeAzanMgrb',  dd:'ucStartQuranBeforeAzanMgrbDays'  },
             { p:'ISHA',  e:'ucStartQuranBeforeAzanIshaEnabled',  d:'ucStartQuranBeforeAzanIsha',  dd:'ucStartQuranBeforeAzanIshaDays'  },
-            { p:'JOMOA', e:'ucStartQuranBeforeAzanJomoaEnabled', d:'ucStartQuranBeforeAzanJomoa', dd: null }
+            { p:'JOMOA', e:'ucStartQuranBeforeAzanDohrEnabled', d:'ucStartQuranBeforeAzanDohr', dd:'ucStartQuranBeforeAzanDohrDays' } // fusionné avec DOHR, cf. _quranAutoStartConfig.JOMOA
         ];
         _qCfg.forEach(function(c) {
             var ctx = { prayer: c.p,
@@ -12544,16 +12931,86 @@ function selectQPTakbir() {
     var _searchInput = null;
     var _list        = null;
 
-    // ── Mini-sélecteur pays/ville pour la mosquée anonyme (cf. plus bas) ────
-    // Etat totalement indépendant de JS_DATA.ucNowCityCODE : ne touche JAMAIS
-    // le sélecteur pays/ville principal ni les données affichées par l'appli
-    // en cours. Défaut systématique : Tunisie / Tunis (cf. ANON_LOC_STORAGE_KEY,
-    // appliqué à la confirmation via spec/mosquee.js).
+    // ── État de localisation partagé (utilisé à la fois par le filtre ville
+    // en haut de la liste principale ET par la mosquée anonyme — une seule
+    // "ville courante", plus de double sélection). Défaut Tunisie/Tunis.
     var ANON_LOC_STORAGE_KEY = 'UC_ANON_LOCATION_CODE';
-    var _anonCountryCode = 'TN';
-    var _anonCountryName = 'Tunisia';
-    var _anonCityCode    = 'tn.tunis';
-    var _anonCityName    = 'Tunis';
+    var _selCountryCode = 'TN';
+    var _selCountryName = 'Tunisia';
+    var _selCityCode    = 'tn.tunis';
+    var _selCityName    = 'Tunis   تونس';
+    var _remoteCache    = [];   // dernier résultat _ucFetchRemoteListByCity pour _selCityCode
+    var _cityItemsCache = [];   // items {code,name,latin,ar} du dernier _renderCityList, pour le filtre de recherche
+    var _citySearchInput = null;
+
+    // ── Couche de traduction VISUELLE uniquement (n'altère jamais les codes/
+    // IDs sous-jacents ni data/<CC>/<cc>.js, qui restent en écriture latine
+    // pour des raisons de nommage de fichier/chargement). Complète les noms
+    // déjà embarqués dans certaines entrées de data/TN/tn.js (3e segment,
+    // ex. "tn.tunis.تونس") pour les entrées qui n'en ont pas. Best-effort,
+    // à corriger au besoin — non exhaustif pour les pays hors Tunisie.
+    var _COUNTRY_NAME_AR = { 'TN': 'تونس' };
+    var _CITY_NAME_AR = {
+        'TN': {
+            'akouda': 'أكودة', 'al-marsa': 'المرسى', 'al-matlin': 'المطلين',
+            'ar-rudayyif': 'الرديف', 'ariana': 'أريانة', 'as-sanad': 'السند',
+            'as-sars': 'السرس', 'banbalah': 'بنبلة', 'beja': 'باجة',
+            'bekalta': 'بقلطة', 'ben-arous': 'بن عروس', 'ben-gardane': 'بن قردان',
+            'beni-hassane': 'بني حسان', 'beni-khalled': 'بني خلاد',
+            'beni-kheddache': 'بني خداش', 'beni-khiar': 'بني خيار',
+            'bir-ali-ben-khalifa': 'بئر علي بن خليفة', 'bir-el-hafey': 'بئر الحفي',
+            'bizerte': 'بنزرت', 'bou-arada': 'بوعرادة', 'bou-arkoub': 'بوعركوب',
+            'bou-attouche': 'بوعطوش', 'carthage': 'قرطاج', 'chebba': 'الشابة',
+            'chebika': 'شبيكة', 'chorbane': 'شربان', 'dar-chabanne': 'دار شعبان',
+            'degache': 'دقاش', 'djebeniana': 'جبنيانة', 'djemmal': 'جمّال',
+            'douane': 'الديوانة', 'douar-tindja': 'دوار تندجة', 'douz': 'دوز',
+            'el-alia': 'العالية', 'el-battan': 'البطان', 'el-fahs': 'الفحص',
+            'el-golaa': 'القلعة', 'el-hamma-g': 'الحامة - قابس', 'el-hamma': 'الحامة',
+            'el-haouaria': 'الهوارية', 'el-jem': 'الجم', 'el-kef': 'الكاف',
+            'el-ksour': 'القصور', 'el-maamoura': 'المعمورة', 'el-mida': 'الميدة',
+            'er-regueb': 'الرقاب', 'erriadh': 'الرياض', 'fernana': 'فرنانة',
+            'gabes': 'ڨابس', 'gafour': 'ڨعفور', 'gafsa': 'قفصة',
+            'galaat-el-andeless': 'قلعة الأندلس', 'gergeis': 'جرجيس',
+            'ghardimaou': 'غار الدماء', 'ghomrassen': 'غمراسن', 'gibly': 'قبلي',
+            'goubellat': 'قبلاط', 'gremda': 'ڨرمدة', 'haffouz': 'حفوز',
+            'hammam-lif': 'حمام الأنف', 'hammam-sousse': 'حمام سوسة',
+            'hammamet': 'الحمامات', 'harqalah': 'هرقلة', 'heragla': 'هرقلة',
+            'houmt-el-souk': 'حومة السوق', 'jemna': 'الجمنة', 'jendouba': 'جندوبة',
+            'jerba': 'جربة', 'jilma': 'جلمة', 'kairouan': 'القيروان',
+            'kasr-jedid': 'القصر الجديد', 'kasserine': 'القصرين', 'kebili': 'قبلي',
+            'kelibia': 'قليبية', 'kesra': 'كسرى', 'korba': 'قربة',
+            'korbous': 'قربص', 'ksar-hellal': 'قصر هلال',
+            'ksibet-el-mediouni': 'قصيبة المديوني', 'ksour-essaf': 'قصور الساف',
+            'la-goulette': 'حلق الوادي', 'la-mohammedia': 'المحمدية',
+            'la-sebala-du-mornag': 'السبالة', 'le-krib': 'الكريب', 'lemta': 'لمطة',
+            'mahares': 'المحرس', 'mahdia': 'المهدية', 'maktar': 'مكثر',
+            'manouba': 'منوبة', 'mateur': 'ماطر', 'matmata': 'مطماطة',
+            'medenine': 'مدنين', 'medjez-el-bab': 'مجاز الباب',
+            'mellouleche': 'ملولش', 'mennzel-bou-zelfa': 'منزل بوزلفة',
+            'menzel-abderhaman': 'منزل عبد الرحمان', 'menzel-bourguiba': 'منزل بورقيبة',
+            'menzel-heurr': 'منزل الهر', 'menzel-jemil': 'منزل جميل',
+            'menzel-kamel': 'منزل كامل', 'menzel-salem': 'منزل سالم',
+            'mesdour': 'مصدور', 'metlaoui': 'المتلوي', 'mezzouna': 'مزونة',
+            'midoun': 'ميدون', 'monastir': 'منستير', 'msaken': 'مساكن',
+            'nabeul': 'نابل', 'nefta': 'نفطة', 'nibbar': 'نيبار',
+            'ouardenine': 'وردانين', 'oued-lill': 'واد الليل',
+            'port-el-kantaoui': 'بور القنطاوي', 'rades': 'رادس', 'rafraf': 'رفراف',
+            'remada': 'رمادة', 'rhar-el-melah': 'غار الملح', 'rohia': 'الروحية',
+            'sahline': 'الساحلين', 'sakiet-sidi-youssef': 'ساقية سيدي يوسف',
+            'salakta': 'سلقطة', 'sbiba': 'سبيبة', 'sbikha': 'السبيخة',
+            'seiada': 'السيادة', 'sejenane': 'سجنان', 'sfax': 'صفاقس',
+            'sidi-alouane': 'سيدي علوان', 'sidi-ben-nour': 'سيدي بن نور',
+            'sidi-bou-ali': 'سيدي بوعلي', 'sidi-bou-said': 'سيدي بوسعيد',
+            'sidi-bouzid': 'سيدي بوزيد', 'sidi-el-hani': 'سيدي الهاني',
+            'siliana': 'سليانة', 'skanes': 'سكانس', 'skhira': 'الصخيرة',
+            'sousse': 'سوسة', 'tabarka': 'طبرقة', 'tabursuq': 'تبرسق',
+            'tajerouine': 'تاجروين', 'takelsa': 'تاكلسة', 'tamaghzah': 'تمغزة',
+            'tataouine': 'تطاوين', 'tatouine': 'تطاوين', 'testour': 'تستور',
+            'thala': 'تالة', 'touza': 'توزة', 'tozeur': 'توزر', 'tunis': 'تونس',
+            'wadi-maliz': 'وادي مليز', 'zaghouan': 'زغوان', 'zahanah': 'الزهانة',
+            'zaouiat-djedidi': 'زاوية الجديدي', 'zarzis': 'جرجيس', 'zouila': 'زويلة'
+        }
+    };
 
     // ── Injection de la modale (une seule fois) ───────────────────────────
     function _buildModal() {
@@ -12571,15 +13028,39 @@ function selectQPTakbir() {
                     '<span id="ucMosqueSelectorTitle">اختر المسجد | Choisir la mosquée</span>' +
                     '<span id="ucMosqueSelectorClose" onclick="window._ucCloseMosqueSelector()">&#10005;</span>' +
                 '</div>' +
+                '<div id="ucMosqueLocRow">' +
+                    '<div class="ucAnonLocCol">' +
+                        '<div class="ucAnonLocColLabel">المدينة | Ville</div>' +
+                        '<button id="ucMosqueSelectCityButton" type="button" class="locationSelectButtonClass cursorPointerClass"></button>' +
+                    '</div>' +
+                    '<div class="ucAnonLocCol">' +
+                        '<div class="ucAnonLocColLabel">الدولة | Pays</div>' +
+                        '<button id="ucMosqueSelectCountryButton" type="button" class="locationSelectButtonClass cursorPointerClass"></button>' +
+                    '</div>' +
+                '</div>' +
                 '<input id="ucMosqueSearch" type="text" placeholder="بحث | Rechercher…" />' +
                 '<div id="ucMosqueList"></div>' +
+                '<div id="ucMosqueSelectorProposeLink" class="ucMosqueProposeLink">➕ اقتراح مسجد جديد | Proposer une mosquée</div>' +
             '</div>';
         document.body.appendChild(modal);
+        document.getElementById('ucMosqueSelectorProposeLink').addEventListener('click', function() {
+            window._ucCloseMosqueSelector();
+            if (typeof window._ucOpenMosqueInfoModal === 'function') window._ucOpenMosqueInfoModal();
+        });
         _modal       = modal;
         _searchInput = document.getElementById('ucMosqueSearch');
         _list        = document.getElementById('ucMosqueList');
         _searchInput.addEventListener('input', function() {
             _renderList(_searchInput.value);
+        });
+
+        _buildLocPicker();
+        document.getElementById('ucMosqueSelectCountryButton').addEventListener('click', function() {
+            _renderCountryList();
+            document.getElementById('ucAnonCountryModal').classList.add('ucMosqueModalOpen');
+        });
+        document.getElementById('ucMosqueSelectCityButton').addEventListener('click', function() {
+            document.getElementById('ucAnonCityModal').classList.add('ucMosqueModalOpen');
         });
     }
 
@@ -12587,31 +13068,66 @@ function selectQPTakbir() {
         try { return localStorage.getItem('UC_MOSQUE_ID') || ''; } catch(e) { return ''; }
     }
 
+    // ── Recharge la liste distante pour _selCityCode, puis rafraîchit ──────
+    function _refreshForCity(filter) {
+        if (_list) _list.innerHTML = '<div class="ucMosqueEmpty">…</div>';
+        if (typeof window._ucFetchRemoteListByCity !== 'function') {
+            _remoteCache = [];
+            _renderList(filter);
+            return;
+        }
+        window._ucFetchRemoteListByCity(_selCityCode, function(rows) {
+            _remoteCache = rows;
+            _renderList(filter);
+        });
+    }
+
     function _renderList(filter) {
         if (!_list) return;
         var reg = window.MOSQUES_REGISTRY || {};
-        var keys = Object.keys(reg);
         var q = (filter || '').toLowerCase().trim();
         var activeId = _getCurrentId();
+
+        var items = [];
+        // 1) Mosquée anonyme — toujours épinglée en tête, quelle que soit la ville
+        //    (repli garanti hors-ligne, cf. discussion).
+        if (reg['anonymous.generic']) {
+            items.push({ id: 'anonymous.generic', name: reg['anonymous.generic'].MOSQUE_NAME, label: reg['anonymous.generic'].LABEL, remote: false });
+        }
+        // 2) Entrées locales embarquées (registre APK) situées dans la ville choisie —
+        //    continuent de fonctionner hors-ligne, aucune régression pour les
+        //    mosquées déjà déployées avant le passage au répertoire distant.
+        Object.keys(reg).forEach(function(id) {
+            if (id === 'anonymous.generic') return;
+            var e = reg[id];
+            if (e.LOCATION_CODE === _selCityCode) {
+                items.push({ id: id, name: e.MOSQUE_NAME, label: e.LABEL, remote: false });
+            }
+        });
+        // 3) Entrées distantes (Supabase, mosque_config_backups, status=approved)
+        //    pour cette même ville — ignorées si déjà présentes localement.
+        (_remoteCache || []).forEach(function(r) {
+            if (items.some(function(it) { return it.id === r.mosque_id; })) return;
+            items.push({ id: r.mosque_id, name: r.mosque_name, label: r.mosque_name, remote: true });
+        });
+
+        var filtered = q ? items.filter(function(it) {
+            return String(it.name || '').toLowerCase().indexOf(q) !== -1 ||
+                   String(it.label || '').toLowerCase().indexOf(q) !== -1;
+        }) : items;
+
         var html = '';
-        var matched = 0;
-        keys.forEach(function(id) {
-            var entry = reg[id];
-            var label = String(entry.LABEL || id);
-            var name  = String(entry.MOSQUE_NAME || '');
-            if (q && label.toLowerCase().indexOf(q) === -1 &&
-                     name.toLowerCase().indexOf(q) === -1) return;
-            matched++;
-            var isActive = (id === activeId);
+        filtered.forEach(function(it) {
+            var isActive = (it.id === activeId);
             html +=
                 '<div class="ucMosqueItem' + (isActive ? ' ucMosqueItemActive' : '') + '"' +
-                ' onclick="window._ucSelectMosque(\'' + id.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + '\')">' +
-                    '<span class="ucMosqueName">' + _esc(name) + '</span>' +
-                    '<span class="ucMosqueLabel">' + _esc(label) + '</span>' +
+                ' onclick="window._ucSelectMosque(\'' + it.id.replace(/\\/g, '\\\\').replace(/'/g, "\\'") + '\',' + (it.remote ? 'true' : 'false') + ')">' +
+                    '<span class="ucMosqueName">' + _esc(it.name || it.id) + '</span>' +
+                    '<span class="ucMosqueLabel">' + _esc(it.label || '') + '</span>' +
                 '</div>';
         });
-        if (!matched) {
-            html = '<div class="ucMosqueEmpty">لا توجد نتائج | Aucun résultat</div>';
+        if (!filtered.length) {
+            html = '<div class="ucMosqueEmpty">لا توجد نتائج في هذه المدينة | Aucun résultat dans cette ville</div>';
         }
         _list.innerHTML = html;
     }
@@ -12633,7 +13149,12 @@ function selectQPTakbir() {
     window._ucOpenMosqueSelector = function() {
         _buildModal();
         if (_searchInput) _searchInput.value = '';
-        _renderList('');
+        _refreshForCity('');
+        var proposeLink = document.getElementById('ucMosqueSelectorProposeLink');
+        if (proposeLink) {
+            var canPropose = (typeof window._ucCanProposeMosque === 'function') && window._ucCanProposeMosque();
+            proposeLink.style.display = canPropose ? '' : 'none';
+        }
         if (_modal) _modal.classList.add('ucMosqueModalOpen');
     };
 
@@ -12641,18 +13162,56 @@ function selectQPTakbir() {
         if (_modal) _modal.classList.remove('ucMosqueModalOpen');
     };
 
-    window._ucSelectMosque = function(id) {
-        // Mosquée "anonyme" (modèle générique, cf. mosques-registry.js) : affiche
-        // un avertissement avant de poursuivre — l'utilisateur peut annuler.
+    // isRemote : true si l'entrée vient de mosque_config_backups (pas du
+    // registre embarqué) — dans ce cas la sélection = restauration complète
+    // du blob (même mécanique que "Import config -> Distant", cf. discussion :
+    // aucune config locale statique n'existe pour cet id).
+    window._ucSelectMosque = function(id, isRemote) {
         var reg = window.MOSQUES_REGISTRY || {};
         if (reg[id] && reg[id]._UC_ANONYMOUS) {
-            _showAnonMosqueWarning(function() { _finishSelectMosque(id); });
+            _showAnonMosqueWarning(function() { _finishSelectMosque(id, true); });
             return;
         }
-        _finishSelectMosque(id);
+        if (isRemote || !reg[id]) {
+            if (typeof window._ucPullRemoteBackup !== 'function' || typeof window._ucRestoreFromJson !== 'function') {
+                alert('Service indisponible');
+                return;
+            }
+            window._ucToast && window._ucToast('جارٍ التحميل...', 'ok');
+            window._ucPullRemoteBackup(id, function(json) {
+                if (json) window._ucRestoreFromJson(json, true);
+                else window._ucToast && window._ucToast('تعذر العثور على المسجد', 'err');
+            });
+            return;
+        }
+        // Entrée du registre local (statique) : tenter d'abord un pull distant
+        // — cette mosquée peut désormais posséder sa propre sauvegarde complète
+        // sur Supabase (cf. auto-push depuis la fiche mosquée/photo), auquel
+        // cas on restaure TOUT (y compris le profil adresse/tél/photo propre
+        // à CETTE mosquée). Sinon, repli sur la config statique du registre +
+        // réinitialisation du profil éditable (voir _finishSelectMosque,
+        // resetProfile=true) — sans ce repli, le profil de la mosquée
+        // PRÉCÉDEMMENT sélectionnée restait affiché sur la nouvelle (bug
+        // constaté : passage anonyme -> mosquée du registre gardait la photo
+        // et les infos de l'anonyme).
+        if (typeof window._ucPullRemoteBackup === 'function') {
+            window._ucPullRemoteBackup(id, function(json) {
+                if (json && typeof window._ucRestoreFromJson === 'function') {
+                    window._ucRestoreFromJson(json, true);
+                } else {
+                    _finishSelectMosque(id, true);
+                }
+            });
+        } else {
+            _finishSelectMosque(id, true);
+        }
     };
 
-    function _finishSelectMosque(id) {
+    // resetProfile : true si la mosquée cible n'a pas (ou plus) de sauvegarde
+    // distante propre — réinitialise alors le profil éditable (adresse/tél/
+    // email/GPS/commodités/photo) pour éviter toute contamination par la
+    // mosquée précédemment sélectionnée sur cet appareil (cf. _ucSelectMosque).
+    function _finishSelectMosque(id, resetProfile) {
         // Stocker le nouvel ID
         try { localStorage.setItem('UC_MOSQUE_ID', id); } catch(e) {}
         // Mémoriser dans l'historique multi-mosquée : les notifications de
@@ -12662,10 +13221,17 @@ function selectQPTakbir() {
         // Choisir explicitement une mosquée vaut réabonnement implicite : si
         // elle avait été mise en sourdine précédemment, on la réactive.
         if (typeof window._ucUnmuteMosque === 'function') window._ucUnmuteMosque(id);
-        // Réinitialiser ucMosqueConfigVersion pour forcer _applyMosqueConfig
         try {
             var stored = JSON.parse(localStorage.getItem('JS_DATA_CUSTOM') || '{}');
+            // Réinitialiser ucMosqueConfigVersion pour forcer _applyMosqueConfig
             stored.ucMosqueConfigVersion = '';
+            if (resetProfile) {
+                ['ucMosqueAddress', 'ucMosquePhone', 'ucMosqueEmail', 'ucMosqueLat', 'ucMosqueLng',
+                 'ucMosqueWomenAllowed', 'ucMosqueWomenAblution', 'ucMosqueJanaza', 'ucMosqueKottab',
+                 'ucMosqueParking', 'ucMosqueSocialUrl', 'ucMosqueImageUrl'].forEach(function (k) {
+                    delete stored[k];
+                });
+            }
             localStorage.setItem('JS_DATA_CUSTOM', JSON.stringify(stored));
         } catch(e) {}
         location.reload();
@@ -12704,25 +13270,6 @@ function selectQPTakbir() {
                     'في غضون ذلك، يمكنكم تخصيص موقع مسجدكم وأوقات الصلاة من خلال قائمة الإعدادات.<br>' +
                     'En attendant, vous pouvez personnaliser la localisation de votre mosquée ainsi que les horaires de prière à l\'aide des options disponibles dans le menu de configuration.' +
                 '</div>' +
-                // ── Mirroir de citySelectionTitle + selectCountryButton +
-                // selectCityButton (cf. index.html) : permet de choisir ICI la
-                // localité de la future mosquée anonyme, par défaut Tunisie/Tunis.
-                // État totalement séparé du sélecteur pays/ville principal (cf.
-                // _anonCountryCode/_anonCityCode plus haut) — appliqué uniquement
-                // à la confirmation (cf. _showAnonMosqueWarning plus bas).
-                '<div id="ucAnonLocSection">' +
-                    '<div id="ucAnonLocTitle"></div>' +
-                    '<div id="ucAnonLocRow">' +
-                        '<div class="ucAnonLocCol">' +
-                            '<div class="ucAnonLocColLabel">المدينة | Ville</div>' +
-                            '<button id="ucAnonSelectCityButton" type="button" class="locationSelectButtonClass cursorPointerClass"></button>' +
-                        '</div>' +
-                        '<div class="ucAnonLocCol">' +
-                            '<div class="ucAnonLocColLabel">الدولة | Pays</div>' +
-                            '<button id="ucAnonSelectCountryButton" type="button" class="locationSelectButtonClass cursorPointerClass"></button>' +
-                        '</div>' +
-                    '</div>' +
-                '</div>' +
                 '<div id="ucAnonMosqueWarnFooter">' +
                     '<button id="ucAnonMosqueWarnCancel">إلغاء | Annuler</button>' +
                     '<button id="ucAnonMosqueWarnConfirm">متابعة | Continuer</button>' +
@@ -12735,18 +13282,13 @@ function selectQPTakbir() {
         modal.addEventListener('click', function(e) { if (e.target === modal) _hideAnonMosqueWarning(); });
         document.getElementById('ucAnonMosqueWarnClose').addEventListener('click', _hideAnonMosqueWarning);
         document.getElementById('ucAnonMosqueWarnCancel').addEventListener('click', _hideAnonMosqueWarning);
-
-        _buildAnonLocPicker();
     }
 
     // ── Deux petites modales listes (pays / villes), mêmes classes visuelles
     // que #ucMosqueSelectorModal (.ucMosqueItem) — construites une seule fois,
     // au-dessus de ucAnonMosqueWarnModal (z-index supérieur, cf. custom.css).
-    function _buildAnonLocPicker() {
+    function _buildLocPicker() {
         if (document.getElementById('ucAnonCountryModal')) return;
-
-        var titleEl = document.getElementById('ucAnonLocTitle');
-        if (titleEl) titleEl.textContent = (typeof JS_eLang !== 'undefined' && JS_eLang.cx_TIMES_2) || '';
 
         var countryModal = document.createElement('div');
         countryModal.id = 'ucAnonCountryModal';
@@ -12770,15 +13312,20 @@ function selectQPTakbir() {
                     '<span class="ucSimpleListModalTitle">المدينة | Ville</span>' +
                     '<span id="ucAnonCityModalClose" class="ucSimpleListModalClose">&#10005;</span>' +
                 '</div>' +
+                '<input id="ucAnonCitySearch" type="text" placeholder="بحث عن مدينة | Rechercher une ville…" />' +
                 '<div id="ucAnonCityList" class="ucSimpleListModalList"></div>' +
             '</div>';
         document.body.appendChild(cityModal);
+        _citySearchInput = document.getElementById('ucAnonCitySearch');
+        _citySearchInput.addEventListener('input', function() {
+            _applyCityFilter(_citySearchInput.value);
+        });
 
-        document.getElementById('ucAnonSelectCountryButton').addEventListener('click', function() {
-            _anonRenderCountryList();
+        document.getElementById('ucMosqueSelectCountryButton').addEventListener('click', function() {
+            _renderCountryList();
             countryModal.classList.add('ucMosqueModalOpen');
         });
-        document.getElementById('ucAnonSelectCityButton').addEventListener('click', function() {
+        document.getElementById('ucMosqueSelectCityButton').addEventListener('click', function() {
             cityModal.classList.add('ucMosqueModalOpen');
         });
         document.getElementById('ucAnonCountryModalClose').addEventListener('click', function() {
@@ -12798,49 +13345,61 @@ function selectQPTakbir() {
             var item = e.target.closest('.ucMosqueItem');
             if (!item) return;
             countryModal.classList.remove('ucMosqueModalOpen');
-            _anonLoadCities(item.getAttribute('data-cc'), item.getAttribute('data-name'));
+            _loadCities(item.getAttribute('data-cc'), item.getAttribute('data-name'));
             cityModal.classList.add('ucMosqueModalOpen');
         });
         document.getElementById('ucAnonCityList').addEventListener('click', function(e) {
             var item = e.target.closest('.ucMosqueItem');
             if (!item) return;
-            _anonCityCode = item.getAttribute('data-code');
-            _anonCityName = item.getAttribute('data-name');
-            _anonRefreshLocButtons();
+            _selCityCode = item.getAttribute('data-code');
+            _selCityName = item.getAttribute('data-name');
+            _refreshLocButtons();
             cityModal.classList.remove('ucMosqueModalOpen');
+            _refreshForCity(_searchInput ? _searchInput.value : '');
         });
 
         // Pré-remplissage par défaut : Tunisie/Tunis, villes déjà chargées pour
         // que le bouton "Ville" fonctionne sans passer d'abord par "Pays".
-        _anonRefreshLocButtons();
-        _anonLoadCities(_anonCountryCode, _anonCountryName);
+        _refreshLocButtons();
+        _loadCities(_selCountryCode, _selCountryName);
     }
 
-    function _anonRefreshLocButtons() {
-        var cBtn = document.getElementById('ucAnonSelectCountryButton');
-        var tBtn = document.getElementById('ucAnonSelectCityButton');
-        if (cBtn) cBtn.textContent = _anonCountryName;
-        if (tBtn) tBtn.textContent = _anonCityName;
+    function _refreshLocButtons() {
+        var cBtn = document.getElementById('ucMosqueSelectCountryButton');
+        var tBtn = document.getElementById('ucMosqueSelectCityButton');
+        // _selCountryName reste toujours le nom latin brut (cf. _renderCountryList) ;
+        // la traduction est recalculée ici pour rester correcte quelle que soit
+        // l'origine de la valeur (défaut initial ou clic dans la liste).
+        // _selCityName, lui, porte déjà le libellé bilingue le cas échéant
+        // (construit une fois par entrée dans _applyCityFilter).
+        var arCountry = _COUNTRY_NAME_AR[_selCountryCode];
+        if (cBtn) cBtn.textContent = arCountry ? (_selCountryName + '   ' + arCountry) : _selCountryName;
+        if (tBtn) tBtn.textContent = _selCityName;
     }
 
-    function _anonRenderCountryList() {
+    function _renderCountryList() {
         var list = document.getElementById('ucAnonCountryList');
         if (!list || typeof JS_WORLD_COUNTRIES === 'undefined') return;
         var html = '';
         for (var i = 0; i < JS_WORLD_COUNTRIES.length; i++) {
             var parts = JS_WORLD_COUNTRIES[i].split('|');
             var cc = parts[0], name = parts[1];
+            // data-name reste le nom latin BRUT (utilisé tel quel par _loadCities /
+            // _selCountryName) — seul le libellé affiché devient bilingue.
+            var arName = _COUNTRY_NAME_AR[cc];
+            var display = arName ? (name + '   ' + arName) : name;
             html += '<div class="ucMosqueItem" data-cc="' + cc + '" data-name="' + _esc(name) + '">' +
-                        '<span class="ucMosqueName">' + _esc(name) + '</span>' +
+                        '<span class="ucMosqueName">' + _esc(display) + '</span>' +
                     '</div>';
         }
         list.innerHTML = html;
     }
 
-    function _anonLoadCities(countryCode, countryName) {
-        _anonCountryCode = countryCode;
-        _anonCountryName = countryName;
-        _anonRefreshLocButtons();
+    function _loadCities(countryCode, countryName) {
+        _selCountryCode = countryCode;
+        _selCountryName = countryName;
+        _refreshLocButtons();
+        if (_citySearchInput) _citySearchInput.value = '';
         var list = document.getElementById('ucAnonCityList');
         if (list) list.innerHTML = '<div class="ucMosqueEmpty">…</div>';
         var url = 'data/' + countryCode + '/' + countryCode.toLowerCase() + '.js?ev=' + Date.now();
@@ -12852,7 +13411,7 @@ function selectQPTakbir() {
             // le vrai sélecteur de ville core, cf. loadCountryCitiesFunction) —
             // avant qu'un autre chargement ne puisse l'écraser entre-temps.
             var cities = (typeof JS_CITIES_DATA !== 'undefined' && JS_CITIES_DATA) ? JS_CITIES_DATA.slice() : [];
-            _anonRenderCityList(cities);
+            _renderCityList(cities);
         };
         s.onerror = function() {
             if (list) list.innerHTML = '<div class="ucMosqueEmpty">خطأ | Erreur</div>';
@@ -12860,10 +13419,8 @@ function selectQPTakbir() {
         document.body.appendChild(s);
     }
 
-    function _anonRenderCityList(cities) {
-        var list = document.getElementById('ucAnonCityList');
-        if (!list) return;
-        var html = '';
+    function _renderCityList(cities) {
+        _cityItemsCache = [];
         for (var i = 0; i < cities.length; i++) {
             var lower = String(cities[i]).toLowerCase();
             var parts = lower.split('.');
@@ -12874,9 +13431,34 @@ function selectQPTakbir() {
             // textContent (bouton "Ville" une fois choisi) sans traitement
             // particulier — une entité HTML ne serait pas interprétée par
             // textContent.
-            if (parts[2] && parts[2] !== '---') dispName += '   ' + parts[2];
-            html += '<div class="ucMosqueItem" data-code="' + code + '" data-name="' + _esc(dispName) + '">' +
-                        '<span class="ucMosqueName">' + _esc(dispName) + '</span>' +
+            // Nom arabe : priorité au 3e segment déjà embarqué dans
+            // data/<CC>/<cc>.js (ex. "tn.tunis.تونس"), sinon repli sur la
+            // couche de traduction visuelle _CITY_NAME_AR (cf. plus haut) —
+            // le code/ID (var "code") n'est jamais affecté, uniquement l'affichage.
+            var embedded = (parts[2] && parts[2] !== '---') ? parts[2] : '';
+            var baseSlug = parts[1].replace(/_+$/, '');
+            var arName = embedded || (_CITY_NAME_AR[_selCountryCode] && _CITY_NAME_AR[_selCountryCode][baseSlug]) || '';
+            var fullName = arName ? (dispName + '   ' + arName) : dispName;
+            _cityItemsCache.push({ code: code, name: fullName, latin: dispName.toLowerCase(), ar: arName });
+        }
+        _applyCityFilter(_citySearchInput ? _citySearchInput.value : '');
+    }
+
+    // ── Filtre par label (nom latin OU arabe) sur la liste déjà chargée en
+    // mémoire (_cityItemsCache) — pas de rechargement réseau, juste un
+    // ré-rendu de #ucAnonCityList. Appelé au chargement initial (filter='')
+    // et à chaque frappe dans #ucAnonCitySearch.
+    function _applyCityFilter(filter) {
+        var list = document.getElementById('ucAnonCityList');
+        if (!list) return;
+        var q = (filter || '').toLowerCase().trim();
+        var items = q ? _cityItemsCache.filter(function(it) {
+            return it.latin.indexOf(q) !== -1 || it.ar.indexOf(q) !== -1;
+        }) : _cityItemsCache;
+        var html = '';
+        for (var i = 0; i < items.length; i++) {
+            html += '<div class="ucMosqueItem" data-code="' + items[i].code + '" data-name="' + _esc(items[i].name) + '">' +
+                        '<span class="ucMosqueName">' + _esc(items[i].name) + '</span>' +
                     '</div>';
         }
         list.innerHTML = html || '<div class="ucMosqueEmpty">لا توجد نتائج | Aucun résultat</div>';
@@ -12888,14 +13470,6 @@ function selectQPTakbir() {
 
     function _showAnonMosqueWarning(onConfirm) {
         _buildAnonWarnModal();
-        // Remise à Tunisie/Tunis à CHAQUE ouverture (positionnement
-        // systématique par défaut, indépendamment d'un choix précédent que
-        // l'utilisateur aurait fait puis annulé lors d'une session antérieure).
-        if (document.getElementById('ucAnonCountryModal')) {
-            _anonCityCode = 'tn.tunis';
-            _anonCityName = 'Tunis';
-            _anonLoadCities('TN', 'Tunisia');
-        }
         // Reclone le bouton "Continuer" à chaque ouverture : évite d'empiler
         // plusieurs listeners (donc plusieurs appels de onConfirm) si l'utilisateur
         // ouvre/annule/rouvre cet avertissement plusieurs fois de suite.
@@ -12903,12 +13477,13 @@ function selectQPTakbir() {
         _anonWarnConfirm.parentNode.replaceChild(freshBtn, _anonWarnConfirm);
         _anonWarnConfirm = freshBtn;
         freshBtn.addEventListener('click', function() {
-            // Persiste la localité choisie dans le mini-sélecteur AVANT de
-            // poursuivre (_finishSelectMosque recharge la page juste après) —
-            // cf. spec/mosquee.js, qui applique cette surcharge à
+            // Persiste la ville déjà choisie en haut du sélecteur principal
+            // (_selCityCode, état partagé) AVANT de poursuivre
+            // (_finishSelectMosque recharge la page juste après) — cf.
+            // spec/mosquee.js, qui applique cette surcharge à
             // MOSQUE_CONFIG.LOCATION_CODE pour l'entrée anonyme, AVANT que
             // _applyMosqueConfig() (custom.js) n'écrive JS_DATA.ucNowCityCODE.
-            try { localStorage.setItem(ANON_LOC_STORAGE_KEY, _anonCityCode); } catch(e) {}
+            try { localStorage.setItem(ANON_LOC_STORAGE_KEY, _selCityCode); } catch(e) {}
             _hideAnonMosqueWarning();
             if (typeof onConfirm === 'function') onConfirm();
         });
@@ -12927,9 +13502,15 @@ function selectQPTakbir() {
         _refreshSettingsBtn();
     })();
 
-    // ── Affichage automatique si aucune mosquée n'est sélectionnée ────────
+    // ── Premier lancement (aucune mosquée choisie) : applique automatiquement
+    // le modèle par défaut/anonyme au lieu d'imposer le sélecteur bloquant —
+    // l'app doit être utilisable immédiatement (cf. discussion point 2). Le
+    // sélecteur reste accessible à tout moment, en opt-in, via
+    // mosqueNameDisplayVertical / ucSelectMosqueButton. Reload unique
+    // (ne se reproduit plus une fois UC_MOSQUE_ID posé).
     if (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG._NO_MOSQUE_SELECTED) {
-        setTimeout(function() { window._ucOpenMosqueSelector(); }, 300);
+        try { localStorage.setItem('UC_MOSQUE_ID', 'anonymous.generic'); } catch (e) {}
+        location.reload();
     }
 
     console.log('[MOSQUE_SEL] installé, id courant:', _getCurrentId() || '(none)');
@@ -12991,6 +13572,13 @@ function selectQPTakbir() {
         var containers = document.querySelectorAll('.ucMosqueNotifListClass');
         if (!containers.length) return;
         var hist = (typeof window._ucGetMosqueHistory === 'function') ? window._ucGetMosqueHistory() : [];
+        // Filtre défensif : purge à l'affichage toute entrée anonyme déjà
+        // présente dans un historique existant (avant ce correctif) —
+        // _ucAddMosqueToHistory empêche désormais toute nouvelle contamination,
+        // mais ne migre pas rétroactivement le localStorage déjà écrit.
+        hist = hist.filter(function(id) {
+            return !(typeof window._ucIsAnonymousMosqueId === 'function' && window._ucIsAnonymousMosqueId(id));
+        });
         var reg  = window.MOSQUES_REGISTRY || {};
         var activeId = _getCurrentId();
         var html;
@@ -14091,6 +14679,578 @@ function selectQPTakbir() {
         _L('UC', 'FIRE', { action: 'toggle_notif_large_text', value: next ? 1 : 0 });
     };
 
+    // ── Profil mosquée éditable (adresse, téléphone, GPS, commodités) ──────
+    // Éditable si mosquée anonyme (même condition que la proposition de
+    // nouvelle mosquée) OU si l'admin de CETTE mosquée s'est déverrouillé via
+    // le cadenas PIN (window._ucAdminUnlocked, cf. _installAdminBtnLockGate).
+    // Toujours dans JS_CUSTOM -> inclus automatiquement dans export/import/
+    // proposition de mosquée, aucune colonne Supabase dédiée nécessaire.
+    function _mosqueProfileCanEdit() {
+        // Calcul INLINE (pas d'appel à window._ucCanProposeMosque) : ce bloc
+        // s'exécute AUSSI de façon EAGER (cf. appel _buildModal() en fin de ce
+        // fichier, avant même que _installConfigBackup n'ait défini cette
+        // fonction sur window) — même bug/correctif que le bouton "Proposer
+        // comme nouvelle mosquée" plus haut (condition inline nécessaire).
+        var mid = ''; try { mid = localStorage.getItem('UC_MOSQUE_ID') || ''; } catch (e) {}
+        var isAnon = (!mid || mid === 'anonymous.generic');
+        return isAnon || !!window._ucAdminUnlocked;
+    }
+
+    // ── Libellés multilingues des 5 blocs de la fiche mosquée (adresse,
+    // actions rapides, horaires, Jumua/Chourouk, prestations) — cf. _newsLang()
+    // plus haut dans ce même IIFE. Les autres libellés de ce bloc (bouton
+    // édition, proposer mosquée...) restent volontairement en arabe seul
+    // (convention déjà en place avant cette fonctionnalité) ; seuls les
+    // éléments NOUVEAUX introduits ici sont traduits, sur demande explicite
+    // (alignement du titre "horaires de prière" selon la langue).
+    function _mosqueProfileLabels() {
+        var T = {
+            AR: { addrEmpty:'العنوان غير متوفر', copyOk:'تم النسخ', copyErr:'تعذر النسخ',
+                  call:'اتصال', route:'اتجاهات', share:'مشاركة', email:'بريد', na:'غير متوفر',
+                  prayerTitle:'أوقات الصلاة', iqama:'إقامة', jumua:'الجمعة', shrouk:'الشروق',
+                  prestations:'الخدمات', women:'مصلى للنساء', ablution:'دورة مياه للنساء',
+                  janaza:'صلاة الجنازة', kottab:'كُتّاب', parking:'موقف سيارات',
+                  openInApp:'افتح هذا المسجد في التطبيق' },
+            FR: { addrEmpty:'Adresse non disponible', copyOk:'Copié', copyErr:'Échec de la copie',
+                  call:'Téléphone', route:'Itinéraire', share:'Partager', email:'Email', na:'Non disponible',
+                  prayerTitle:'Horaires de prière', iqama:'Iqama', jumua:'Jumua', shrouk:'Chourouk',
+                  prestations:'Prestations', women:'Espace femmes', ablution:'Ablution femmes',
+                  janaza:'Salat al Janaza', kottab:'Kottab', parking:'Parking',
+                  openInApp:"Ouvrir cette mosquée dans l'application" },
+            EN: { addrEmpty:'Address not available', copyOk:'Copied', copyErr:'Copy failed',
+                  call:'Call', route:'Directions', share:'Share', email:'Email', na:'Not available',
+                  prayerTitle:'Prayer times', iqama:'Iqama', jumua:'Jumua', shrouk:'Sunrise',
+                  prestations:'Services', women:"Women's area", ablution:'Women ablution',
+                  janaza:'Funeral prayer', kottab:'Quran school', parking:'Parking',
+                  openInApp:'Open this mosque in the app' },
+            TR: { addrEmpty:'Adres mevcut değil', copyOk:'Kopyalandı', copyErr:'Kopyalama başarısız',
+                  call:'Ara', route:'Yol tarifi', share:'Paylaş', email:'E-posta', na:'Mevcut değil',
+                  prayerTitle:'Namaz vakitleri', iqama:'İkamet', jumua:'Cuma', shrouk:'Güneş doğumu',
+                  prestations:'Hizmetler', women:'Kadınlar bölümü', ablution:'Kadınlar abdesthanesi',
+                  janaza:'Cenaze namazı', kottab:'Kuran kursu', parking:'Otopark',
+                  openInApp:'Bu camiyi uygulamada aç' },
+            ID: { addrEmpty:'Alamat tidak tersedia', copyOk:'Disalin', copyErr:'Gagal menyalin',
+                  call:'Telepon', route:'Petunjuk', share:'Bagikan', email:'Email', na:'Tidak tersedia',
+                  prayerTitle:'Waktu salat', iqama:'Iqamah', jumua:'Jumat', shrouk:'Terbit',
+                  prestations:'Layanan', women:'Area wanita', ablution:'Wudhu wanita',
+                  janaza:'Salat jenazah', kottab:'Sekolah Quran', parking:'Parkir',
+                  openInApp:'Buka masjid ini di aplikasi' },
+        };
+        return T[_newsLang()] || T.FR;
+    }
+
+    // Lit une valeur déjà calculée/affichée par le moteur core (m2body.js)
+    // plutôt que de recalculer indépendamment — garantit la cohérence avec
+    // le reste de l'appli (tableau horaires principal, etc.). Essaie
+    // Vertical puis Horizontal (l'un des deux jeux d'éléments est rempli
+    // selon l'orientation courante).
+    function _liveTimeText(baseId) {
+        var v = document.getElementById(baseId + 'Vertical');
+        var h = document.getElementById(baseId + 'Horizontal');
+        var vt = v ? (v.textContent || '').trim() : '';
+        var ht = h ? (h.textContent || '').trim() : '';
+        return vt || ht || '--:--';
+    }
+
+    function _prayerNames() {
+        var raw = (typeof JS_eLang !== 'undefined' && JS_eLang.cx_NamesOfPrayings) || 'Fajr,Chorouq,Dhuhr,Asr,Maghrib,Isha';
+        var parts = raw.split(',');
+        while (parts.length < 6) parts.push('');
+        return parts.map(function (s) { return s.trim(); });
+    }
+
+    // Heure de la Jumua : mosquée sans Jumua (JUMUA_ENABLED=0) -> "non
+    // disponible" ; heure fixe saisie (ucJomoaFixedTime != 'AUTO') -> valeur
+    // telle quelle ; sinon (AUTO) -> même valeur que l'azan Dhuhr du jour
+    // (règle métier core, cf. _patchJomoaDisplay plus haut dans ce fichier).
+    function _jumuaTimeText() {
+        var cfg = window.MOSQUE_CONFIG || {};
+        var t = _mosqueProfileLabels();
+        if (!cfg.JUMUA_ENABLED) return t.na;
+        var fixed = (typeof JS_DATA !== 'undefined') ? JS_DATA.ucJomoaFixedTime : '';
+        if (fixed && fixed !== 'AUTO') return fixed;
+        return _liveTimeText('azanTimeDohr') || t.na;
+    }
+
+    function _mosqueIdForShare() {
+        var id = '';
+        try { id = localStorage.getItem('UC_MOSQUE_ID') || ''; } catch (e) {}
+        return (id && id !== 'anonymous.generic') ? id : '';
+    }
+
+    // Pousse automatiquement la config complète (JS_CUSTOM inclus) vers
+    // Supabase dès qu'un profil (adresse/tél/email/photo/commodités) est
+    // sauvegardé sur une VRAIE mosquée (pas l'anonyme — cf. _mosqueIdForShare,
+    // même règle). Appelé après chaque sauvegarde du profil ET après chaque
+    // upload de photo (_openMosquePhotoPicker) — même mécanisme que le bouton
+    // "Notifier" (_installAdminPayloadPreview), juste déclenché ici par
+    // l'édition du profil plutôt que par l'envoi d'une mise à jour d'horaires.
+    // Répond directement au besoin "compléter les infos + créer la config
+    // Supabase" pour les mosquées du registre local qui n'en ont pas encore :
+    // le premier admin qui remplit sa fiche crée la ligne automatiquement,
+    // sans étape manuelle "Export -> Distant" séparée.
+    function _autoPushProfileIfRealMosque() {
+        var mid = _mosqueIdForShare();
+        if (!mid || typeof window._ucPushRemoteBackup !== 'function') return;
+        window._ucPushRemoteBackup(mid, function (ok) {
+            _L('CFG', ok ? 'PROFILE_AUTO_SYNCED' : 'PROFILE_AUTO_SYNC_ERR', { mosque_id: mid });
+        });
+    }
+
+    // ── Bloc 1 : adresse + icône copier presse-papier ──────────────────────
+    function _buildAddressBlockHtml() {
+        var c = (typeof JS_CUSTOM !== 'undefined') ? JS_CUSTOM : {};
+        var cfg = window.MOSQUE_CONFIG || {};
+        var t = _mosqueProfileLabels();
+        var addr = (c.ucMosqueAddress && c.ucMosqueAddress.trim()) ? c.ucMosqueAddress.trim() : (cfg.ADDRESS || '');
+        if (!addr) {
+            return '<div id="ucMosqueAddressBlock"><span id="ucMosqueInfoAddressEmpty">' + _esc(t.addrEmpty) + '</span></div>';
+        }
+        return '<div id="ucMosqueAddressBlock">' +
+            '<span id="ucMosqueAddressText">' + _esc(addr) + '</span>' +
+            '<span id="ucMosqueAddressCopyBtn" title="' + _esc(t.copyOk) + '">📋</span>' +
+            '</div>';
+    }
+
+    // ── Bloc 2 : ligne d'icônes d'action (Téléphone / Itinéraire / Partager / Email) ──
+    function _buildQuickActionsRowHtml() {
+        var c = (typeof JS_CUSTOM !== 'undefined') ? JS_CUSTOM : {};
+        var t = _mosqueProfileLabels();
+        var hasPhone = !!c.ucMosquePhone;
+        var hasGeo   = !!(c.ucMosqueLat && c.ucMosqueLng);
+        var hasEmail = !!c.ucMosqueEmail;
+        function item(id, icon, label, enabled) {
+            return '<div id="' + id + '" class="ucMQABtn' + (enabled ? '' : ' ucMQABtnDisabled') + '">' +
+                '<span class="ucMQAIcon">' + icon + '</span>' +
+                '<span class="ucMQALabel">' + _esc(label) + '</span>' +
+                '</div>';
+        }
+        return '<div id="ucMosqueQuickActionsRow">' +
+            item('ucMQACall',  '📞', t.call,  hasPhone) +
+            item('ucMQARoute', '🧭', t.route, hasGeo) +
+            item('ucMQAShare', '📤', t.share, true) +
+            item('ucMQAEmail', '📧', t.email, hasEmail) +
+            '</div>';
+    }
+
+    // ── Bloc 3 : tableau des horaires de prière du jour (5 col x 3 lignes) ──
+    function _buildPrayerTimesTableHtml() {
+        var t = _mosqueProfileLabels();
+        var names = _prayerNames();
+        var rowsDef = [
+            { name: names[0], azanId: 'azanTimeFajr', iqamaId: 'iqamaTimeFajr' },
+            { name: names[2], azanId: 'azanTimeDohr', iqamaId: 'iqamaTimeDohr' },
+            { name: names[3], azanId: 'azanTimeAsr',  iqamaId: 'iqamaTimeAsr'  },
+            { name: names[4], azanId: 'azanTimeMgrb', iqamaId: 'iqamaTimeMgrb' },
+            { name: names[5], azanId: 'azanTimeIsha', iqamaId: 'iqamaTimeIsha' },
+        ];
+        var dir = (_newsLang() === 'AR') ? 'rtl' : 'ltr';
+        var html = '<div id="ucMosquePrayerBlock">';
+        html += '<div id="ucMosquePrayerTitle" style="direction:' + dir + ';">' + _esc(t.prayerTitle) + '</div>';
+        // dir sur la <table> elle-même (pas juste le titre) : sans ça les <td>
+        // s'affichent dans l'ordre du DOM (Fajr à gauche -> Isha à droite),
+        // alors qu'en arabe la lecture RTL impose Fajr à DROITE -> Isha à GAUCHE.
+        html += '<table id="ucMosquePrayerTable" dir="' + dir + '"><tbody>';
+        html += '<tr class="ucMPTNameRow">'  + rowsDef.map(function (r) { return '<td>' + _esc(r.name) + '</td>'; }).join('') + '</tr>';
+        html += '<tr class="ucMPTAzanRow">'  + rowsDef.map(function (r) { return '<td>' + _esc(_liveTimeText(r.azanId))  + '</td>'; }).join('') + '</tr>';
+        html += '<tr class="ucMPTIqamaRow">' + rowsDef.map(function (r) { return '<td>' + _esc(_liveTimeText(r.iqamaId)) + '</td>'; }).join('') + '</tr>';
+        html += '</tbody></table></div>';
+        return html;
+    }
+
+    // ── Bloc 4 : tableau Jumua / Chourouk (2 colonnes x 2 lignes) ──────────
+    function _buildJumuaChouroukTableHtml() {
+        var t = _mosqueProfileLabels();
+        var names = _prayerNames();
+        var dir = (_newsLang() === 'AR') ? 'rtl' : 'ltr';
+        // Même correctif que _buildPrayerTimesTableHtml : dir sur la <table>
+        // pour que la 1ère colonne (Jumua) s'affiche à DROITE en arabe.
+        return '<table id="ucMosqueJumuaChouroukTable" dir="' + dir + '"><tbody>' +
+            '<tr><td>' + _esc(t.jumua) + '</td><td>' + _esc(names[1] || t.shrouk) + '</td></tr>' +
+            '<tr><td>' + _esc(_jumuaTimeText()) + '</td><td>' + _esc(_liveTimeText('azanTimeShrq')) + '</td></tr>' +
+            '</tbody></table>';
+    }
+
+    // ── Bloc 5 : tableau des prestations (3 col x 5 lignes, icône/label/✔ou✗) ──
+    function _buildPrestationsTableHtml() {
+        var c = (typeof JS_CUSTOM !== 'undefined') ? JS_CUSTOM : {};
+        var t = _mosqueProfileLabels();
+        var rows = [
+            { icon: '👩',  label: t.women,    ok: !!c.ucMosqueWomenAllowed },
+            { icon: '🚻',  label: t.ablution, ok: !!c.ucMosqueWomenAblution },
+            { icon: '🤲',  label: t.janaza,   ok: !!c.ucMosqueJanaza },
+            { icon: '📖',  label: t.kottab,   ok: !!c.ucMosqueKottab },
+            { icon: '🅿️', label: t.parking,  ok: !!c.ucMosqueParking },
+        ];
+        var html = '<div id="ucMosquePrestationsBlock">';
+        html += '<div id="ucMosquePrestationsTitle">' + _esc(t.prestations) + '</div>';
+        html += '<table id="ucMosquePrestationsTable"><tbody>';
+        rows.forEach(function (r) {
+            html += '<tr><td class="ucMPresIcon">' + r.icon + '</td>' +
+                '<td class="ucMPresLabel">' + _esc(r.label) + '</td>' +
+                '<td class="ucMPresCheck ' + (r.ok ? 'ucMPresOk' : 'ucMPresNo') + '">' + (r.ok ? '✔' : '✗') + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+        return html;
+    }
+
+    function _buildMosqueProfileBlockHtml() {
+        var canEdit = _mosqueProfileCanEdit();
+        var html = '<div id="ucMosqueProfileBlock">';
+        html += _buildAddressBlockHtml();
+        html += _buildQuickActionsRowHtml();
+        html += _buildPrayerTimesTableHtml();
+        html += _buildJumuaChouroukTableHtml();
+        html += _buildPrestationsTableHtml();
+        if (canEdit) html += '<div id="ucMosqueProfileEditBtn" class="clickableWhiteClass">✏️ تعديل معلومات المسجد</div>';
+        html += '</div>';
+        return html;
+    }
+
+    // ── Copie de l'adresse dans le presse-papier (bloc 1) ──────────────────
+    function _fallbackCopy(text, cb) {
+        try {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            var ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            cb(ok);
+        } catch (e) { cb(false); }
+    }
+
+    function _copyMosqueAddress() {
+        var el = document.getElementById('ucMosqueAddressText');
+        var text = el ? el.textContent : '';
+        if (!text) return;
+        var t = _mosqueProfileLabels();
+        function done(ok) { window._ucToast && window._ucToast(ok ? t.copyOk : t.copyErr, ok ? 'ok' : 'err'); }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function () { done(true); }).catch(function () { _fallbackCopy(text, done); });
+        } else {
+            _fallbackCopy(text, done);
+        }
+    }
+
+    // ── Partage (bloc 2, icône Partager) — message texte reprenant nom,
+    // adresse, contact, horaires du jour, Jumua/Chourouk, + lien de retour
+    // vers l'appli (tawkit://mosque/<id>) si la mosquée courante a un id
+    // exploitable (pas anonyme). Passe par le pont natif Android (fiabilité
+    // de la feuille de partage système, cf. MobileJsBridge.shareText),
+    // repli navigator.share() hors APK, repli final = copie presse-papier.
+    function _buildShareText() {
+        var cfg = window.MOSQUE_CONFIG || {};
+        var c = (typeof JS_CUSTOM !== 'undefined') ? JS_CUSTOM : {};
+        var t = _mosqueProfileLabels();
+        var names = _prayerNames();
+        var lines = [];
+        if (cfg.MOSQUE_NAME) lines.push(cfg.MOSQUE_NAME);
+        var addr = (c.ucMosqueAddress && c.ucMosqueAddress.trim()) ? c.ucMosqueAddress.trim() : (cfg.ADDRESS || '');
+        if (addr) lines.push(addr);
+        lines.push('');
+        if (c.ucMosquePhone) lines.push(t.call + ': ' + c.ucMosquePhone);
+        if (c.ucMosqueEmail) lines.push(t.email + ': ' + c.ucMosqueEmail);
+        if (c.ucMosqueSocialUrl) lines.push(c.ucMosqueSocialUrl);
+        if (c.ucMosqueLat && c.ucMosqueLng) lines.push('https://maps.google.com/?q=' + c.ucMosqueLat + ',' + c.ucMosqueLng);
+        lines.push('');
+        [
+            [names[0], 'azanTimeFajr', 'iqamaTimeFajr'],
+            [names[2], 'azanTimeDohr', 'iqamaTimeDohr'],
+            [names[3], 'azanTimeAsr',  'iqamaTimeAsr'],
+            [names[4], 'azanTimeMgrb', 'iqamaTimeMgrb'],
+            [names[5], 'azanTimeIsha', 'iqamaTimeIsha'],
+        ].forEach(function (r) {
+            lines.push(r[0] + ': ' + _liveTimeText(r[1]) + ' (' + t.iqama + ' ' + _liveTimeText(r[2]) + ')');
+        });
+        lines.push(t.jumua + ': ' + _jumuaTimeText());
+        lines.push((names[1] || t.shrouk) + ': ' + _liveTimeText('azanTimeShrq'));
+
+        var mid = _mosqueIdForShare();
+        if (mid) {
+            lines.push('');
+            lines.push(t.openInApp);
+            // Lien https (gratuit, GitHub Pages du repo — aucune dépendance à
+            // tawkit.net) au lieu du schéma personnalisé tawkit:// tel quel :
+            // WhatsApp/Messenger ne rendent cliquables que les liens http(s),
+            // pas les schémas custom. Cette page relance tawkit://mosque/<id>
+            // en JS une fois ouverte (cf. /m.html à la racine du repo) — le
+            // schéma custom lui-même reste géré par l'intent-filter Android
+            // (AndroidManifest.xml), inchangé.
+            lines.push('https://taoukitprayer.github.io/azan/m.html?id=' + encodeURIComponent(mid));
+        }
+        return lines.join('\n');
+    }
+
+    function _shareMosqueInfo() {
+        var text = _buildShareText();
+        var cfg = window.MOSQUE_CONFIG || {};
+        var title = cfg.MOSQUE_NAME || '';
+        if (window.AndroidMobile && window.AndroidMobile.shareText) {
+            window.AndroidMobile.shareText(title, text);
+            return;
+        }
+        if (navigator.share) {
+            navigator.share({ title: title, text: text }).catch(function () {});
+            return;
+        }
+        var t = _mosqueProfileLabels();
+        _fallbackCopy(text, function (ok) {
+            window._ucToast && window._ucToast(ok ? t.copyOk : t.copyErr, ok ? 'ok' : 'err');
+        });
+    }
+
+    // ── Câblage des éléments interactifs après (re)construction du bloc ────
+    function _wireMosqueProfileBlock() {
+        var editBtn = document.getElementById('ucMosqueProfileEditBtn');
+        if (editBtn) editBtn.addEventListener('click', _openMosqueProfileEdit);
+
+        var copyBtn = document.getElementById('ucMosqueAddressCopyBtn');
+        if (copyBtn) copyBtn.addEventListener('click', _copyMosqueAddress);
+
+        var t = _mosqueProfileLabels();
+
+        var callBtn = document.getElementById('ucMQACall');
+        if (callBtn) callBtn.addEventListener('click', function () {
+            var p = (typeof JS_CUSTOM !== 'undefined') ? JS_CUSTOM.ucMosquePhone : '';
+            if (!p) { window._ucToast && window._ucToast(t.na, 'err'); return; }
+            location.href = 'tel:' + p.replace(/\s+/g, '');
+        });
+
+        var routeBtn = document.getElementById('ucMQARoute');
+        if (routeBtn) routeBtn.addEventListener('click', function () {
+            var c = (typeof JS_CUSTOM !== 'undefined') ? JS_CUSTOM : {};
+            var lat = parseFloat(c.ucMosqueLat), lng = parseFloat(c.ucMosqueLng);
+            if (isNaN(lat) || isNaN(lng)) { window._ucToast && window._ucToast(t.na, 'err'); return; }
+            window.openMapLocatorModalAt && window.openMapLocatorModalAt(lat, lng);
+        });
+
+        var emailBtn = document.getElementById('ucMQAEmail');
+        if (emailBtn) emailBtn.addEventListener('click', function () {
+            var e = (typeof JS_CUSTOM !== 'undefined') ? JS_CUSTOM.ucMosqueEmail : '';
+            if (!e) { window._ucToast && window._ucToast(t.na, 'err'); return; }
+            location.href = 'mailto:' + e;
+        });
+
+        var shareBtn = document.getElementById('ucMQAShare');
+        if (shareBtn) shareBtn.addEventListener('click', _shareMosqueInfo);
+    }
+
+    function _refreshMosqueProfileBlock() {
+        var wrap = document.getElementById('ucMosqueProfileBlockWrap');
+        if (!wrap) return;
+        wrap.innerHTML = _buildMosqueProfileBlockHtml();
+        _wireMosqueProfileBlock();
+    }
+
+    // ── Overlay d'édition ───────────────────────────────────────────────────
+    var _profileEditOv = null;
+    function _buildMosqueProfileEditOverlay() {
+        if (document.getElementById('ucMosqueProfileEditOverlay')) {
+            _profileEditOv = document.getElementById('ucMosqueProfileEditOverlay');
+            return;
+        }
+        var ov = document.createElement('div');
+        ov.id = 'ucMosqueProfileEditOverlay';
+        ov.innerHTML =
+            '<div id="ucMosqueProfileEditBox">' +
+                '<p id="ucMosqueProfileEditTitle">تعديل معلومات المسجد</p>' +
+                '<label class="ucMPELabel">العنوان</label>' +
+                '<input id="ucMPEAddress" type="text" class="ucMPEInput"/>' +
+                '<label class="ucMPELabel">الهاتف</label>' +
+                '<input id="ucMPEPhone" type="tel" class="ucMPEInput"/>' +
+                '<label class="ucMPELabel">البريد الإلكتروني</label>' +
+                '<input id="ucMPEEmail" type="email" class="ucMPEInput" placeholder="example@mail.com"/>' +
+                '<label class="ucMPELabel">الموقع الجغرافي (GPS)</label>' +
+                '<div class="ucMPERow">' +
+                    '<input id="ucMPELat" type="number" step="any" placeholder="خط العرض" class="ucMPEInput ucMPEInputHalf"/>' +
+                    '<input id="ucMPELng" type="number" step="any" placeholder="خط الطول" class="ucMPEInput ucMPEInputHalf"/>' +
+                '</div>' +
+                '<div id="ucMPEGeoBtn" class="clickableWhiteClass">📍 استخدام موقعي الحالي</div>' +
+                '<p id="ucMPEGeoErr" class="ucMPEErr"></p>' +
+                '<label class="ucMPECheckRow"><input id="ucMPEWomen" type="checkbox"/> مصلى مخصص للنساء</label>' +
+                '<label class="ucMPECheckRow"><input id="ucMPEAblution" type="checkbox"/> دورة مياه/وضوء للنساء</label>' +
+                '<label class="ucMPECheckRow"><input id="ucMPEJanaza" type="checkbox"/> صلاة الجنازة</label>' +
+                '<label class="ucMPECheckRow"><input id="ucMPEKottab" type="checkbox"/> كُتّاب (تعليم القرآن)</label>' +
+                '<label class="ucMPECheckRow"><input id="ucMPEParking" type="checkbox"/> موقف سيارات مخصص</label>' +
+                '<label class="ucMPELabel">رابط (فيسبوك/موقع الويب...)</label>' +
+                '<input id="ucMPESocial" type="url" class="ucMPEInput" placeholder="https://…"/>' +
+                '<div id="ucMosqueProfileEditFooter">' +
+                    '<span id="ucMPECancel" class="ucModalBtn ucModalBtn--secondary">إلغاء</span>' +
+                    '<span id="ucMPESave" class="ucModalBtn ucModalBtn--primary">حفظ</span>' +
+                '</div>' +
+            '</div>';
+        document.body.appendChild(ov);
+        _profileEditOv = ov;
+
+        ov.addEventListener('click', function (e) { if (e.target === ov) _closeMosqueProfileEdit(); });
+        document.getElementById('ucMPECancel').addEventListener('click', _closeMosqueProfileEdit);
+        document.getElementById('ucMPEGeoBtn').addEventListener('click', function () {
+            var errEl = document.getElementById('ucMPEGeoErr');
+            errEl.textContent = '';
+            if (!navigator.geolocation) { errEl.textContent = 'GPS غير متوفر'; return; }
+            navigator.geolocation.getCurrentPosition(function (pos) {
+                document.getElementById('ucMPELat').value = pos.coords.latitude.toFixed(6);
+                document.getElementById('ucMPELng').value = pos.coords.longitude.toFixed(6);
+            }, function () {
+                errEl.textContent = 'تعذر تحديد الموقع';
+            });
+        });
+        document.getElementById('ucMPESave').addEventListener('click', function () {
+            JS_CUSTOM.ucMosqueAddress       = (document.getElementById('ucMPEAddress').value || '').trim();
+            JS_CUSTOM.ucMosquePhone         = (document.getElementById('ucMPEPhone').value || '').trim();
+            JS_CUSTOM.ucMosqueEmail         = (document.getElementById('ucMPEEmail').value || '').trim();
+            JS_CUSTOM.ucMosqueLat           = (document.getElementById('ucMPELat').value || '').trim();
+            JS_CUSTOM.ucMosqueLng           = (document.getElementById('ucMPELng').value || '').trim();
+            JS_CUSTOM.ucMosqueWomenAllowed  = document.getElementById('ucMPEWomen').checked ? 1 : 0;
+            JS_CUSTOM.ucMosqueWomenAblution = document.getElementById('ucMPEAblution').checked ? 1 : 0;
+            JS_CUSTOM.ucMosqueJanaza        = document.getElementById('ucMPEJanaza').checked ? 1 : 0;
+            JS_CUSTOM.ucMosqueKottab        = document.getElementById('ucMPEKottab').checked ? 1 : 0;
+            JS_CUSTOM.ucMosqueParking       = document.getElementById('ucMPEParking').checked ? 1 : 0;
+            JS_CUSTOM.ucMosqueSocialUrl     = (document.getElementById('ucMPESocial').value || '').trim();
+            saveCustomSettingsFunction();
+            _autoPushProfileIfRealMosque();
+            _closeMosqueProfileEdit();
+            _refreshMosqueProfileBlock();
+            window._ucToast && window._ucToast('تم الحفظ', 'ok');
+        });
+    }
+
+    function _openMosqueProfileEdit() {
+        _buildMosqueProfileEditOverlay();
+        var c = JS_CUSTOM;
+        document.getElementById('ucMPEAddress').value  = c.ucMosqueAddress  || '';
+        document.getElementById('ucMPEPhone').value    = c.ucMosquePhone    || '';
+        document.getElementById('ucMPEEmail').value    = c.ucMosqueEmail    || '';
+        document.getElementById('ucMPELat').value      = c.ucMosqueLat      || '';
+        document.getElementById('ucMPELng').value      = c.ucMosqueLng      || '';
+        document.getElementById('ucMPEWomen').checked    = !!c.ucMosqueWomenAllowed;
+        document.getElementById('ucMPEAblution').checked = !!c.ucMosqueWomenAblution;
+        document.getElementById('ucMPEJanaza').checked   = !!c.ucMosqueJanaza;
+        document.getElementById('ucMPEKottab').checked   = !!c.ucMosqueKottab;
+        document.getElementById('ucMPEParking').checked  = !!c.ucMosqueParking;
+        document.getElementById('ucMPESocial').value   = c.ucMosqueSocialUrl || '';
+        document.getElementById('ucMPEGeoErr').textContent = '';
+        _profileEditOv.classList.add('ucMosqueModalOpen');
+    }
+
+    function _closeMosqueProfileEdit() {
+        if (_profileEditOv) _profileEditOv.classList.remove('ucMosqueModalOpen');
+    }
+
+    // ── Photo de la mosquée (upload Supabase Storage) ──────────────────────
+    // Même condition d'édition que le profil (_mosqueProfileCanEdit). Choix
+    // via <input type="file" capture> -> onShowFileChooser (MainActivity.kt,
+    // implémenté pour l'occasion) propose galerie + appareil photo si présent.
+    // Compression côté client (canvas, max 800px, JPEG q0.8) avant upload —
+    // évite d'envoyer des photos de plusieurs Mo (cf. discussion "marché").
+    var _SB_URL_PHOTO = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+                     || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+    var _SB_KEY_PHOTO = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+                     || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+
+    function _mosquePhotoStoragePath() {
+        var mid = 'mosque';
+        try { mid = localStorage.getItem('UC_MOSQUE_ID') || 'mosque'; } catch (e) {}
+        return mid.replace(/[^a-zA-Z0-9_.-]/g, '_') + '-' + Date.now() + '.jpg';
+    }
+
+    function _compressImageFile(file, maxDim, quality, cb) {
+        var reader = new FileReader();
+        reader.onload = function (e) {
+            var img = new Image();
+            img.onload = function () {
+                var w = img.width, h = img.height;
+                if (w > maxDim || h > maxDim) {
+                    if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+                    else { w = Math.round(w * maxDim / h); h = maxDim; }
+                }
+                var canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                canvas.toBlob(function (blob) { cb(blob); }, 'image/jpeg', quality);
+            };
+            img.onerror = function () { cb(null); };
+            img.src = e.target.result;
+        };
+        reader.onerror = function () { cb(null); };
+        reader.readAsDataURL(file);
+    }
+
+    function _uploadMosquePhoto(blob, cb) {
+        var path = _mosquePhotoStoragePath();
+        fetch(_SB_URL_PHOTO + '/storage/v1/object/mosque-images/' + path, {
+            method: 'POST',
+            headers: { 'apikey': _SB_KEY_PHOTO, 'Authorization': 'Bearer ' + _SB_KEY_PHOTO, 'Content-Type': 'image/jpeg' },
+            body: blob
+        })
+        .then(function (r) { cb(r.ok ? (_SB_URL_PHOTO + '/storage/v1/object/public/mosque-images/' + path) : null); })
+        .catch(function () { cb(null); });
+    }
+
+    var _mosquePhotoInput = null;
+    function _openMosquePhotoPicker() {
+        if (!_mosquePhotoInput) {
+            _mosquePhotoInput = document.createElement('input');
+            _mosquePhotoInput.type = 'file';
+            _mosquePhotoInput.accept = 'image/*';
+            _mosquePhotoInput.setAttribute('capture', 'environment');
+            _mosquePhotoInput.style.display = 'none';
+            document.body.appendChild(_mosquePhotoInput);
+            _mosquePhotoInput.addEventListener('change', function (e) {
+                var f = e.target.files && e.target.files[0];
+                _mosquePhotoInput.value = '';
+                if (!f) return;
+                window._ucToast && window._ucToast('جارٍ المعالجة...', 'ok');
+                _compressImageFile(f, 800, 0.8, function (blob) {
+                    if (!blob) { window._ucToast && window._ucToast('خطأ في الصورة', 'err'); return; }
+                    window._ucToast && window._ucToast('جارٍ الرفع...', 'ok');
+                    _uploadMosquePhoto(blob, function (url) {
+                        if (!url) { window._ucToast && window._ucToast('خطأ في الرفع', 'err'); return; }
+                        JS_CUSTOM.ucMosqueImageUrl = url;
+                        saveCustomSettingsFunction();
+                        _autoPushProfileIfRealMosque();
+                        var imgWrap = document.getElementById('ucMosqueInfoImageWrap');
+                        if (imgWrap) {
+                            var existing = document.getElementById('ucMosqueInfoImage');
+                            var emptyEl  = document.getElementById('ucMosqueInfoImageEmpty');
+                            if (existing) {
+                                existing.src = url;
+                            } else {
+                                var img = document.createElement('img');
+                                img.id = 'ucMosqueInfoImage'; img.alt = ''; img.src = url;
+                                if (emptyEl) imgWrap.replaceChild(img, emptyEl);
+                                else imgWrap.insertBefore(img, imgWrap.firstChild);
+                            }
+                        }
+                        window._ucToast && window._ucToast('تم تحديث الصورة', 'ok');
+                    });
+                });
+            });
+        }
+        _mosquePhotoInput.click();
+    }
+
+    function _refreshMosquePhotoBtn() {
+        var wrap = document.getElementById('ucMosqueInfoImageWrap');
+        if (!wrap) return;
+        var btn = document.getElementById('ucMosquePhotoBtn');
+        var canEdit = _mosqueProfileCanEdit();
+        if (canEdit && !btn) {
+            btn = document.createElement('div');
+            btn.id = 'ucMosquePhotoBtn';
+            btn.className = 'clickableWhiteClass';
+            btn.textContent = '📷 تغيير الصورة';
+            btn.addEventListener('click', _openMosquePhotoPicker);
+            wrap.appendChild(btn);
+        } else if (!canEdit && btn) {
+            btn.parentNode.removeChild(btn);
+        }
+    }
+
     // ── Injection de la modale (une seule fois) ───────────────────────────
     function _buildModal() {
         if (document.getElementById('ucMosqueInfoModal')) {
@@ -14099,16 +15259,36 @@ function selectQPTakbir() {
         }
         var cfg     = window.MOSQUE_CONFIG || {};
         var name    = _esc(cfg.MOSQUE_NAME || '');
-        var address = cfg.ADDRESS ? _esc(cfg.ADDRESS) : '';
         var image   = cfg.IMAGE   ? _esc(cfg.IMAGE)   : '';
+        // Photo personnalisée uploadée (Supabase Storage) prioritaire sur
+        // l'image statique du registre embarqué (cf. _openMosquePhotoPicker).
+        var customImgUrl = (typeof JS_CUSTOM !== 'undefined' && JS_CUSTOM.ucMosqueImageUrl) ? _esc(JS_CUSTOM.ucMosqueImageUrl) : '';
+        var imageSrc = customImgUrl || (image ? 'spec/images/' + image : '');
 
-        var imageBlockHtml = image
-            ? '<img id="ucMosqueInfoImage" src="spec/images/' + image + '" alt="" />'
+        var imageBlockHtml = imageSrc
+            ? '<img id="ucMosqueInfoImage" src="' + imageSrc + '" alt="" />'
             : '<div id="ucMosqueInfoImageEmpty">لا توجد صورة متوفرة</div>';
 
-        var addressBlockHtml = address
-            ? '<div id="ucMosqueInfoAddress">' + address + '</div>'
-            : '<div id="ucMosqueInfoAddressEmpty">العنوان غير متوفر</div>';
+        // Adresse + tel/email/GPS/social/commodités : entièrement géré par
+        // _buildMosqueProfileBlockHtml (rafraîchi par _refreshMosqueProfileBlock
+        // après sauvegarde — cf. fix "adresse jamais affichée").
+        var addressBlockHtml = '<div id="ucMosqueProfileBlockWrap">' + _buildMosqueProfileBlockHtml() + '</div>';
+
+        // ── Bouton "Proposer comme nouvelle mosquée" — condition nécessaire :
+        // UC_MOSQUE_ID absent ou encore sur le modèle par défaut/anonyme. Dès
+        // qu'une vraie mosquée existante est sélectionnée, ce bouton disparaît
+        // (jamais reproposé par-dessus une mosquée déjà enregistrée).
+        // NOTE : calcul INLINE (pas d'appel à window._ucCanProposeMosque) —
+        // ce bloc s'exécute AUSSI de façon EAGER (cf. appel _buildModal() en
+        // fin de _installMosqueInfoModal, avant même que _installConfigBackup
+        // (bien plus loin dans le fichier) n'ait défini cette fonction sur
+        // window. Un appel à window._ucCanProposeMosque() ici renverrait donc
+        // toujours false au premier chargement (bug constaté et corrigé).
+        var _curMid = ''; try { _curMid = localStorage.getItem('UC_MOSQUE_ID') || ''; } catch (e) {}
+        var _canPropose = (!_curMid || _curMid === 'anonymous.generic');
+        var proposeBlockHtml = _canPropose
+            ? '<div id="ucProposeMosqueBtnWrap"><button type="button" id="ucProposeMosqueBtn" class="ucModernActionBtn"><span class="ucModernActionBtnIcon">📤</span>اقتراح هذا المسجد كمسجد جديد</button></div>'
+            : '';
 
         // ── Bloc notifications dupliqué (mêmes boutons que #ucMosqueNotifModal) ──
         // Classe ucMosqueNotifListClass : _render() de _installMosqueNotifPanel
@@ -14142,8 +15322,11 @@ function selectQPTakbir() {
             '</div>' +
             '<div id="ucMosqueInfoBody">' +
                 '<div class="ucMosqueInfoPane ucMosqueInfoPaneActive" data-pane="info">' +
-                    '<div id="ucMosqueInfoImageWrap">' + imageBlockHtml + '</div>' +
+                    '<div id="ucMosqueInfoImageWrap">' + imageBlockHtml +
+                        (_mosqueProfileCanEdit() ? '<div id="ucMosquePhotoBtn" class="clickableWhiteClass">📷 تغيير الصورة</div>' : '') +
+                    '</div>' +
                     addressBlockHtml +
+                    proposeBlockHtml +
                 '</div>' +
                 '<div class="ucMosqueInfoPane" data-pane="news">' +
                     '<div id="ucMosqueInfoRecentNotifSection">' +
@@ -14182,6 +15365,14 @@ function selectQPTakbir() {
         document.body.appendChild(modal);
         _modal = modal;
 
+        var _proposeBtn = document.getElementById('ucProposeMosqueBtn');
+        if (_proposeBtn) _proposeBtn.addEventListener('click', function () { window._ucProposeNewMosque(); });
+
+        _wireMosqueProfileBlock();
+
+        var _photoBtn = document.getElementById('ucMosquePhotoBtn');
+        if (_photoBtn) _photoBtn.addEventListener('click', _openMosquePhotoPicker);
+
         // Clic sur la photo → ouvre mapLocatorModal centré sur la mosquée
         var _imgEl = document.getElementById('ucMosqueInfoImage');
         if (_imgEl) {
@@ -14218,6 +15409,10 @@ function selectQPTakbir() {
         for (var j = 0; j < panes.length; j++) {
             panes[j].classList.toggle('ucMosqueInfoPaneActive', panes[j].getAttribute('data-pane') === tab);
         }
+        // Rafraîchit le bouton d'édition du profil à chaque affichage de l'onglet
+        // "معلومات" : reflète un éventuel déverrouillage admin (onglet "أخبار")
+        // survenu depuis la construction initiale de la modale.
+        if (tab === 'info') { _refreshMosqueProfileBlock(); _refreshMosquePhotoBtn(); }
     };
 
     // ── Ouverture / fermeture ──────────────────────────────────────────────
@@ -14232,21 +15427,22 @@ function selectQPTakbir() {
         _calInit();
         window._ucMosqueInfoSwitchTab('info');
         if (_modal) _modal.classList.add('ucMosqueModalOpen');
-        // ucSettingsButtonVertical / qiblaButtonVertical (z-index 9999333) dépassent
-        // le modal (99999) : on les masque pendant l'affichage, comme pour le modal Coran.
+        // ucSettingsButtonVertical (z-index 9999333) dépasse le modal (99999) :
+        // on le masque pendant l'affichage, comme pour le modal Coran.
         var _mlBtn = document.getElementById('ucSettingsButtonVertical');
         if (_mlBtn) _mlBtn.style.display = 'none';
-        var _qbBtn = document.getElementById('qiblaButtonVertical');
-        if (_qbBtn) _qbBtn.style.display = 'none';
         if (typeof window._pushBack === 'function') window._pushBack();
     };
 
     window._ucCloseMosqueInfoModal = function() {
         if (_modal) _modal.classList.remove('ucMosqueModalOpen');
-        var _mlBtn = document.getElementById('ucSettingsButtonVertical');
-        if (_mlBtn) _mlBtn.style.display = '';
-        var _qbBtn = document.getElementById('qiblaButtonVertical');
-        if (_qbBtn) _qbBtn.style.display = '';
+        // Ne PAS réafficher inconditionnellement (cf. _ucSyncSettingsBtnVisibility,
+        // custom.js _bindMenuLocatorBtn) : cette fonction est aussi bindée sur le
+        // clic de menuToggleButton (cf. _bindTrigger plus bas) — un clic menu
+        // pendant que CETTE modale n'était même pas ouverte écrasait à tort le
+        // masquage décidé par le sync (menu principal qui vient de s'ouvrir, ou
+        // une AUTRE modale/section qui vient de prendre sa place).
+        if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
         if (typeof window._popBack === 'function') window._popBack();
     };
 
@@ -14340,8 +15536,10 @@ function selectQPTakbir() {
                             '</label>' +
                             '<div class="ucSettingsRowLabel">' +
                                 '<span class="ucSettingsRowTitle">تنبيه قبل أذان الصلاة القادمة</span>' +
-                                '<span id="ucAzanAlertValue" class="ucSettingsRowValue"></span>' +
                             '</div>' +
+                        '</div>' +
+                        '<div class="ucSettingsSliderValueRow">' +
+                            '<span id="ucAzanAlertValue" class="ucSettingsRowValue"></span>' +
                         '</div>' +
                         '<div class="ucSettingsSliderRow">' +
                             '<input id="ucAzanAlertSlider" type="range" min="1" max="30" step="1" value="5" ' +
@@ -14355,8 +15553,10 @@ function selectQPTakbir() {
                             '</label>' +
                             '<div class="ucSettingsRowLabel">' +
                                 '<span class="ucSettingsRowTitle">كتم صوت الهاتف قبل الأذان</span>' +
-                                '<span id="ucSilentBeforeValue" class="ucSettingsRowValue"></span>' +
                             '</div>' +
+                        '</div>' +
+                        '<div class="ucSettingsSliderValueRow">' +
+                            '<span id="ucSilentBeforeValue" class="ucSettingsRowValue"></span>' +
                         '</div>' +
                         '<div class="ucSettingsSliderRow">' +
                             '<input id="ucSilentBeforeAzanSlider" type="range" min="0" max="60" step="1" value="1" ' +
@@ -14366,8 +15566,10 @@ function selectQPTakbir() {
                         '<div class="ucSettingsRow ucSettingsRowSub">' +
                             '<div class="ucSettingsRowLabel">' +
                                 '<span class="ucSettingsRowTitle">إعادة الصوت بعد الأذان بـ</span>' +
-                                '<span id="ucSilentAfterValue" class="ucSettingsRowValue"></span>' +
                             '</div>' +
+                        '</div>' +
+                        '<div class="ucSettingsSliderValueRow">' +
+                            '<span id="ucSilentAfterValue" class="ucSettingsRowValue"></span>' +
                         '</div>' +
                         '<div class="ucSettingsSliderRow">' +
                             '<input id="ucSilentAfterAzanSlider" type="range" min="1" max="180" step="1" value="60" ' +
@@ -14381,8 +15583,10 @@ function selectQPTakbir() {
                             '</label>' +
                             '<div class="ucSettingsRowLabel">' +
                                 '<span class="ucSettingsRowTitle">كتم صوت الهاتف بعد الأذان</span>' +
-                                '<span id="ucQuickMuteAfterValue" class="ucSettingsRowValue"></span>' +
                             '</div>' +
+                        '</div>' +
+                        '<div class="ucSettingsSliderValueRow">' +
+                            '<span id="ucQuickMuteAfterValue" class="ucSettingsRowValue"></span>' +
                         '</div>' +
                         '<div class="ucSettingsSliderRow">' +
                             '<input id="ucQuickMuteAfterSlider" type="range" min="0" max="30" step="1" value="5" ' +
@@ -14681,21 +15885,22 @@ function selectQPTakbir() {
         _ucSyncAutoStartUI();
         window._ucSettingsModalSwitchTab('azan');
         if (_modal) _modal.classList.add('ucSettingsModalOpen');
-        // ucSettingsButtonVertical / qiblaButtonVertical (z-index 9999333) dépassent
-        // le modal (99999) : on les masque pendant l'affichage, comme pour les autres modales.
+        // ucSettingsButtonVertical (z-index 9999333) dépasse le modal (99999) :
+        // on le masque pendant l'affichage, comme pour les autres modales.
         var _sBtn = document.getElementById('ucSettingsButtonVertical');
         if (_sBtn) _sBtn.style.display = 'none';
-        var _qbBtn = document.getElementById('qiblaButtonVertical');
-        if (_qbBtn) _qbBtn.style.display = 'none';
         if (typeof window._pushBack === 'function') window._pushBack();
     };
 
     window._ucCloseSettingsModal = function() {
         if (_modal) _modal.classList.remove('ucSettingsModalOpen');
-        var _sBtn = document.getElementById('ucSettingsButtonVertical');
-        if (_sBtn) _sBtn.style.display = '';
-        var _qbBtn = document.getElementById('qiblaButtonVertical');
-        if (_qbBtn) _qbBtn.style.display = '';
+        // Ne PAS réafficher inconditionnellement (cf. _ucSyncSettingsBtnVisibility,
+        // custom.js _bindMenuLocatorBtn) : cette fonction est aussi bindée sur le
+        // clic de menuToggleButton (cf. _bindMenuToggleClose plus bas) — un clic
+        // menu pendant que CETTE modale n'était même pas ouverte écrasait à tort
+        // le masquage décidé par le sync (menu principal qui vient de s'ouvrir,
+        // ou une AUTRE modale/section qui vient de prendre sa place).
+        if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
         if (typeof window._popBack === 'function') window._popBack();
     };
 
@@ -15479,6 +16684,144 @@ function selectQPTakbir() {
         'JS_QP_POSITION', 'JS_QP_POSITION_SRC', 'JS_QP_POSITION_TIME'
     ];
 
+    // ── Sauvegarde distante (Supabase, table mosque_config_backups) ─────────
+    // Même blob que la sauvegarde locale (_buildBackup), stocké sous un
+    // mosque_id — sert à la fois de backup personnel, de répertoire pour la
+    // future demande de création de mosquée, et de "paquet admin" (le PIN est
+    // inclus, cf. discussion : importer = devenir admin de cette mosquée).
+    var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+               || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+    var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+               || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+    var _DEFAULT_TEMPLATE_ID = 'anonymous.generic';
+
+    function _currentMosqueId() {
+        try { return localStorage.getItem('UC_MOSQUE_ID') || ''; } catch (e) { return ''; }
+    }
+
+    // -- Liste des configs distantes approuvées (nom + date) -----------------
+    function _fetchRemoteList(cb) {
+        fetch(_SB_URL + '/rest/v1/mosque_config_backups?status=eq.approved&select=mosque_id,mosque_name,updated_at&order=updated_at.desc', {
+            headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY }
+        })
+        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (rows) { cb(Array.isArray(rows) ? rows : []); })
+        .catch(function () { cb([]); });
+    }
+
+    // -- Enregistre le backup courant sous un mosque_id donné (upsert) -------
+    // nameOverride : utilisé par la proposition de nouvelle mosquée, où le nom
+    // pertinent est JS_DATA.ucMosqueName (édité en direct par l'utilisateur),
+    // pas window.MOSQUE_CONFIG.MOSQUE_NAME (figé, valeur du registre statique).
+    function _pushRemoteBackup(mosqueId, onDone, nameOverride) {
+        var r = _buildBackup();
+        var row = {
+            mosque_id:     mosqueId,
+            mosque_name:   nameOverride || r.backup.mosque || '',
+            location_code: (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.LOCATION_CODE) || null,
+            backup_json:   r.backup
+        };
+        fetch(_SB_URL + '/rest/v1/mosque_config_backups', {
+            method:  'POST',
+            headers: {
+                'apikey':        _SB_KEY,
+                'Authorization': 'Bearer ' + _SB_KEY,
+                'Content-Type':  'application/json',
+                'Prefer':        'resolution=merge-duplicates'
+            },
+            body: JSON.stringify(row)
+        })
+        .then(function (resp) { onDone(resp.ok || resp.status === 204, null); })
+        .catch(function (e) { onDone(false, e); });
+    }
+    // Exposé pour _installAdminPayloadPreview (bouton Notifier) : un envoi
+    // admin doit aussi tenir à jour la config complète distante, pas
+    // seulement le sous-ensemble étroit horaires de la table `mosques`
+    // (cf. discussion : sinon un futur import récupère une version figée).
+    window._ucPushRemoteBackup = _pushRemoteBackup;
+
+    // ── Proposition de nouvelle mosquée (bouton dans ucMosqueInfoModal /
+    // sélecteur, cf. _ucCanProposeMosque plus bas) — PAS de PIN ici : ce flux
+    // doit rester ouvert à tout utilisateur, contrairement à Export/Import
+    // (qui touchent une config déjà établie). Envoie tout comme un export
+    // distant, mais status='pending' par défaut sur un mosque_id neuf, tant
+    // que non validé côté développeur.
+    var UC_MOSQUE_PROPOSAL_TS_KEY = 'UC_LAST_MOSQUE_PROPOSAL_TS';
+    var UC_MOSQUE_PROPOSAL_COOLDOWN_MS = 5 * 60 * 1000;
+    var UC_ANON_PLACEHOLDER_NAME = 'إسم المسجد';
+
+    function _ucGenerateMosqueId(name, locationCode) {
+        var loc  = locationCode || 'xx.unknown';
+        var rand = Math.random().toString(36).slice(2, 6);
+        return loc + '.' + _slugify(name) + '-' + rand;
+    }
+
+    // Condition d'accès au bouton : pas de mosque_id, ou encore sur le modèle
+    // par défaut/anonyme. Exposé pour que _installMosqueInfoModal et le
+    // sélecteur de mosquée puissent tous deux décider d'afficher le bouton.
+    window._ucCanProposeMosque = function () {
+        var mid = _currentMosqueId();
+        return (!mid || mid === _DEFAULT_TEMPLATE_ID);
+    };
+
+    window._ucProposeNewMosque = function () {
+        var name = '';
+        try { name = (typeof JS_DATA !== 'undefined' && JS_DATA.ucMosqueName) ? String(JS_DATA.ucMosqueName).trim() : ''; } catch (e) {}
+        if (!name || name === UC_ANON_PLACEHOLDER_NAME) {
+            alert('يرجى تخصيص اسم المسجد (الإعدادات ← اسم المسجد) قبل اقتراحه كمسجد جديد.');
+            return;
+        }
+        var last = 0;
+        try { last = parseInt(localStorage.getItem(UC_MOSQUE_PROPOSAL_TS_KEY), 10) || 0; } catch (e) {}
+        if (Date.now() - last < UC_MOSQUE_PROPOSAL_COOLDOWN_MS) {
+            alert('تم إرسال اقتراح مؤخرًا. يرجى الانتظار بضع دقائق قبل إعادة المحاولة.');
+            return;
+        }
+        if (!confirm('اقتراح "' + name + '" كمسجد جديد؟ سيظهر للجميع بعد المراجعة.')) return;
+
+        var locationCode = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.LOCATION_CODE) || 'tn.tunis';
+        var newId = _ucGenerateMosqueId(name, locationCode);
+
+        window._ucToast && window._ucToast('جارٍ الإرسال...', 'ok');
+        _pushRemoteBackup(newId, function (ok) {
+            if (ok) {
+                try { localStorage.setItem(UC_MOSQUE_PROPOSAL_TS_KEY, String(Date.now())); } catch (e) {}
+                window._ucToast && window._ucToast('تم الإرسال، بانتظار المراجعة', 'ok');
+            } else {
+                window._ucToast && window._ucToast('خطأ في الإرسال', 'err');
+            }
+        }, name);
+    };
+
+    // -- Récupère un backup distant par mosque_id -----------------------------
+    function _pullRemoteBackup(mosqueId, onDone) {
+        fetch(_SB_URL + '/rest/v1/mosque_config_backups?mosque_id=eq.' + encodeURIComponent(mosqueId) + '&select=backup_json', {
+            headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY }
+        })
+        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (rows) {
+            if (rows && rows[0] && rows[0].backup_json) onDone(JSON.stringify(rows[0].backup_json));
+            else onDone(null);
+        })
+        .catch(function () { onDone(null); });
+    }
+    // Exposés pour _installMosqueSelector (sélecteur pays/ville distant,
+    // cf. discussion) : sélectionner une mosquée distante = même mécanique
+    // que "Import config -> Distant" (restauration complète du blob).
+    window._ucPullRemoteBackup = _pullRemoteBackup;
+
+    // -- Liste des configs distantes approuvées pour UNE ville donnée --------
+    function _fetchRemoteListByCity(locationCode, cb) {
+        if (!locationCode) { cb([]); return; }
+        fetch(_SB_URL + '/rest/v1/mosque_config_backups?status=eq.approved&location_code=eq.' + encodeURIComponent(locationCode) + '&select=mosque_id,mosque_name,image_url', {
+            headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY }
+        })
+        .then(function (r) { return r.ok ? r.json() : []; })
+        .then(function (rows) { cb(Array.isArray(rows) ? rows : []); })
+        .catch(function () { cb([]); });
+    }
+    window._ucFetchRemoteListByCity = _fetchRemoteListByCity;
+
     function _slugify(name) {
         var s = String(name || 'mosquee');
         if (s.normalize) s = s.normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -15505,6 +16848,15 @@ function selectQPTakbir() {
     }
 
     // -- Restore depuis un JSON string ------------------------------------
+    // Toujours silencieux : que l'appel vienne d'une simple sélection de
+    // mosquée dans le sélecteur (_installMosqueSelector) ou d'un import
+    // manuel explicite (bouton "Import config"), l'utilisateur a de toute
+    // façon déjà validé son geste (tap sur la mosquée / choix du fichier ou
+    // de la mosquée distante) — un second popup technique natif
+    // "Import : N clé(s) restaurée(s). Recharger ?" (confirm()) n'apporte
+    // rien et a été signalé comme une boîte de dialogue intruse/
+    // incompréhensible. On restaure et recharge directement, avec un simple
+    // toast de confirmation.
     function _restoreFromJson(jsonStr) {
         try {
             var backup = JSON.parse(jsonStr);
@@ -15528,15 +16880,43 @@ function selectQPTakbir() {
 
             _L('CFG', 'IMPORT', { keys: count, mosque: backup.mosque || '?', errors: errors.length });
 
-            var msg = 'Import : ' + count + ' cle(s) restauree(s).';
-            if (errors.length) msg += '\n' + errors.length + ' erreur(s) : ' + errors.join(', ');
-            msg += '\n\nRecharger maintenant ?';
-            if (confirm(msg)) location.reload();
+            if (errors.length) alert('Erreur partielle lors de l\'import : ' + errors.length + ' clé(s) en échec.');
+            else window._ucToast && window._ucToast('Configuration importée ✔', 'ok');
+            location.reload();
         } catch(ex) {
             alert('Erreur import : ' + ex.message);
             _L('CFG', 'IMPORT_ERR', { err: ex.message });
         }
     }
+    // Exposé pour _installMosqueSelector : choisir une mosquée distante (pas
+    // dans MOSQUES_REGISTRY) utilise exactement ce même mécanisme de
+    // restauration complète (cf. discussion : import = devenir admin), en
+    // mode silencieux (cf. commentaire ci-dessus).
+    window._ucRestoreFromJson = _restoreFromJson;
+
+    // ── Deep link "Ouvrir cette mosquée dans l'application" (bloc Partager
+    // de la fiche mosquée, cf. _installMosqueInfoModal/_shareMosqueInfo) :
+    // tawkit://mosque/<id>, capté nativement par MainActivity puis dispatché
+    // ici via l'event 'ucMosqueDeepLink' (MainActivity.dispatchMosqueDeepLink).
+    // Réutilise intégralement window._ucSelectMosque (même mécanique que le
+    // sélecteur de mosquée — détecte lui-même registre local vs distant via
+    // isRemote=false + repli interne '!reg[id]'), après confirmation
+    // explicite de l'utilisateur (une ouverture de lien ne doit jamais
+    // changer la mosquée active sans son accord).
+    window._ucHandleMosqueDeepLink = function (mosqueId) {
+        if (!mosqueId) return;
+        var current = '';
+        try { current = localStorage.getItem('UC_MOSQUE_ID') || ''; } catch (e) {}
+        if (mosqueId === current) return;
+        if (typeof window._ucSelectMosque !== 'function') return;
+        if (confirm('فتح هذا المسجد في التطبيق؟ | Ouvrir cette mosquée dans l\'application ?')) {
+            window._ucSelectMosque(mosqueId, false);
+        }
+    };
+    window.addEventListener('ucMosqueDeepLink', function (e) {
+        var mid = (e.detail && e.detail.mosque_id) || '';
+        if (mid) window._ucHandleMosqueDeepLink(mid);
+    });
 
     // =====================================================================
     // EXPORT
@@ -15613,7 +16993,7 @@ function selectQPTakbir() {
         _L('CFG', 'EXPORT', { method: 'modal_textarea', file: filename });
     }
 
-    function _exportConfig() {
+    function _exportConfigLocal() {
         var r = _buildBackup();
         if (typeof isTawkitApp !== 'undefined' && isTawkitApp && navigator.share) {
             _exportViaShare(r.json, r.filename);
@@ -15684,13 +17064,109 @@ function selectQPTakbir() {
         );
     }
 
-    function _importConfig() {
+    function _importConfigLocal() {
         if (typeof isTawkitApp !== 'undefined' && isTawkitApp) {
             _importViaModal();
         } else {
             _importViaFilePicker();
         }
     }
+
+    // =====================================================================
+    // CHOIX LOCAL / DISTANT (point d'entrée des 2 boutons, après le PIN-gate)
+    // =====================================================================
+
+    // -- Modale de choix Local / Distant --------------------------------
+    function _showLocalRemoteChoice(mode) {
+        var title = (mode === 'export') ? 'Export config' : 'Import config';
+        _openModal(
+            title,
+            '<p style="font-size:12px;margin:0 0 10px;">Choisissez la destination :</p>' +
+            '<div style="display:flex;flex-direction:column;gap:8px;">' +
+            '<button id="ucCfgChoiceLocal" style="padding:10px;cursor:pointer;">💾 Local</button>' +
+            '<button id="ucCfgChoiceRemote" style="padding:10px;cursor:pointer;">☁ Distant (Supabase)</button>' +
+            '</div>',
+            function (modalEl) {
+                modalEl.querySelector('#ucCfgChoiceLocal').addEventListener('click', function () {
+                    _closeModal();
+                    if (mode === 'export') _exportConfigLocal(); else _importConfigLocal();
+                });
+                modalEl.querySelector('#ucCfgChoiceRemote').addEventListener('click', function () {
+                    // Export avec une mosquée réelle déjà sélectionnée (mosque_id
+                    // connu, pas l'anonyme/défaut) : pas besoin de demander où
+                    // envoyer, la destination est déjà sans ambiguïté — on pousse
+                    // directement vers cette mosquée au lieu de proposer un choix
+                    // (dont l'entrée "Par défaut (مسجد افتراضي)" n'a aucun sens
+                    // dans ce cas : on ne va jamais écraser le modèle par défaut
+                    // avec la config d'une vraie mosquée déjà connue).
+                    var curId = _currentMosqueId();
+                    if (mode === 'export' && curId && curId !== _DEFAULT_TEMPLATE_ID) {
+                        _closeModal();
+                        window._ucToast && window._ucToast('Envoi en cours...', 'ok');
+                        _pushRemoteBackup(curId, function (ok) {
+                            window._ucToast && window._ucToast(ok ? 'Configuration enregistree' : 'Erreur envoi', ok ? 'ok' : 'err');
+                        });
+                        return;
+                    }
+                    _showRemotePicker(mode);
+                });
+            }
+        );
+    }
+
+    // -- Liste distante (défaut épinglé + mosquée courante + reste) -----
+    function _showRemotePicker(mode) {
+        _openModal(
+            (mode === 'export') ? 'Export distant — choisir la destination' : 'Import distant — choisir la mosquée',
+            '<p style="font-size:12px;margin:0 0 8px;">Chargement…</p><div id="ucCfgRemoteList"></div>',
+            function (modalEl) {
+                var listEl = modalEl.querySelector('#ucCfgRemoteList');
+                var infoEl = modalEl.querySelector('p');
+                _fetchRemoteList(function (rows) {
+                    if (infoEl) infoEl.textContent = '';
+                    var curId = _currentMosqueId();
+                    var pinned = [{ mosque_id: _DEFAULT_TEMPLATE_ID, mosque_name: 'Par défaut (مسجد افتراضي)', updated_at: null }];
+                    if (curId && curId !== _DEFAULT_TEMPLATE_ID) {
+                        pinned.push({ mosque_id: curId, mosque_name: 'Ma mosquée actuelle (' + curId + ')', updated_at: null });
+                    }
+                    var pinnedIds = pinned.map(function (p) { return p.mosque_id; });
+                    var rest = rows.filter(function (r) { return pinnedIds.indexOf(r.mosque_id) === -1; });
+                    var all = pinned.concat(rest);
+
+                    listEl.innerHTML = all.map(function (r) {
+                        var dateStr = r.updated_at ? new Date(r.updated_at).toLocaleDateString() : '';
+                        return '<div class="ucCfgRemoteItem" data-id="' + _esc(r.mosque_id) + '" ' +
+                            'style="padding:10px;border:1px solid #444;border-radius:6px;margin-bottom:6px;cursor:pointer;">' +
+                            '<div style="font-weight:bold;">' + _esc(r.mosque_name || r.mosque_id) + '</div>' +
+                            '<div style="font-size:11px;color:#999;">' + _esc(r.mosque_id) + (dateStr ? ' · ' + dateStr : '') + '</div>' +
+                            '</div>';
+                    }).join('');
+
+                    Array.prototype.forEach.call(listEl.querySelectorAll('.ucCfgRemoteItem'), function (el) {
+                        el.addEventListener('click', function () {
+                            var id = el.getAttribute('data-id');
+                            _closeModal();
+                            if (mode === 'export') {
+                                window._ucToast && window._ucToast('Envoi en cours...', 'ok');
+                                _pushRemoteBackup(id, function (ok) {
+                                    window._ucToast && window._ucToast(ok ? 'Configuration enregistree' : 'Erreur envoi', ok ? 'ok' : 'err');
+                                });
+                            } else {
+                                window._ucToast && window._ucToast('Recuperation...', 'ok');
+                                _pullRemoteBackup(id, function (json) {
+                                    if (json) _restoreFromJson(json);
+                                    else window._ucToast && window._ucToast('Configuration introuvable', 'err');
+                                });
+                            }
+                        });
+                    });
+                });
+            }
+        );
+    }
+
+    function _exportConfig() { _showLocalRemoteChoice('export'); }
+    function _importConfig() { _showLocalRemoteChoice('import'); }
 
     // =====================================================================
     // MODALE GENERIQUE
@@ -15743,6 +17219,73 @@ function selectQPTakbir() {
     }
 
     // =====================================================================
+    // PIN-GATE (export ET import, local ET distant — l'un comme l'autre
+    // touchent/restaurent la totalité des réglages, PIN admin inclus dans
+    // le blob) — même style/logique que ucAdminUnlockOverlay.
+    // =====================================================================
+    (function () {
+        var OV  = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.78);'
+                + 'z-index:999999;align-items:center;justify-content:center;';
+        var BOX = 'background:#1a1a2e;border:1px solid #555;border-radius:10px;'
+                + 'padding:24px;min-width:270px;text-align:center;color:#fff;'
+                + 'font-family:inherit;box-sizing:border-box;';
+        var INP = 'width:220px;padding:8px;font-size:1.25em;letter-spacing:0.18em;'
+                + 'text-align:center;background:#0d0d1a;border:1px solid #888;'
+                + 'color:#fff;border-radius:6px;box-sizing:border-box;margin:0 auto;display:block;';
+        var ERR = 'color:#ff4444;font-size:0.85em;min-height:1.2em;margin:8px 0 0;';
+        var BRW = 'display:flex;gap:10px;justify-content:center;margin-top:14px;';
+
+        var ov = document.createElement('div');
+        ov.id = 'ucCfgPinOverlay';
+        ov.style.cssText = OV;
+        ov.innerHTML = [
+            '<div style="' + BOX + '">',
+            '<p style="margin:0 0 14px;font-size:1.1em;">🔒 Code PIN administrateur</p>',
+            '<input id="ucCfgPinInput" type="password" maxlength="8" inputmode="numeric" style="' + INP + '"/>',
+            '<p id="ucCfgPinErr" style="' + ERR + '"></p>',
+            '<div style="' + BRW + '">',
+            '<span id="ucCfgPinCancel" class="ucModalBtn ucModalBtn--secondary">Annuler</span>',
+            '<span id="ucCfgPinOk"     class="ucModalBtn ucModalBtn--primary">OK</span>',
+            '</div></div>'
+        ].join('');
+        document.body.appendChild(ov);
+
+        function _el(id) { return document.getElementById(id); }
+        var _onSuccess = null;
+
+        window._ucOpenConfigPinOverlay = function (onSuccess) {
+            _onSuccess = onSuccess;
+            _el('ucCfgPinInput').value = '';
+            _el('ucCfgPinErr').textContent = '';
+            ov.style.display = 'flex';
+            _el('ucCfgPinInput').focus();
+        };
+
+        function _cancel() { ov.style.display = 'none'; _onSuccess = null; }
+        function _submit() {
+            var errEl = _el('ucCfgPinErr');
+            if (window._ucPinGuard && window._ucPinGuard.check(errEl)) return;
+            var pin = (typeof JS_CUSTOM !== 'undefined' && JS_CUSTOM.ucAdminPin) || _ucDefaultAdminPin();
+            if (_el('ucCfgPinInput').value !== pin) {
+                window._ucPinGuard && window._ucPinGuard.fail();
+                errEl.textContent = (window._ucAdminMsg && window._ucAdminMsg.pinErr) || 'Code PIN incorrect';
+                _el('ucCfgPinInput').select();
+                return;
+            }
+            window._ucPinGuard && window._ucPinGuard.success();
+            ov.style.display = 'none';
+            var cb = _onSuccess; _onSuccess = null;
+            if (cb) cb();
+        }
+
+        _el('ucCfgPinCancel').addEventListener('click', _cancel);
+        _el('ucCfgPinOk').addEventListener('click', _submit);
+        _el('ucCfgPinInput').addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') _submit();
+        });
+    })();
+
+    // =====================================================================
     // INJECTION DES BOUTONS
     // =====================================================================
 
@@ -15754,21 +17297,48 @@ function selectQPTakbir() {
         if (!ref) { setTimeout(_injectButtons, 600); return; }
         if (document.getElementById('ucExportConfigButton')) return;
 
-        var btnExp = document.createElement('div');
-        btnExp.id        = 'ucExportConfigButton';
-        btnExp.className = 'clickableWhiteClass';
-        btnExp.title     = 'Exporter tous les reglages';
-        btnExp.innerHTML = '<span style="margin-right:6px;">&#8595;</span>Export config';
-        btnExp.addEventListener('click', _exportConfig);
-        ref.insertAdjacentElement('afterend', btnExp);
+        // Rangée pilule moderne (remplace l'ancien style "lien texte
+        // cliquable" clickableWhiteClass) — cf. .ucModernActionBtn (custom.css).
+        var btnRow = document.createElement('div');
+        btnRow.id = 'ucCfgActionBtnRow';
+        ref.insertAdjacentElement('afterend', btnRow);
 
-        var btnImp = document.createElement('div');
+        var btnExp = document.createElement('button');
+        btnExp.type      = 'button';
+        btnExp.id        = 'ucExportConfigButton';
+        btnExp.className = 'ucModernActionBtn';
+        btnExp.title     = 'Exporter tous les reglages';
+        btnExp.innerHTML = '<span class="ucModernActionBtnIcon">&#8595;</span>Export config<span class="ucModernActionBtnLock">🔒</span>';
+        btnExp.addEventListener('click', function () { window._ucOpenConfigPinOverlay(_exportConfig); });
+        btnRow.appendChild(btnExp);
+
+        var btnImp = document.createElement('button');
+        btnImp.type      = 'button';
         btnImp.id        = 'ucImportConfigButton';
-        btnImp.className = 'clickableWhiteClass';
+        btnImp.className = 'ucModernActionBtn';
         btnImp.title     = 'Importer une sauvegarde de configuration';
-        btnImp.innerHTML = '<span style="margin-right:6px;">&#8593;</span>Import config';
-        btnImp.addEventListener('click', _importConfig);
-        btnExp.insertAdjacentElement('afterend', btnImp);
+        btnImp.innerHTML = '<span class="ucModernActionBtnIcon">&#8593;</span>Import config<span class="ucModernActionBtnLock">🔒</span>';
+        btnImp.addEventListener('click', function () { window._ucOpenConfigPinOverlay(_importConfig); });
+        btnRow.appendChild(btnImp);
+
+        // En mode téléphone (hors box Android/Windows), masquer tout ce qui suit
+        // ucCfgActionBtnRow dans cette section (import d'horaires personnalisés,
+        // etc.) — fonctions dédiées aux déploiements boîtier/kiosque, pas de sens
+        // sur un téléphone personnel. Même détection que _disableTvPointerOnPhone
+        // (custom.js) : ne masque QUE si le bridge natif confirme explicitement
+        // "téléphone" (isAndroidTv() === false) ; en l'absence du bridge
+        // (navigateur/PC), on ne touche à rien (traité comme "windows"). Balayage
+        // générique (tous les frères suivants) plutôt qu'une liste d'ids en dur,
+        // pour rester robuste si d'autres éléments sont ajoutés plus tard ici.
+        var _isPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && !window.AndroidMobile.isAndroidTv());
+        if (_isPhone) {
+            var _sib = btnRow.nextElementSibling;
+            while (_sib) {
+                _sib.style.display = 'none';
+                _sib = _sib.nextElementSibling;
+            }
+        }
 
         _L('CFG', 'INJECT', { item: 'Export/Import buttons', android: !!(typeof isTawkitApp !== 'undefined' && isTawkitApp) });
     })();
@@ -15780,6 +17350,9 @@ function selectQPTakbir() {
     window.toggleLightProgrammingItemFunction       = toggleLightProgrammingItemFunction;
     window.toggleLightItemTriggerFunction           = toggleLightItemTriggerFunction;
     window.editLightProgrammingUrlFunction          = editLightProgrammingUrlFunction;
+    window.editLightProgrammingDelayFunction        = editLightProgrammingDelayFunction;
+    window.editLightProgrammingJomaDelayFunction    = editLightProgrammingJomaDelayFunction;
+    window.editLightProgrammingExtraFunction        = editLightProgrammingExtraFunction;
     window.toggleLightPrayerMaskFunction            = toggleLightPrayerMaskFunction;
     window.refreshLightProgrammingUI                = refreshLightProgrammingUI;
     window.toggleBlinkingEnabledFunction            = toggleBlinkingEnabledFunction;
@@ -17046,6 +18619,14 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             if (r.ok || r.status === 204) {
                 _ucToast((window._ucAdminMsg && window._ucAdminMsg.notifOk) || 'Enregistre !', 'ok');
                 _ucAddNotifHistory('notifier', '', true);
+                // Tient aussi a jour la config complete distante (PIN inclus) sous
+                // ce meme mosque_id -- independant du sync horaires ci-dessus,
+                // n'affecte pas son toast/historique en cas d'echec isole.
+                if (payload.mosque_id && window._ucPushRemoteBackup) {
+                    window._ucPushRemoteBackup(payload.mosque_id, function(ok) {
+                        _L('NOTIF', ok ? 'FULL_CONFIG_SYNCED' : 'FULL_CONFIG_SYNC_ERR', { mosque_id: payload.mosque_id });
+                    });
+                }
             } else {
                 return r.text().then(function(t) {
                     _ucToast((window._ucAdminMsg && window._ucAdminMsg.notifErr) || 'Erreur : ' + r.status, 'err');
@@ -17894,6 +19475,21 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         lockBtn.title        = unlocked
             ? ((window._ucAdminMsg && window._ucAdminMsg.lockBtn) || 'Verrouiller')
             : '';
+        // lightProgrammingButton + menuFooterLinks suivent EXACTEMENT la même
+        // règle de visibilité que ucMosqueProfileEditBtn (_mosqueProfileCanEdit,
+        // _installMosqueInfoModal) : mosquée anonyme (pas de vrai propriétaire
+        // à protéger) OU admin déverrouillé — plus de prompt PIN à chaque clic
+        // pour lightProgrammingButton, l'accès est désormais conditionné à
+        // l'état global déjà déverrouillé ailleurs (calcul inline, pas d'appel
+        // à _mosqueProfileCanEdit : IIFE différente, cf. convention "eager-safe"
+        // déjà utilisée dans ce fichier).
+        var _mid = ''; try { _mid = localStorage.getItem('UC_MOSQUE_ID') || ''; } catch (e) {}
+        var _isAnon = (!_mid || _mid === 'anonymous.generic');
+        var _canSee = _isAnon || unlocked;
+        var lightBtn = document.getElementById('lightProgrammingButton');
+        if (lightBtn) lightBtn.style.display = _canSee ? '' : 'none';
+        var footerLinks = document.getElementById('menuFooterLinks');
+        if (footerLinks) footerLinks.style.display = _canSee ? '' : 'none';
     }
     window._ucRefreshAdminBtnLock = _refreshUI;
 
@@ -18836,32 +20432,12 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
     }
 
-    // ── 1) Bouton, jumeau de ucSettingsButtonVertical, bas-droite ──────────
-    var SVG_QIBLA_ICON =
-        '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.6">' +
-            '<circle cx="12" cy="12" r="9.2"/>' +
-            '<polygon points="12,5.2 14.1,12 12,18.8 9.9,12" fill="currentColor" stroke="none"/>' +
-            '<circle cx="12" cy="12" r="1.3" fill="#2b2720" stroke="none"/>' +
-        '</svg>';
-
-    var qbtn = document.createElement('div');
-    qbtn.id = 'qiblaButtonVertical';
-    qbtn.title = 'اتجاه القبلة';
-    qbtn.innerHTML = SVG_QIBLA_ICON;
-    qbtn.onclick = function () { openQiblaModal(); };
-
-    function _insertButton() {
-        if (document.getElementById('qiblaButtonVertical')) return true;
-        var menuBtn = document.getElementById('menuToggleButton');
-        if (!menuBtn || !menuBtn.parentNode) return false;
-        menuBtn.parentNode.insertBefore(qbtn, menuBtn.nextSibling);
-        return true;
-    }
-    if (!_insertButton()) {
-        document.addEventListener('DOMContentLoaded', function () {
-            if (!_insertButton()) setTimeout(_insertButton, 300);
-        });
-    }
+    // ── 1) Plus de bouton flottant dédié : l'accès à la Qibla se fait
+    // désormais uniquement via la case "اتجاه القبلة" de la barre de
+    // réglages (#ucLogoQuickBar, cf. _installLogoQuickBar plus bas, entrée
+    // #ucLQBQibla qui appelle window.openQiblaModal()) — un seul point
+    // d'entrée pour les réglages au lieu de deux boutons flottants distincts.
+    // La modale/logique ci-dessous reste entièrement inchangée.
 
     // ── 2) Modale (overlay appendé à <html>, immune à la rotation du body
     //      en mode vrRIGHT/vrLEFT — même technique que #mapLocatorOverlay) ──
@@ -19520,7 +21096,25 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     if (typeof window.AndroidMobile === 'undefined' ||
         typeof window.AndroidMobile.schedulePrayerNotifications !== 'function') return;
 
+    // Miroir natif (SharedPreferences, cf. MobileJsBridge.syncAzanPlaybackFlags)
+    // de ucAzanIqamaByVoice/ucShortAzanActive -- AzanPlaybackService le relit
+    // au tout dernier moment avant de jouer (pas seulement les extras figes
+    // au moment de la programmation), pour garantir qu'un azan desactive via
+    // acEnableSwitch ne peut JAMAIS declencher le vrai son nativement, meme
+    // si l'alarme avait ete programmee AVANT la desactivation. Appelee a
+    // chaque reprogrammation (_sendToNative, ci-dessous) : couvre donc tous
+    // les chemins existants (bascules, sync config distante, changement de
+    // jour) sans hook supplementaire.
+    function _syncPlaybackFlagsToNative() {
+        if (typeof window.AndroidMobile.syncAzanPlaybackFlags !== 'function') return;
+        window.AndroidMobile.syncAzanPlaybackFlags(
+            JS_DATA.ucAzanIqamaByVoice == 1,
+            JS_DATA.ucShortAzanActive == 1
+        );
+    }
+
     function _sendToNative() {
+        _syncPlaybackFlagsToNative();
         var obj = prayerTimesMinutesObject;
         if (!obj || typeof obj.FAJR !== 'number') return; // pas encore calcule
 
@@ -19590,7 +21184,15 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
             // hour == prayerHour, minutesBefore = 0 : l'alarme sonne exactement
             // a l'heure de l'azan (audio natif via AzanPlaybackService).
-            list.push({ prayer: p.name, hour: h, minute: mi, prayerHour: h, prayerMinute: mi, minutesBefore: 0 });
+            // shortAzan/voiceMode : transmis pour qu'AzanPlaybackService sache
+            // s'il doit jouer TOUJOURS (mode "voix complete" -> source audio
+            // unique, cf. audioEl.muted plus haut) ou seulement en arriere-plan
+            // comme avant (azan court / mode bip -> non geres nativement).
+            list.push({
+                prayer: p.name, hour: h, minute: mi, prayerHour: h, prayerMinute: mi, minutesBefore: 0,
+                shortAzan: (JS_DATA.ucShortAzanActive == 1) ? 1 : 0,
+                voiceMode: (JS_DATA.ucAzanIqamaByVoice == 1) ? 1 : 0
+            });
         });
         if (!list.length) return;
 
@@ -19637,6 +21239,38 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var _origToggleAzanScreen = window.toggleAzanScreenFunction;
         window.toggleAzanScreenFunction = function() {
             var ret = _origToggleAzanScreen.apply(this, arguments);
+            _sendToNative();
+            return ret;
+        };
+    }
+
+    // Meme raisonnement, applique a acEnableSwitch/azanIqamaByVoiceCheckbox
+    // (toggleAzanVoiceFunction, core -> JS_DATA.ucAzanIqamaByVoice) : ce
+    // reglage est desormais lu par AzanPlaybackService (cf. voiceMode dans le
+    // JSON envoye a schedulePrayerNotifications, source audio unique cote
+    // natif) pour decider si l'alarme deja programmee doit jouer le VRAI son
+    // ou rester en mode "bip". Sans ce hook, decocher le switch ne
+    // reprogrammait rien : une alarme deja en attente gardait l'ancien
+    // voiceMode=1 fige dans ses extras et jouait quand meme l'azan reel au
+    // moment prevu, jusqu'a plusieurs heures apres la desactivation.
+    if (typeof window.toggleAzanVoiceFunction === 'function') {
+        var _origToggleAzanVoiceNative = window.toggleAzanVoiceFunction;
+        window.toggleAzanVoiceFunction = function() {
+            var ret = _origToggleAzanVoiceNative.apply(this, arguments);
+            _L('AZAN', 'RESCHEDULE', { reason: 'voice_mode_toggled', voiceMode: JS_DATA.ucAzanIqamaByVoice });
+            _sendToNative();
+            return ret;
+        };
+    }
+
+    // Meme raisonnement, applique a l'azan court (shortAzanCheckbox,
+    // toggleShortAzanFunction, core -> JS_DATA.ucShortAzanActive) : lui aussi
+    // transmis (shortAzan) dans les extras de l'alarme native.
+    if (typeof window.toggleShortAzanFunction === 'function') {
+        var _origToggleShortAzan = window.toggleShortAzanFunction;
+        window.toggleShortAzanFunction = function() {
+            var ret = _origToggleShortAzan.apply(this, arguments);
+            _L('AZAN', 'RESCHEDULE', { reason: 'short_azan_toggled', shortAzan: JS_DATA.ucShortAzanActive });
             _sendToNative();
             return ret;
         };
@@ -20162,7 +21796,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _L('AZANCAT', 'FIRE', { action: 'close' });
     }
 
-    window.openAzanCatalogModal  = openAzanCatalogModal;
+    window.openAzanCatalogModal = openAzanCatalogModal;
     window.closeAzanCatalogModal = closeAzanCatalogModal;
     // Utilisé uniquement par le gestionnaire du bouton retour Android (popstate) :
     // stoppe l'aperçu audio sans rappeler _popBack()/history.back() (voir plus haut).
@@ -20559,18 +22193,33 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     var SVG_COMPASS = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor">' +
         '<path d="M12,2C6.5,2,2,6.5,2,12s4.5,10,10,10s10-4.5,10-10S17.5,2,12,2z M14.2,14.2L6,18l3.8-8.2L18,6L14.2,14.2z"/></svg>';
 
+    // Tableau 2 colonnes (label + icône) x 6 lignes — chaque ligne entière est
+    // cliquable (id posé sur le <tr>, cf. wiring plus bas, inchangé : mêmes
+    // ids qu'avant, juste déplacés du <div> vers le <tr>). dir="rtl" pour que
+    // la 1ère colonne (label) s'affiche à DROITE, l'icône à GAUCHE, conforme
+    // à la lecture arabe. Ligne de fermeture (✕) sur toute la largeur,
+    // centrée, en dernière ligne.
+    function _lqbRow(id, label, svg) {
+        return '<tr class="ucLQBRow" id="' + id + '">' +
+            '<td class="ucLQBLabel">' + label + '</td>' +
+            '<td class="ucLQBIconCell"><span class="ucLQBIconInner">' + svg + '</span></td>' +
+            '</tr>';
+    }
+
     var overlay = document.createElement('div');
     overlay.id = 'ucLogoQuickBarOverlay';
     overlay.className = 'ucLQBHidden';
     overlay.innerHTML =
         '<div id="ucLogoQuickBar">' +
-            '<div class="ucLQBIcon" id="ucLQBSettings">' + SVG_GEAR + '</div>' +
-            '<div class="ucLQBIcon" id="ucLQBMosqueInfo">' + SVG_MOSQUE + '</div>' +
-            '<div class="ucLQBIcon" id="ucLQBSpeaker">' + SVG_SPEAKER + '</div>' +
-            '<div class="ucLQBIcon" id="ucLQBQuran">' + SVG_QURAN + '</div>' +
-            '<div class="ucLQBIcon" id="ucLQBLocator">' + SVG_GPS + '</div>' +
-            '<div class="ucLQBIcon" id="ucLQBQibla">' + SVG_COMPASS + '</div>' +
-            '<div class="ucLQBIcon ucLQBClose" id="ucLQBClose">&#10006;</div>' +
+            '<table id="ucLQBTable" dir="rtl"><tbody>' +
+                _lqbRow('ucLQBSettings',   'الإعدادات',      SVG_GEAR) +
+                _lqbRow('ucLQBMosqueInfo', 'معلومات المسجد', SVG_MOSQUE) +
+                _lqbRow('ucLQBSpeaker',    'صوت الأذان',     SVG_SPEAKER) +
+                _lqbRow('ucLQBQuran',      'القرآن الكريم',  SVG_QURAN) +
+                _lqbRow('ucLQBLocator',    'الموقع الحالي',  SVG_GPS) +
+                _lqbRow('ucLQBQibla',      'اتجاه القبلة',   SVG_COMPASS) +
+                '<tr class="ucLQBCloseRow"><td colspan="2"><span class="ucLQBIcon ucLQBClose" id="ucLQBClose">&#10006;</span></td></tr>' +
+            '</tbody></table>' +
         '</div>';
     document.documentElement.appendChild(overlay);
 

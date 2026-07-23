@@ -42,6 +42,30 @@
                 console.log('[MOSQUE] Localite anonyme surchargee : ' + _anonLoc);
             }
         }
+    } else if (_id) {
+        // ID présent mais absent du registre embarqué : mosquée gérée à
+        // distance (choisie/importée depuis mosque_config_backups, cf.
+        // _installMosqueSelector -> window._ucSelectMosque isRemote=true dans
+        // custom.js). JS_DATA/JS_DATA_CUSTOM ont déjà été entièrement écrits
+        // par _restoreFromJson AVANT ce reload -- il ne faut PAS traiter ça
+        // comme "aucune mosquée" (sinon le filet de sécurité "premier
+        // lancement" de _installMosqueSelector écraserait UC_MOSQUE_ID en le
+        // remettant sur anonymous.generic, cf. bug constaté et corrigé), et il
+        // ne faut PAS non plus laisser _applyMosqueConfig() (custom.js)
+        // essayer de ré-appliquer une config statique inexistante pour cet id
+        // (_UC_REMOTE_MANAGED fait skip ce bloc, cf. custom.js ligne ~607).
+        // MOSQUE_NAME/LOCATION_CODE lus directement depuis JS_DATA (déjà à
+        // jour) pour les quelques endroits qui lisent encore MOSQUE_CONFIG.*
+        // directement (ex. _pushRemoteBackup, ucMosqueInfoModal).
+        var _jd = {};
+        try { _jd = JSON.parse(localStorage.getItem('JS_DATA') || '{}') || {}; } catch(e) {}
+        window.MOSQUE_CONFIG = {
+            _UC_REMOTE_MANAGED: true,
+            VERSION:       '__REMOTE__',
+            MOSQUE_NAME:   _jd.ucMosqueName  || '',
+            LOCATION_CODE: _jd.ucNowCityCODE || ''
+        };
+        console.log('[MOSQUE] Config distante (hors registre embarque) : ' + _id);
     } else {
         // Aucune mosquée choisie : sentinel → _applyMosqueConfig() fera un skip
         // et _installMosqueSelector() (dans custom.js) affichera le sélecteur

@@ -1756,6 +1756,26 @@
     color: #fff;
     background: rgba(255, 255, 255, 0.1);
 }
+#ucAnonCitySearch {
+    margin: 12px 16px 6px;
+    padding: 9px 13px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 0.92em;
+    outline: none;
+    direction: rtl;
+    flex-shrink: 0;
+    transition: border-color 0.2s;
+}
+#ucAnonCitySearch::placeholder {
+    color: rgba(255, 255, 255, 0.3);
+}
+#ucAnonCitySearch:focus {
+    border-color: rgba(255, 210, 80, 0.55);
+    background: rgba(255, 255, 255, 0.1);
+}
 .ucSimpleListModalList {
     overflow-y: auto;
     flex: 1;
@@ -3944,6 +3964,26 @@
     color: #fff;
     background: rgba(255, 255, 255, 0.1);
 }
+#ucAnonCitySearch {
+    margin: 12px 16px 6px;
+    padding: 9px 13px;
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 0.92em;
+    outline: none;
+    direction: rtl;
+    flex-shrink: 0;
+    transition: border-color 0.2s;
+}
+#ucAnonCitySearch::placeholder {
+    color: rgba(255, 255, 255, 0.3);
+}
+#ucAnonCitySearch:focus {
+    border-color: rgba(255, 210, 80, 0.55);
+    background: rgba(255, 255, 255, 0.1);
+}
 .ucSimpleListModalList {
     overflow-y: auto;
     flex: 1;
@@ -4248,7 +4288,7 @@
     font-family:    var(--csvar_mainFONT);
     letter-spacing: 0em;
     margin-top:     12%;
-    font-size:      2.6vw;
+    font-size:      3.6vw;
     line-height:    1.2em;
     color:          var(--esLOWER);
 }
@@ -4605,6 +4645,62 @@
     transform: scale(0.96);
 }
 
+/* ── Boutons "pilule" modernes ────────────────────────────────────────────
+   Remplace le style "lien texte cliquable" (clickableWhiteClass) d'origine
+   sur les 3 actions les plus visibles/importantes du bloc mosquée :
+   Export config / Import config (ucCfgActionBtnRow) et "Proposer cette
+   mosquée" (ucProposeMosqueBtnWrap) — cohérent avec l'esthétique or/sombre
+   de l'appli (même famille de couleur que .ucModalBtn--primary) mais avec
+   un vrai relief (dégradé + ombre) façon bouton d'appli mobile actuelle. */
+.ucModernActionBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 11px 22px;
+    border-radius: 999px;
+    font-size: 0.95em;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    user-select: none;
+    text-align: center;
+    color: #2a1c04;
+    background: linear-gradient(135deg, #ffe6a3, #e8b84b);
+    border: none;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+    transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+}
+.ucModernActionBtn:hover { filter: brightness(1.06); }
+.ucModernActionBtn:active {
+    transform: scale(0.95);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+.ucModernActionBtnIcon { font-size: 1.05em; line-height: 1; }
+.ucModernActionBtnLock { font-size: 0.85em; opacity: 0.75; margin-inline-start: 2px; }
+
+#ucCfgActionBtnRow {
+    display: flex;
+    justify-content: center;
+    align-items: stretch;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 14px 0;
+}
+/* Largeur alignée sur les autres boutons de la modale (.addSlideButtonClass,
+   width:auto, cf. style0.css) plutôt que de s'étirer sur toute la largeur. */
+#ucCfgActionBtnRow .ucModernActionBtn { flex: 0 0 auto; }
+
+#ucProposeMosqueBtnWrap {
+    display: flex;
+    justify-content: center;
+    margin-top: 14px;
+}
+#ucProposeMosqueBtnWrap .ucModernActionBtn {
+    width: 100%;
+    max-width: 320px;
+}
+
 /* ── Fix compatibilité tvPointerImage : customSpeakerIcon / customQuranIcon ──
    simulateClick() (m2body.js) fait elementFromPoint() puis .click() sur le
    résultat. Ces deux icônes sont entièrement remplies par un <svg> interne
@@ -4843,37 +4939,259 @@
     overflow: hidden;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    margin-bottom: 16px;
+    margin-bottom: 10px;
 }
 #ucMosqueInfoImage {
     display: block;
     width: 100%;
     height: auto;
-    max-height: 42vh;
+    /* Réduit (était 42vh) pour que le bloc Jumua/Chourouk reste visible sans
+       scroll dès l'ouverture de la fiche, sur la plupart des écrans. */
+    max-height: 22vh;
     object-fit: cover;
 }
 #ucMosqueInfoImageEmpty {
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 180px;
+    height: 110px;
     color: rgba(255, 255, 255, 0.25);
     font-size: 0.9em;
     direction: rtl;
 }
-#ucMosqueInfoAddress {
-    color: rgba(255, 255, 255, 0.85);
-    font-size: 1.05em;
-    line-height: 1.5;
-    direction: rtl;
-    text-align: center;
-    padding: 0 6px;
+#ucMosqueInfoImageWrap { position: relative; }
+#ucMosquePhotoBtn {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 0.82em;
+    cursor: pointer;
+    backdrop-filter: blur(2px);
 }
+#ucMosquePhotoBtn:hover { background: rgba(0, 0, 0, 0.7); }
 #ucMosqueInfoAddressEmpty {
     color: rgba(255, 255, 255, 0.3);
     font-size: 0.9em;
     text-align: center;
     direction: rtl;
+}
+
+/* ── Fiche mosquée (5 blocs) : adresse / actions rapides / horaires du jour /
+   Jumua-Chourouk / prestations — cf. _buildMosqueProfileBlockHtml et les
+   fonctions _build*Html qu'elle assemble, custom.js. ──────────────────── */
+#ucMosqueProfileBlockWrap { margin-top: 10px; }
+#ucMosqueProfileBlock > div,
+#ucMosqueProfileBlock > table { margin-top: 12px; }
+#ucMosqueProfileBlock > div:first-child { margin-top: 0; }
+
+/* Bloc 1 : adresse + copier */
+#ucMosqueAddressBlock {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    direction: rtl;
+    text-align: center;
+}
+#ucMosqueAddressText {
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 1.05em;
+    line-height: 1.5;
+}
+#ucMosqueAddressCopyBtn {
+    cursor: pointer;
+    font-size: 0.95em;
+    opacity: 0.75;
+    flex-shrink: 0;
+}
+#ucMosqueAddressCopyBtn:hover { opacity: 1; }
+#ucMosqueAddressCopyBtn:active { transform: scale(0.9); }
+
+/* Bloc 2 : ligne d'icônes d'action (Téléphone / Itinéraire / Partager / Email) */
+#ucMosqueQuickActionsRow {
+    display: flex;
+    justify-content: space-evenly;
+    align-items: flex-start;
+    gap: 6px;
+}
+.ucMQABtn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    flex: 1 1 0;
+    padding: 6px 2px;
+    border-radius: 10px;
+    transition: background 0.15s;
+}
+.ucMQABtn:hover { background: rgba(255, 255, 255, 0.06); }
+.ucMQABtn:active { transform: scale(0.94); }
+.ucMQABtnDisabled { opacity: 0.35; cursor: default; }
+.ucMQABtnDisabled:hover { background: none; }
+.ucMQABtnDisabled:active { transform: none; }
+.ucMQAIcon {
+    font-size: 1.5em;
+    line-height: 1;
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    background: rgba(255, 210, 80, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.ucMQALabel {
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 0.72em;
+    text-align: center;
+}
+
+/* Bloc 3 : titre + tableau horaires du jour (5 col x 3 lignes) */
+#ucMosquePrayerTitle {
+    color: #ffd250;
+    font-size: 1em;
+    font-weight: 600;
+    text-align: start;
+    margin-bottom: 6px;
+}
+#ucMosquePrayerTable,
+#ucMosqueJumuaChouroukTable,
+#ucMosquePrestationsTable { width: 100%; border-collapse: collapse; }
+#ucMosquePrayerTable td {
+    text-align: center;
+    padding: 4px 2px;
+    font-size: 0.85em;
+    color: rgba(255, 255, 255, 0.85);
+}
+#ucMosquePrayerTable .ucMPTNameRow td { color: #ffd250; font-weight: 600; }
+#ucMosquePrayerTable .ucMPTAzanRow td { font-size: 0.95em; }
+#ucMosquePrayerTable .ucMPTIqamaRow td { color: rgba(255, 255, 255, 0.55); font-size: 0.8em; }
+
+/* Bloc 4 : Jumua / Chourouk (2 col x 2 lignes) */
+#ucMosqueJumuaChouroukTable td {
+    text-align: center;
+    padding: 6px 4px;
+    font-size: 0.9em;
+    color: rgba(255, 255, 255, 0.85);
+}
+#ucMosqueJumuaChouroukTable tr:first-child td { color: #ffd250; font-weight: 600; font-size: 0.85em; }
+
+/* Bloc 5 : prestations (3 col x 5 lignes : icône / label / ✔ ou ✗) */
+#ucMosquePrestationsTitle {
+    color: #ffd250;
+    font-size: 1em;
+    font-weight: 600;
+    text-align: center;
+    margin-bottom: 6px;
+}
+#ucMosquePrestationsTable td {
+    padding: 5px 4px;
+    font-size: 0.88em;
+    color: rgba(255, 255, 255, 0.85);
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+#ucMosquePrestationsTable tr:first-child td { border-top: none; }
+.ucMPresIcon { width: 15%; text-align: center; font-size: 1.15em; }
+.ucMPresLabel { width: 65%; text-align: start; padding-inline-start: 6px; }
+.ucMPresCheck { width: 20%; text-align: center; font-weight: 700; }
+.ucMPresOk { color: #34c759; }
+.ucMPresNo { color: #ff4d4d; }
+
+#ucMosqueProfileEditBtn {
+    text-align: center;
+    margin: 10px auto 0;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px dashed rgba(255, 210, 80, 0.3);
+    color: rgba(255, 210, 80, 0.85);
+    font-size: 0.85em;
+    cursor: pointer;
+    max-width: 260px;
+}
+#ucMosqueProfileEditBtn:hover { background: rgba(255, 210, 80, 0.08); }
+
+#ucMosqueProfileEditOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9999999;
+    background: rgba(0, 0, 0, 0.82);
+    align-items: center;
+    justify-content: center;
+}
+#ucMosqueProfileEditOverlay.ucMosqueModalOpen { display: flex; }
+#ucMosqueProfileEditBox {
+    background: #1a1a2e;
+    border: 1px solid #555;
+    border-radius: 10px;
+    padding: 20px;
+    width: 92%;
+    max-width: 380px;
+    max-height: 86vh;
+    overflow-y: auto;
+    box-sizing: border-box;
+    direction: rtl;
+}
+#ucMosqueProfileEditTitle {
+    color: #ffd250;
+    font-size: 1.05em;
+    text-align: center;
+    margin: 0 0 14px;
+}
+.ucMPELabel {
+    display: block;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.82em;
+    margin: 10px 0 4px;
+}
+.ucMPEInput {
+    width: 100%;
+    padding: 8px 10px;
+    background: #0d0d1a;
+    border: 1px solid #888;
+    color: #fff;
+    border-radius: 6px;
+    box-sizing: border-box;
+    font-size: 0.95em;
+}
+.ucMPERow { display: flex; gap: 8px; }
+.ucMPEInputHalf { width: 50%; }
+#ucMPEGeoBtn {
+    text-align: center;
+    margin-top: 8px;
+    padding: 7px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #cde;
+    font-size: 0.85em;
+    cursor: pointer;
+}
+#ucMPEGeoBtn:hover { background: rgba(255, 255, 255, 0.06); }
+.ucMPEErr {
+    color: #ff6b6b;
+    font-size: 0.8em;
+    min-height: 1.1em;
+    margin: 4px 0 0;
+    text-align: center;
+}
+.ucMPECheckRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #fff;
+    font-size: 0.9em;
+    margin: 10px 0;
+}
+#ucMosqueProfileEditFooter {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 16px;
 }
 
 /* ── Bloc "Notifications" dupliqué dans l'onglet Information ─────────────────
@@ -4890,9 +5208,9 @@
     border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 #ucMosqueInfoNotifSectionTitle {
-    color: rgba(255, 255, 255, 0.55);
-    font-size: 0.88em;
-    font-weight: 500;
+    color: #ffd250;
+    font-size: 1em;
+    font-weight: 600;
     direction: rtl;
     text-align: center;
     margin-bottom: 10px;
@@ -4953,7 +5271,7 @@
 }
 #ucCalMonthLabel {
     flex: 1;
-    color: #fff;
+    color: #ffd250;
     font-size: 1em;
     font-weight: 600;
     text-align: center;
@@ -5038,8 +5356,8 @@
 }
 #ucCalTimesTitle {
     margin-bottom: 12px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 0.92em;
+    color: #ffd250;
+    font-size: 1em;
     font-weight: 600;
     text-align: center;
 }
@@ -5087,8 +5405,8 @@
 }
 #ucCalHolidaysTitle {
     margin-bottom: 12px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 0.92em;
+    color: #ffd250;
+    font-size: 1em;
     font-weight: 600;
     text-align: center;
 }
@@ -5109,8 +5427,8 @@
 #ucCalNotableTitle {
     margin-top: 16px;
     margin-bottom: 12px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 0.92em;
+    color: #ffd250;
+    font-size: 1em;
     font-weight: 600;
     text-align: center;
 }
@@ -5183,9 +5501,9 @@
     margin-bottom: 12px;
 }
 #ucMosqueInfoRecentNotifTitle {
-    color: rgba(255, 255, 255, 0.55);
-    font-size: 0.88em;
-    font-weight: 500;
+    color: #ffd250;
+    font-size: 1em;
+    font-weight: 600;
     text-align: center;
 }
 #ucMosqueInfoNotifSizeToggle {
@@ -5268,11 +5586,15 @@
 }
 .ucSettingsRow {
     display: flex;
-    align-items: center;
+    /* Aligne le toggle avec le haut de son label (cf. .ucSettingsRowLabel) au
+       lieu de le centrer sur toute la hauteur de la ligne — comportement
+       auparavant incohérent selon qu'une valeur (cf. .ucSettingsSliderValueRow,
+       désormais sortie de ce bloc) s'y trouvait ou non. */
+    align-items: flex-start;
     justify-content: space-between;
     gap: 14px;
     direction: rtl;
-    padding: 8px 0 16px;
+    padding: 8px 0 12px;
 }
 .ucSettingsRowLabel {
     display: flex;
@@ -5285,9 +5607,16 @@
     font-size: 0.95em;
     font-weight: 500;
 }
+/* Valeur de la jauge (ex. "5 دقيقة") — désormais une ligne à part entière,
+   centrée horizontalement, entre la ligne titre+interrupteur et son curseur
+   (cf. .ucSettingsSliderValueRow ci-dessous), plutôt qu'empilée sous le titre. */
 .ucSettingsRowValue {
     color: #f0d080;
     font-size: 0.82em;
+}
+.ucSettingsSliderValueRow {
+    text-align: center;
+    padding-bottom: 2px;
 }
 /* Bloc "silencieux auto" (2 fonctions liées) : séparé visuellement du bloc
    "alerte avant azan" au-dessus ; .ucSettingsRowSub = 2e ligne (remise du
@@ -5513,7 +5842,7 @@
 #ucTopMenuLinks a {
     padding: 3px;
     line-height: 2.1;
-    color: #787065;
+    color: #d2c7aa; /* même couleur que #ucResetLink (#creditsContent) */
 }
 
 /* ── Lien "Revoir l'aide" dans le menu (#ucTopMenuLinks) ──────────────────── */
@@ -5692,25 +6021,10 @@
 #mapLocatorExternalLink:hover { text-decoration: underline; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   QIBLA — bouton "direction de la Qibla" + modale boussole / carte
-   Bouton jumeau de #ucSettingsButtonVertical (même conteneur, même mécanisme
-   d'affichage exclusif au mode vertical), positionné en bas à droite.
+   QIBLA — modale boussole / carte. Plus de bouton flottant dédié : accès
+   uniquement via la case "اتجاه القبلة" de #ucLogoQuickBar (cf. custom.js
+   _installLogoQuickBar / injectQiblaFeature).
    ═══════════════════════════════════════════════════════════════════════════ */
-
-#qiblaButtonVertical {
-    position: absolute;
-    z-index: 9999333;          /* même plan que #ucSettingsButtonVertical */
-    bottom: 1%;
-    right: 1.5%;
-    width: 6vmin;
-    height: 6vmin;
-    padding: 1vmin;
-    box-sizing: border-box;
-    cursor: pointer;
-    opacity: 0.92;
-}
-#qiblaButtonVertical svg { display: block; width: 100%; height: 100%; }
-#qiblaButtonVertical:active { opacity: 0.55; }
 
 /* Overlay plein-écran (appended to <html>, même technique que #mapLocatorOverlay) */
 #qiblaOverlay {
@@ -7407,13 +7721,6 @@ input[type='checkbox']:checked::after {
     opacity: 0.3;
     pointer-events: none;
 }
-.ucQAJomoaRow {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 4px 0;
-}
-
 /* ═══════════════════════════════════════════════════════════════════════════
    TABLEAUX 2x2 "التكبير" (délai/durée, modes 0 et 1 — cf. custom.js
    _buildTakbirTableHtml). Positionnés centrés sur la ligne qui suit le
@@ -7423,6 +7730,12 @@ input[type='checkbox']:checked::after {
     display: flex;
     justify-content: center;
     padding: 4px 0 0;
+}
+/* Table grisée + non cliquable tant que le mode (M0/M1) correspondant est
+   désactivé (cf. refreshTakbirUI, custom.js). */
+.ucTakbirTableRowDisabled {
+    opacity: 0.4;
+    pointer-events: none;
 }
 .ucTakbirTable {
     border-collapse: collapse;
@@ -7451,6 +7764,40 @@ input[type='checkbox']:checked::after {
 }
 .ucTakbirValueCell:active {
     background: rgba(223, 205, 177, 0.28);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GRILLE "تشغيل مكبّر الإمام / المحراب حسب الصلاة" (cf. custom.js
+   _buildLightPrayerMaskTableHtml). Remplace l'ancienne rangée de checkboxes
+   en ligne (ampliIntOn/Off, mihrabOn/Off) par un tableau au même style que
+   .ucQATable/.ucTakbirTable : ligne 1 = noms des prières, ligne 2 = case
+   cliquable "✕" (prière incluse dans le masque ou non).
+   ═══════════════════════════════════════════════════════════════════════════ */
+.ucLPMTable {
+    border-collapse: collapse;
+    font-size: 0.85em;
+}
+.ucLPMTable th,
+.ucLPMTable td {
+    border: 1px solid rgba(223, 205, 177, 0.18);
+    padding: 4px 8px;
+    text-align: center;
+    white-space: nowrap;
+}
+.ucLPMTable th {
+    background: rgba(223, 205, 177, 0.08);
+    color: #DFCDB1;
+    font-weight: bold;
+}
+.ucLPMCell {
+    cursor: pointer;
+    color: #3ddc63;
+    font-weight: bold;
+    font-size: 1.05em;
+    transition: background 0.15s;
+}
+.ucLPMCell:hover {
+    background: rgba(223, 205, 177, 0.12);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -7645,9 +7992,40 @@ input[type='checkbox']:checked::after {
     margin-bottom: 6px;
 }
 #ucAnonSelectCountryButton,
-#ucAnonSelectCityButton {
+#ucAnonSelectCityButton,
+#ucMosqueSelectCountryButton,
+#ucMosqueSelectCityButton {
     width: 100%;
     box-sizing: border-box;
+}
+
+/* ── Filtre pays/ville en haut du sélecteur de mosquée (état partagé avec la
+   mosquée anonyme, cf. _buildLocPicker, custom.js) — réutilise .ucAnonLocCol/
+   .ucAnonLocColLabel ci-dessus pour un langage visuel identique. ─────────── */
+#ucMosqueLocRow {
+    display: flex;
+    direction: rtl;
+    gap: 4%;
+    padding: 0 16px 8px;
+    flex-shrink: 0;
+}
+
+/* ── Lien "Proposer une mosquée", pied du sélecteur (cf. _ucCanProposeMosque,
+   ucMosqueInfoModal) ──────────────────────────────────────────────────────── */
+.ucMosqueProposeLink {
+    text-align: center;
+    padding: 10px 16px;
+    margin: 4px 10px 10px;
+    border-radius: 8px;
+    color: rgba(255, 210, 80, 0.85);
+    font-size: 0.85em;
+    cursor: pointer;
+    border: 1px dashed rgba(255, 210, 80, 0.3);
+    transition: background 0.15s;
+    flex-shrink: 0;
+}
+.ucMosqueProposeLink:hover {
+    background: rgba(255, 210, 80, 0.08);
 }
 
 #ucAnonMosqueWarnFooter {
@@ -7925,7 +8303,7 @@ input[type='checkbox']:checked::after {
     /* #jomoaCounterVertical (custom.css only, remplace #appLogoImage le
        vendredi) : même formule de conversion pour son texte interne. */
     #jomoaTimeDisplayVertical { font-size: 2.538vh; }
-    #jomoaLabelVertical { font-size: 1.2vh; }
+    #jomoaLabelVertical { font-size: 1.8vh; }
 }
 
 /* ── Bordures uniformes autour de tous les "blocs" du lecteur Coran ─────────
@@ -8252,42 +8630,63 @@ input[type='checkbox']:checked::after {
 #ucLogoQuickBarOverlay.ucLQBHidden { display: none; }
 
 #ucLogoQuickBar {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 3vmin;
     background: #2b2720;
     border: 1px solid #6a5530;
-    border-radius: 999px;
+    border-radius: 18px;
     box-shadow: 0 12px 44px rgba(0, 0, 0, 0.88);
-    padding: 3.4vmin 2.4vmin;
+    padding: 2vmin 4vmin;
     max-height: 90vh;
+    min-width: 62vw;
     overflow-y: auto;
-}
-
-.ucLQBIcon {
-    width: 12vmin;
-    height: 12vmin;
-    max-width: 64px;
-    max-height: 64px;
-    padding: 2vmin;
     box-sizing: border-box;
-    border-radius: 50%;
-    color: #d4aa50;
-    cursor: pointer;
-    transition: background .15s, opacity .15s;
 }
-.ucLQBIcon svg { display: block; width: 100%; height: 100%; }
-.ucLQBIcon:active { opacity: 0.55; background: rgba(255, 255, 255, 0.08); }
 
+#ucLQBTable {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.ucLQBRow {
+    cursor: pointer;
+    transition: background .15s;
+}
+.ucLQBRow:active { background: rgba(255, 255, 255, 0.08); }
+.ucLQBRow td {
+    padding: 2.6vmin 1.6vmin;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+}
+.ucLQBLabel {
+    color: #e7d9b8;
+    font-size: 4vmin;
+    text-align: right;
+}
+.ucLQBIconCell { width: 12vmin; }
+.ucLQBIconInner {
+    display: block;
+    width: 8vmin;
+    height: 8vmin;
+    max-width: 40px;
+    max-height: 40px;
+    margin: 0 auto;
+    color: #d4aa50;
+}
+.ucLQBIconInner svg { display: block; width: 100%; height: 100%; }
+
+.ucLQBCloseRow td {
+    text-align: center;
+    padding: 2.4vmin 0 0.6vmin;
+    border-bottom: none;
+}
 .ucLQBIcon.ucLQBClose {
-    color: #e05050;
-    font-size: 5.5vmin;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
+    color: #e05050;
+    font-size: 5.5vmin;
+    cursor: pointer;
     user-select: none;
 }
+.ucLQBIcon.ucLQBClose:active { opacity: 0.55; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ONGLETS DE #optionsSectionId ET #adjustmentsSectionId (cf. custom.js

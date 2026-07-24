@@ -130,7 +130,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.78';
+var CUSTOM_APP_VERSION = '11.79';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -23174,17 +23174,22 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         return g;
     }
 
+    // Une seule ligne (grid 3 colonnes, cf. custom.css .ucAdjBlockRow) : nom
+    // / valeur+boutons (toujours colonne du milieu, donc centrée) / FIXED
+    // (colonne absente -> reste vide, ne décale pas le centrage de la
+    // colonne du milieu). bodyChildren place ses éléments dans l'ordre dans
+    // les colonnes suivantes (valeur+boutons en 1er, FIXED en 2e si présent).
     function _buildBlock(headEl, bodyChildren) {
         var card = document.createElement('div');
         card.className = 'ucAdjBlock';
-        var head = document.createElement('div');
-        head.className = 'ucAdjBlockHead';
-        if (headEl) head.appendChild(headEl);
-        card.appendChild(head);
-        var body = document.createElement('div');
-        body.className = 'ucAdjBlockBody';
-        bodyChildren.forEach(function (c) { if (c) body.appendChild(c); });
-        card.appendChild(body);
+        var row = document.createElement('div');
+        row.className = 'ucAdjBlockRow';
+        if (headEl) {
+            headEl.classList.add('ucAdjNameCell');
+            row.appendChild(headEl);
+        }
+        bodyChildren.forEach(function (c) { if (c) row.appendChild(c); });
+        card.appendChild(row);
         return card;
     }
 

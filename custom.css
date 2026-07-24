@@ -8851,7 +8851,7 @@ input[type='checkbox']:checked::after {
 .ucAdjBlocksWrap {
     display: flex;
     flex-direction: column;
-    gap: 3%;
+    gap: 2%;
     padding: 1% 0 2%;
 }
 .ucAdjBlock {
@@ -8860,66 +8860,76 @@ input[type='checkbox']:checked::after {
     border-radius: 14px;
     overflow: hidden;
 }
-.ucAdjBlockHead {
-    padding: 3% 4% 2%;
-    font-size: 112%;
+/* Une seule ligne par carte (nom / valeur+boutons / bouton FIXED) au lieu de
+   2 lignes empilées — gain de hauteur important, prévu pour un futur ajout
+   sur cette même page. Grid à 3 colonnes (pas flex) : la colonne du milieu
+   (valeur+boutons) reste visuellement CENTRÉE sur la ligne quelle que soit
+   la largeur du nom à gauche, que la 3e colonne (FIXED) soit présente ou non
+   (Doha/Mgrb n'ont pas de bouton FIXED -- la piste reste réservée, vide, ce
+   qui maintient le centrage). Un flex simple avec justify-content:space-between
+   n'aurait PAS ce comportement : la position du milieu y dépend de la largeur
+   des 2 éléments voisins. */
+.ucAdjBlockRow {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 2%;
+    padding: 2.5% 4%;
+}
+.ucAdjNameCell {
+    justify-self: start;
+    font-size: 100%;
     font-weight: bold;
     color: #DFCDB1;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 /* iqama{X}Label / prayerName{X}Adjust sont des <td> core réutilisés hors de
    tout tableau (déplacés, pas recréés, cf. custom.js) — display:table-cell
    hérité produirait une boîte incohérente ici ; ramené à un simple bloc. */
-.ucAdjBlockHead td { display: block; }
-
-.ucAdjBlockBody {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 3%;
-    padding: 3% 4%;
-}
+.ucAdjNameCell td { display: block; }
 
 .ucAdjValueGroup {
     display: inline-flex;
     align-items: center;
-    gap: 3vw;
-    flex: 0 0 auto;
+    justify-self: center;
+    gap: 2.5vw;
 }
-/* Même remarque que .ucAdjBlockHead td ci-dessus : iqama{X}Value /
+/* Même remarque que .ucAdjNameCell td ci-dessus : iqama{X}Value /
    athanMinutes{X}Value sont eux aussi des <td> core réutilisés ici. */
 .ucAdjValueGroup td {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 3ch;
-    font-size: 128%;
+    min-width: 2.5ch;
+    font-size: 118%;
     line-height: 1;
     text-align: center;
 }
-/* Boutons +/- nettement agrandis (zoom, pas de nouvelles valeurs vw
-   dupliquées par orientation) par rapport à la taille ambiante de
-   .adjustButtonClass héritée de style1.css (déjà responsive paysage/portrait)
-   -- cible tactile plus confortable maintenant qu'une carte pleine largeur
-   par prière laisse largement la place. */
+/* Boutons +/- agrandis (zoom, pas de nouvelles valeurs vw dupliquées par
+   orientation) par rapport à la taille ambiante de .adjustButtonClass
+   héritée de style1.css (déjà responsive paysage/portrait) -- cible tactile
+   plus confortable qu'à l'origine (tableau à colonnes serrées), tout en
+   restant sur une seule ligne avec le nom de la prière. */
 .ucAdjValueGroup .adjustButtonClass {
-    zoom: 1.5;
+    zoom: 1.25;
     border-radius: 8px;
 }
 
 .ucAdjFixedWrap {
     display: inline-flex;
     align-items: center;
-    gap: 1.5vw;
-    flex: 0 0 auto;
+    justify-self: end;
+    gap: 1vw;
 }
 .ucAdjFixedLabel {
-    font-size: 78%;
+    font-size: 68%;
     color: rgba(223, 205, 177, 0.65);
     white-space: nowrap;
 }
 .ucAdjFixedWrap .fixedIqamaButtonClass {
     width: auto;
-    padding: 2% 5%;
+    padding: 1.5% 4%;
+    font-size: 88%;
 }

@@ -116,7 +116,7 @@ if (typeof _L === 'undefined') {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.72';
+var CUSTOM_APP_VERSION = '11.73';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1210,8 +1210,29 @@ var _ucActiveIqamaSeqEpoch = -1;
 (function _installResyncOnResume() {
     var HIDDEN_THRESHOLD_MS = 5000; // ignorer les coups d'oeil rapides (volet de notifications, etc.)
     var _ucHiddenAt = null;
+    // Empeche un double reload : ce resync tourne 2x pour le meme evenement
+    // (declencheurs visibilitychange ET native_resume, quasi simultanes,
+    // cf. les deux ecouteurs plus bas) -- sans ce garde-fou, le 2e passage
+    // relancerait un location.reload() par-dessus le premier deja en cours.
+    var _ucAutoReloadTriggered = false;
 
     function _ucResyncPrayerSequence(reason) {
+        // Capture AVANT tout nettoyage : le natif joue-t-il reellement l'azan
+        // a cet instant precis ? (cf. AzanPlaybackService.isPlayingNow /
+        // MobileJsBridge.isAzanCurrentlyPlaying). Necessaire ICI, tout au
+        // debut -- des la ligne _ucReleaseAzanBlock plus bas, la cascade
+        // hideAzanPopupFunction() va justement COUPER cette lecture native ;
+        // interroger apres coup donnerait toujours false. Sert a decider, en
+        // fin de fonction, s'il faut enchainer sur un reload automatique
+        // (cf. bas de fonction) : un azan reellement interrompu par ce
+        // resync signifie que l'utilisateur vient de rouvrir l'appli pendant
+        // qu'il sonnait -- sans ca il atterrit sur la page principale sans
+        // countdown iqama ni rideau noir, meme si leur horaire n'est pas
+        // encore passe (constate en pratique, discussion debug 24/07/2026).
+        var _wasNativeAzanPlaying = !!(window.AndroidMobile &&
+            typeof window.AndroidMobile.isAzanCurrentlyPlaying === 'function' &&
+            window.AndroidMobile.isAzanCurrentlyPlaying());
+
         // 0) Perime toute continuation deja programmee par une sequence iqama
         //    en cours (cf. commentaire _ucIqamaSeqEpoch ci-dessus).
         _ucIqamaSeqEpoch++;
@@ -1366,6 +1387,18 @@ var _ucActiveIqamaSeqEpoch = -1;
         });
 
         _L('RESYNC', 'FIRE', { action: 'resync_prayer_sequence', reason: reason || 'visibilitychange' });
+
+        // Azan natif reellement interrompu par ce resync (capture tout en
+        // haut, cf. _wasNativeAzanPlaying) : un simple nettoyage ne suffit
+        // pas a retrouver le countdown iqama / rideau noir en cours (cf.
+        // bouton reload manuel, meme logique) -- on l'enchaine ici
+        // automatiquement, une seule fois (garde _ucAutoReloadTriggered,
+        // cf. double declenchement visibilitychange+native_resume).
+        if (_wasNativeAzanPlaying && !_ucAutoReloadTriggered) {
+            _ucAutoReloadTriggered = true;
+            _L('SYS', 'FIRE', { action: 'auto_reload', reason: 'native_azan_interrupted_by_resume' });
+            location.reload();
+        }
     }
 
     document.addEventListener('visibilitychange', function() {
@@ -4950,10 +4983,10 @@ function _qpRestorePosition() {
                     <div id='rmCatalogContainerQP'></div>
                 </div>
 
-                <hr style="border-color:#4a3a1a;margin:4px 14px;">
+                <hr id="qpSettingsSection2HrBefore" style="border-color:#4a3a1a;margin:4px 14px;">
 
                 <div id="qpSettingsSection2" style="padding:10px 14px;">
-                    <div style="font-weight:bold;color:#d4aa50;margin-bottom:6px;">خادم القرآن والقرّاء</div>
+                    <div id="qpSettingsSection2Title" style="font-weight:bold;color:#d4aa50;margin-bottom:6px;">خادم القرآن والقرّاء</div>
                     <div id='quranServerEnabledDivQP'>
                         <input type='checkbox' id='quranServerEnabledCheckboxQP' onchange='toggleQuranServerEnabledFunction();'>
                         &nbsp;<span>خادم القرآن (HTTP)</span>
@@ -5020,13 +5053,27 @@ function _qpRestorePosition() {
 
     // Mirroir de #quranServerEnabledDiv (cf. injectTechOptionsUI /
     // _hideQuranServerCheckboxOnPhone) — même case, dupliquée ici via
-    // _qpSyncMirrorEl ; masquée pour rester cohérente sur téléphone.
+    // _qpSyncMirrorEl. Masque la section ENTIÈRE #qpSettingsSection2 (titre +
+    // checkbox + #quranRecitersContainerQP) plutôt que la seule checkbox :
+    // le titre "خادم القرآن والقرّاء" est un élément séparé du bloc checkbox,
+    // le masquer seul laissait ce titre affiché tout seul au-dessus d'un
+    // cadre vide (constaté en pratique via capture d'écran, 24/07/2026).
+    // #quranRecitersContainerQP n'a rien à perdre à cette section — déjà
+    // masqué séparément sur téléphone par refreshQuranServerUI()
+    // (_isAndroidBoxMode() == false), cf. plus haut dans ce fichier. Le
+    // séparateur <hr> juste avant (#qpSettingsSection2HrBefore) est masqué
+    // avec elle pour ne pas laisser un double-trait ; celui juste après
+    // reste seul à séparer "gestion des récitateurs" de "lecture avant
+    // l'azan". Réservée à Windows/box Android (mosquée sélectionnée sans
+    // bridge natif "téléphone") — même détection que le reste.
     (function _hideQuranServerCheckboxOnPhoneQP() {
         var _isPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
             && !window.AndroidMobile.isAndroidTv());
         if (!_isPhone) return;
-        var rowQP = document.getElementById('quranServerEnabledDivQP');
-        if (rowQP) rowQP.style.display = 'none';
+        var sectionQP = document.getElementById('qpSettingsSection2');
+        if (sectionQP) sectionQP.style.display = 'none';
+        var hrQP = document.getElementById('qpSettingsSection2HrBefore');
+        if (hrQP) hrQP.style.display = 'none';
     })();
 
     var closeBtn = document.getElementById('quranPlayerClose');
@@ -15823,6 +15870,18 @@ function selectQPTakbir() {
         _L('CFG', 'SET', {ucFlipToMuteAzan: JS_CUSTOM.ucFlipToMuteAzan});
     };
 
+    // Sync initiale au chargement : sans ceci, le natif garde sa valeur par
+    // defaut (false, AzanPlaybackService.PREF_FLIP_TO_MUTE) tant que
+    // l'utilisateur n'a jamais bascule ce switch manuellement au moins une
+    // fois sur CETTE installation -- constate en pratique apres plusieurs
+    // reinstallations propres (donnees natives effacees) : JS_CUSTOM.
+    // ucFlipToMuteAzan reste actif par defaut (=1) mais le natif repart a
+    // false, donc plus aucune detection accelerometre bien que le reglage
+    // semble actif cote appli.
+    if (window.AndroidMobile && typeof window.AndroidMobile.setFlipToMuteEnabled === 'function') {
+        window.AndroidMobile.setFlipToMuteEnabled(JS_CUSTOM.ucFlipToMuteAzan == 1);
+    }
+
     // ── Démarrage automatique silencieux (téléphone) ────────────────────────
     //  Lit/écrit JS_CUSTOM.ucAutoStartEnabled, poussé vers le natif via
     //  setAutoStartEnabled() (SharedPreferences, cf. AutoStartPrefs.kt) — lu
@@ -22342,6 +22401,47 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     window.closeLogoQuickBar = closeLogoQuickBar;
 
     _L('CUSTOM', 'INIT', { item: 'logoQuickBar' });
+})();
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BOUTON RECHARGEMENT MANUEL — icône flèche circulaire, bas-droite (ancien
+// emplacement du bouton Qibla flottant, retiré depuis le passage a
+// #ucLogoQuickBar, cf. custom.css "QIBLA — Plus de bouton flottant dédié").
+//
+// Utilité : le rattrapage automatique (_ucResyncPrayerSequence, tout en haut
+// de ce fichier) NETTOIE l'état (popup azan, rideau noir, compteur iqama...)
+// au lieu de le REJOUER -- si un azan/iqama s'est déroulé pendant que l'appli
+// était en arrière-plan, on retombe sur la page principale sans jamais revoir
+// le compteur iqama / rideau noir en cours, même si leur horaire n'est pas
+// encore passé (cf. discussion debug du 24/07/2026). Un simple
+// location.reload() force l'appli à recalculer son état ("où en est-on par
+// rapport aux horaires ?") depuis zéro -- exactement ce qui se passe pour
+// n'importe quel utilisateur ouvrant l'appli en pleine journée -- ce qui
+// permet de retrouver le compteur iqama / rideau noir en cours s'ils sont
+// toujours d'actualité. Ne ramène PAS le popup azan lui-même (déclenchement
+// ponctuel, pas un état recalculable depuis l'heure courante) ; le son natif,
+// lui, n'est pas affecté par ce reload (AzanPlaybackService tourne
+// indépendamment de la WebView).
+//
+// Vertical/téléphone uniquement (masqué en horizontal via custom.css), comme
+// l'était l'ancien bouton Qibla flottant à cet emplacement.
+(function _installManualReloadButton() {
+    var SVG_RELOAD = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor">' +
+        '<path d="M17.65,6.35C16.2,4.9,14.21,4,12,4c-4.42,0-7.99,3.58-7.99,8s3.57,8,7.99,8c3.73,0,6.84-2.55,7.73-6h-2.08' +
+        'c-0.82,2.33-3.04,4-5.65,4c-3.31,0-6-2.69-6-6s2.69-6,6-6c1.66,0,3.14,0.69,4.22,1.78L13,11h7V4L17.65,6.35z"/>' +
+        '</svg>';
+
+    var btn = document.createElement('div');
+    btn.id = 'ucManualReloadBtn';
+    btn.title = 'إعادة تحميل';
+    btn.innerHTML = SVG_RELOAD;
+    btn.onclick = function () {
+        _L('SYS', 'FIRE', { action: 'manual_reload', trigger: 'ucManualReloadBtn' });
+        location.reload();
+    };
+    document.body.appendChild(btn);
+
+    _L('CUSTOM', 'INIT', { item: 'manualReloadButton' });
 })();
 
 // ═════════════════════════════════════════════════════════════════════════════

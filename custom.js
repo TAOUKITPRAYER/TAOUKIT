@@ -130,7 +130,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.74';
+var CUSTOM_APP_VERSION = '11.75';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1392,6 +1392,22 @@ var _ucActiveIqamaSeqEpoch = -1;
         //    rejouee au retour au premier plan alors que Maghreb venait de
         //    sonner. En rafraichissant nous-memes AVANT, checkAndRestoreIqamaCounter()
         //    lit directement la bonne priere des le premier appel.
+        //
+        //    RECIDIVE (24/07/2026, rapport debug #24) : meme symptome constate
+        //    a nouveau APRES une pause de ~2h30 -- currentTimeInMinutes seul ne
+        //    suffit pas. calculateAndDisplayTimesFunction() (qui calcule
+        //    fajrTimeInMinutes/asrTimeInMinutes/etc. depuis la table JS_TIMES)
+        //    ne se relance QUE sur changement de jour calendaire (guard interne
+        //    de updateTimeAndPrayersFunction, meme journee ici -> jamais
+        //    redeclenche) : si une de ces variables est restee incoherente
+        //    apres une longue pause pour une raison encore non identifiee avec
+        //    certitude, rien ne la corrige avant ce point. On la force donc ici
+        //    explicitement, sans attendre un hypothetique changement de jour --
+        //    recalcul sans risque (meme journee, memes donnees source), elimine
+        //    cette source de peremption quel que soit le mecanisme exact.
+        if (typeof window.calculateAndDisplayTimesFunction === 'function') {
+            window.calculateAndDisplayTimesFunction();
+        }
         if (typeof window.updateTimeAndPrayersFunction === 'function') {
             window.updateTimeAndPrayersFunction(true);
         }

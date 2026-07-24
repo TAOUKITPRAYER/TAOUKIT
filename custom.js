@@ -10,6 +10,20 @@ if (typeof _L === 'undefined') {
         console.log('[' + cat + '] ' + verb + (p.length ? ' ' + p.join(' ') : ''));
     }
 }
+
+// Registre global des audios "mutables au retournement du téléphone" (cf.
+// _installUniversalFlipToMute plus bas, tout en bas du fichier). Déclaré ICI,
+// tout en haut, car plusieurs IIFE plus bas (SalatNabi, alerte vocale iqama,
+// takbir) doivent s'y enregistrer AU MOMENT de leur propre exécution (leur
+// <audio> est parfois un élément DÉTACHÉ du DOM, capturé uniquement via
+// fermeture — un simple document.getElementById() ne le retrouverait pas).
+// Chaque entrée est une fonction () => HTMLAudioElement|null, appelée
+// PARESSEUSEMENT au moment du flip (pas à l'enregistrement) pour toujours
+// cibler l'élément audio courant, y compris s'il est recréé entre-temps.
+window._ucFlipMuteRegistry = [];
+function _ucRegisterFlipMuteTarget(getAudioFn) {
+    window._ucFlipMuteRegistry.push(getAudioFn);
+}
 /*
  * Mapping des déclenchements des items "light programming"
  * --------------------------------------------------------
@@ -116,7 +130,7 @@ if (typeof _L === 'undefined') {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.73';
+var CUSTOM_APP_VERSION = '11.74';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -302,18 +316,15 @@ const JS_CUSTOM_DEFAULTS = {
 
     ucAzanAlertEnabled:          0,   // 1 = bandeau visuel affiché avant l'azan de la prochaine prière
     ucAzanAlertMinutes:          5,   // minutes avant l'azan (jauge 1-30 dans la modale Réglages)
-    // ── Onglet "الأذان والإشعارات" : silencieux automatique autour de l'azan ─
-    ucSilentBeforeAzanEnabled:   0,   // 1 = coupe la sonnerie avant l'azan (AlarmManager natif)
-    ucSilentBeforeAzanMinutes:   1,   // minutes avant l'azan où la sonnerie est coupée (jauge 0-60)
-    ucSilentAfterAzanMinutes:    60,  // minutes après l'azan où la sonnerie est remise (jauge 1-180)
-    // Fonctionnalité indépendante de celle ci-dessus : coupure courte pile à
-    // l'heure de l'azan, remise après N minutes (jauge 0-30, défaut 5). Les
-    // deux peuvent être actives ensemble (fenêtres cumulées, cf. reason-count
-    // natif dans SilentModeReceiver.kt) — désactivée par défaut (nouvelle
-    // fonctionnalité, ne doit pas changer le comportement des utilisateurs
-    // existants sans action explicite de leur part).
+    // ── Onglet "الأذان والإشعارات" : silencieux après l'azan (2 jauges, 1 toggle) ─
+    // ucMuteAfterAzanEnabled gouverne les DEUX jauges : coupure pile à l'azan,
+    // remise du son après N minutes. "Silencieux" (0-30, défaut 5) et "reprise"
+    // (1-180) programment chacune leur propre fenêtre (reason-count natif dans
+    // SilentModeReceiver.kt) — la reprise réelle a lieu à azan + max(silencieux,
+    // reprise), jamais avant la fin de la fenêtre silencieuse.
     ucMuteAfterAzanEnabled:      0,
     ucMuteAfterAzanMinutes:      5,
+    ucSilentAfterAzanMinutes:    60,  // minutes après l'azan où la sonnerie est remise (jauge 1-180)
     ucFlipToMuteAzan:            1,   // 1 = poser le téléphone écran contre la table coupe l'azan (capteur natif)
     ucAutoStartEnabled:          1,   // 1 = relance silencieuse au démarrage du téléphone (natif, cf. AutoStartPrefs) — sans effet sur boîtier Android TV
     ucMosqueConfigVersion:       '',  // version de la config APK déjà appliquée (comparée à MOSQUE_CONFIG.VERSION)
@@ -1005,9 +1016,21 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
     // jour actuel : contrairement à une 1ère version de cette garde, restreinte
     // à isFriday (donc inactive tout le reste de la semaine, alors que l'heure
     // de la jomoa est affichée en permanence, cf. _patchJomoaDisplay).
+    //
+    // Piège #2 (celui-ci propre à notre garde, pas au core) : getNextFridayPrayerTime
+    // renvoie l'heure BRUTE du tableau (JS_TIMES/WCSV), qui n'inclut PAS l'ajustement
+    // manuel du Dohr (boutons +/-, JS_DATA.ucAthanMinutesDOHR) — le core l'applique
+    // à dohrTimeStr le jour même (m2body.js ~3300) mais jamais à sa propre sonde
+    // "prochain vendredi", donc getNextFridayPrayerTime(2) seul reste désynchronisé
+    // du VRAI Dohr affiché dès qu'on touche les boutons +/- du Dohr. On réplique donc
+    // ici cet ajustement (absent du core sur ce point précis) pour que la garde
+    // compare toujours contre le Dohr réellement affiché, pas contre sa valeur brute.
     function _getNextFridayDohr() {
         if (JS_DATA.ucDohrXminutesAsr > 0 && !(JS_DATA.ucWcsvIsActive == 1)) {
             return adjustAthanTime(getNextFridayPrayerTime(3), -(JS_DATA.ucDohrXminutesAsr));
+        }
+        if (!(JS_DATA.ucWcsvIsActive == 1)) {
+            return adjustAthanTime(getNextFridayPrayerTime(2), JS_DATA.ucAthanMinutesDOHR);
         }
         return getNextFridayPrayerTime(2);
     }
@@ -1866,7 +1889,7 @@ function _buildQuranAutoStartTableHtml() {
     });
     html += '</tr>';
 
-    html += '<tr><th class="ucQATRowLabel" title="' + delayTitle + '">' + delayRowLabel + '</th>';
+    html += '<tr class="ucQATDelayRow"><th class="ucQATRowLabel" title="' + delayTitle + '">' + delayRowLabel + '</th>';
     _quranAutoStartGridKeys.forEach(function (key) {
         const minutes = _getAutoStartDelayMinutes(key);
         html += '<td class="ucQATDelayCell" onclick="editStartQuranBeforeAzanDelayFunction(\'' + key + '\');">' + minutes + '</td>';
@@ -7789,6 +7812,10 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
     var _audio = new Audio(_localSalatNabi);
     _audio.id      = 'ucSalatNabiAudio';
     _audio.preload = 'auto';
+    // Élément DÉTACHÉ du DOM (jamais appendChild) -- getElementById ne le
+    // trouverait pas, d'où l'enregistrement direct par fermeture (cf. tout en
+    // haut du fichier, _installUniversalFlipToMute).
+    _ucRegisterFlipMuteTarget(function() { return _audio; });
 
     // Source audio salatnabi.mp3 : redirection au chargement (même pattern que azan)
     (function _redirectSalatNabiAudio() {
@@ -12698,6 +12725,10 @@ function selectQPTakbir() {
     var _takbirAmpliOnTimer  = null;   // activation ampliExt avant la lecture
     var _takbirAmpliOffTimer = null;   // désactivation ampliExt après l'arrêt
     var _takbirAudio         = null;
+    // _takbirAudio peut être #qpTakbirAudio (DOM, si le modal QP a déjà été
+    // ouvert) OU un élément DÉTACHÉ (new Audio()) sinon -- fermeture directe,
+    // couvre les deux cas (cf. tout en haut du fichier, _installUniversalFlipToMute).
+    _ucRegisterFlipMuteTarget(function() { return _takbirAudio; });
 
     var _TAKBIR_AMPLI_PRE_DELAY  = 10; // secondes AVANT le démarrage audio (fallback)
     var _TAKBIR_AMPLI_POST_DELAY = 10; // secondes APRÈS l'arrêt automatique (fallback)
@@ -15567,11 +15598,8 @@ function selectQPTakbir() {
         modal.id = 'ucSettingsModal';
         modal.innerHTML =
             '<div id="ucSettingsModalHeader">' +
-                '<span id="ucSettingsModalTitle">الإعدادات</span>' +
+                '<span id="ucSettingsModalTitle">&#128276; إعدادات الهاتف</span>' +
                 '<span id="ucSettingsModalClose" onclick="window._ucCloseSettingsModal()">&#10006;</span>' +
-            '</div>' +
-            '<div id="ucSettingsModalTabs">' +
-                '<div class="ucSettingsModalTabBtn ucSettingsModalTabBtnActive" data-tab="azan" onclick="window._ucSettingsModalSwitchTab(\'azan\')">&#128276; الأذان والإشعارات</div>' +
             '</div>' +
             '<div id="ucSettingsModalBody">' +
                 '<div class="ucSettingsModalPane ucSettingsModalPaneActive" data-pane="azan">' +
@@ -15595,20 +15623,20 @@ function selectQPTakbir() {
                         '</div>' +
                         '<div class="ucSettingsRow ucSettingsRowSep">' +
                             '<label class="ucSettingsToggleWrap">' +
-                                '<input type="checkbox" id="ucSilentBeforeAzanToggle" onchange="window._ucToggleSilentBeforeAzan(this.checked)">' +
+                                '<input type="checkbox" id="ucQuickMuteAfterToggle" onchange="window._ucToggleQuickMuteAfterAzan(this.checked)">' +
                                 '<span class="ucSettingsToggleSlider"></span>' +
                             '</label>' +
                             '<div class="ucSettingsRowLabel">' +
-                                '<span class="ucSettingsRowTitle">كتم صوت الهاتف قبل الأذان</span>' +
+                                '<span class="ucSettingsRowTitle">كتم صوت الهاتف بعد الأذان</span>' +
                             '</div>' +
                         '</div>' +
                         '<div class="ucSettingsSliderValueRow">' +
-                            '<span id="ucSilentBeforeValue" class="ucSettingsRowValue"></span>' +
+                            '<span id="ucQuickMuteAfterValue" class="ucSettingsRowValue"></span>' +
                         '</div>' +
                         '<div class="ucSettingsSliderRow">' +
-                            '<input id="ucSilentBeforeAzanSlider" type="range" min="0" max="60" step="1" value="1" ' +
-                                'oninput="window._ucSilentBeforeSliderInput(this.value)" ' +
-                                'onchange="window._ucSilentBeforeSliderChange(this.value)">' +
+                            '<input id="ucQuickMuteAfterSlider" type="range" min="0" max="30" step="1" value="5" ' +
+                                'oninput="window._ucQuickMuteAfterSliderInput(this.value)" ' +
+                                'onchange="window._ucQuickMuteAfterSliderChange(this.value)">' +
                         '</div>' +
                         '<div class="ucSettingsRow ucSettingsRowSub">' +
                             '<div class="ucSettingsRowLabel">' +
@@ -15625,28 +15653,11 @@ function selectQPTakbir() {
                         '</div>' +
                         '<div class="ucSettingsRow ucSettingsRowSep">' +
                             '<label class="ucSettingsToggleWrap">' +
-                                '<input type="checkbox" id="ucQuickMuteAfterToggle" onchange="window._ucToggleQuickMuteAfterAzan(this.checked)">' +
-                                '<span class="ucSettingsToggleSlider"></span>' +
-                            '</label>' +
-                            '<div class="ucSettingsRowLabel">' +
-                                '<span class="ucSettingsRowTitle">كتم صوت الهاتف بعد الأذان</span>' +
-                            '</div>' +
-                        '</div>' +
-                        '<div class="ucSettingsSliderValueRow">' +
-                            '<span id="ucQuickMuteAfterValue" class="ucSettingsRowValue"></span>' +
-                        '</div>' +
-                        '<div class="ucSettingsSliderRow">' +
-                            '<input id="ucQuickMuteAfterSlider" type="range" min="0" max="30" step="1" value="5" ' +
-                                'oninput="window._ucQuickMuteAfterSliderInput(this.value)" ' +
-                                'onchange="window._ucQuickMuteAfterSliderChange(this.value)">' +
-                        '</div>' +
-                        '<div class="ucSettingsRow ucSettingsRowSep">' +
-                            '<label class="ucSettingsToggleWrap">' +
                                 '<input type="checkbox" id="ucFlipToMuteToggle" onchange="window._ucToggleFlipToMuteAzan(this.checked)">' +
                                 '<span class="ucSettingsToggleSlider"></span>' +
                             '</label>' +
                             '<div class="ucSettingsRowLabel">' +
-                                '<span class="ucSettingsRowTitle">كتم الأذان عند قلب الهاتف على وجهه</span>' +
+                                '<span class="ucSettingsRowTitle">كتم الأصوات عند قلب الهاتف على وجهه</span>' +
                             '</div>' +
                         '</div>' +
                         '<div class="ucSettingsRow ucSettingsRowSep" id="ucAutoStartRow">' +
@@ -15718,66 +15729,66 @@ function selectQPTakbir() {
     };
 
     // ── Silencieux automatique autour de l'azan ─────────────────────────────
-    //  Lit/écrit JS_CUSTOM.ucSilentBeforeAzanEnabled / ucSilentBeforeAzanMinutes
-    //  / ucSilentAfterAzanMinutes (cf. JS_CUSTOM_DEFAULTS). La 2e jauge (remise
-    //  du son) n'est active que si le toggle (1ère fonction) est activé — gérée
-    //  ici via sl2.disabled, en plus du wiring du toggle lui-même.
-    //  Planification réelle (AlarmManager natif) : voir le bloc
-    //  _installSilentModeAroundAzan() plus bas, qui expose
-    //  window._ucRescheduleSilentMode() appelé depuis ces handlers.
-    function _ucSyncSilentModeUI() {
+    // ── Coupure après l'azan : silencieux (jauge courte) + reprise (jauge longue) ──
+    //  Un seul toggle (ucQuickMuteAfterToggle) gouverne DEUX jauges :
+    //   - ucQuickMuteAfterSlider (0-30 min, JS_CUSTOM.ucMuteAfterAzanMinutes) :
+    //     durée du silencieux lui-même, mute pile à l'azan.
+    //   - ucSilentAfterAzanSlider (1-180 min, JS_CUSTOM.ucSilentAfterAzanMinutes) :
+    //     délai de reprise, indépendant — permet un délai plus long que la
+    //     jauge silencieux si besoin.
+    //  La reprise ne peut JAMAIS intervenir avant la fin de la fenêtre
+    //  silencieuse : les deux jauges programment chacune leur propre fenêtre
+    //  MUTE(azan)->RESTORE(azan+N) via un compteur natif PAR REASON
+    //  (SilentModeReceiver.kt, REASON_AFTER/REASON_BEFORE réutilisées ici comme
+    //  2 fenêtres indépendantes du MÊME toggle) — le son n'est réellement
+    //  restauré que quand TOUTES les fenêtres sont fermées, donc la restauration
+    //  effective a lieu à azan + max(jauge silencieux, jauge reprise), sans
+    //  aucun calcul de max nécessaire côté JS : c'est une propriété du compteur
+    //  additif déjà en place (cf. _ucScheduleSilentModeAlarms plus bas).
+    //  Planification réelle : _installQuickMuteAfterAzan() (jauge silencieux)
+    //  et _installSilentModeAroundAzan() (jauge reprise) plus bas, qui exposent
+    //  respectivement window._ucRescheduleQuickMuteAfterAzan() / _ucRescheduleSilentMode().
+    function _ucSyncQuickMuteAfterUI() {
         if (!_modal) return;
-        var cb   = _modal.querySelector('#ucSilentBeforeAzanToggle');
-        var sl1  = _modal.querySelector('#ucSilentBeforeAzanSlider');
+        var cb   = _modal.querySelector('#ucQuickMuteAfterToggle');
+        var sl   = _modal.querySelector('#ucQuickMuteAfterSlider');
+        var val  = _modal.querySelector('#ucQuickMuteAfterValue');
         var sl2  = _modal.querySelector('#ucSilentAfterAzanSlider');
-        var val1 = _modal.querySelector('#ucSilentBeforeValue');
         var val2 = _modal.querySelector('#ucSilentAfterValue');
-        var enabled = (JS_CUSTOM.ucSilentBeforeAzanEnabled == 1);
-        var before = parseInt(JS_CUSTOM.ucSilentBeforeAzanMinutes, 10);
-        if (isNaN(before) || before < 0) before = 1;
-        if (before > 60) before = 60;
+        var enabled = (JS_CUSTOM.ucMuteAfterAzanEnabled == 1);
+        var mins = parseInt(JS_CUSTOM.ucMuteAfterAzanMinutes, 10);
+        if (isNaN(mins) || mins < 0) mins = 5;
+        if (mins > 30) mins = 30;
         var after = parseInt(JS_CUSTOM.ucSilentAfterAzanMinutes, 10);
         if (isNaN(after) || after < 1) after = 60;
         if (after > 180) after = 180;
         if (cb) cb.checked = enabled;
-        if (sl1) { sl1.value = before; sl1.disabled = !enabled; }
+        if (sl) { sl.value = mins; sl.disabled = !enabled; }
+        if (val) val.textContent = mins + ' دقيقة';
         if (sl2) { sl2.value = after; sl2.disabled = !enabled; }
-        if (val1) val1.textContent = before + ' دقيقة';
         if (val2) val2.textContent = after + ' دقيقة';
     }
 
-    window._ucToggleSilentBeforeAzan = function(checked) {
+    window._ucToggleQuickMuteAfterAzan = function(checked) {
         if (checked && window.AndroidMobile && typeof window.AndroidMobile.hasDndAccess === 'function'
                 && !window.AndroidMobile.hasDndAccess()) {
-            // Accès "Ne pas déranger" requis pour changer le mode sonnerie —
-            // même précédent que la demande d'exemption batterie : on ouvre
-            // l'écran système puis on laisse l'utilisateur revenir activer.
             if (typeof window.AndroidMobile.requestDndAccess === 'function') window.AndroidMobile.requestDndAccess();
         }
-        JS_CUSTOM.ucSilentBeforeAzanEnabled = checked ? 1 : 0;
+        JS_CUSTOM.ucMuteAfterAzanEnabled = checked ? 1 : 0;
         saveCustomSettingsFunction();
-        _ucSyncSilentModeUI();
+        _ucSyncQuickMuteAfterUI();
         if (checked) {
+            if (typeof window._ucRescheduleQuickMuteAfterAzan === 'function') window._ucRescheduleQuickMuteAfterAzan();
             if (typeof window._ucRescheduleSilentMode === 'function') window._ucRescheduleSilentMode();
-        } else if (window.AndroidMobile && typeof window.AndroidMobile.disableSilentMode === 'function') {
-            window.AndroidMobile.disableSilentMode();
+        } else {
+            if (window.AndroidMobile && typeof window.AndroidMobile.disableQuickMuteAfterAzan === 'function') {
+                window.AndroidMobile.disableQuickMuteAfterAzan();
+            }
+            if (window.AndroidMobile && typeof window.AndroidMobile.disableSilentMode === 'function') {
+                window.AndroidMobile.disableSilentMode();
+            }
         }
-        _L('CFG', 'SET', {ucSilentBeforeAzanEnabled: JS_CUSTOM.ucSilentBeforeAzanEnabled});
-    };
-
-    window._ucSilentBeforeSliderInput = function(val) {
-        var lbl = _modal ? _modal.querySelector('#ucSilentBeforeValue') : null;
-        if (lbl) lbl.textContent = parseInt(val, 10) + ' دقيقة';
-    };
-
-    window._ucSilentBeforeSliderChange = function(val) {
-        var mins = parseInt(val, 10);
-        if (isNaN(mins) || mins < 0) mins = 0;
-        if (mins > 60) mins = 60;
-        JS_CUSTOM.ucSilentBeforeAzanMinutes = mins;
-        saveCustomSettingsFunction();
-        if (typeof window._ucRescheduleSilentMode === 'function') window._ucRescheduleSilentMode();
-        _L('CFG', 'SET', {ucSilentBeforeAzanMinutes: mins});
+        _L('CFG', 'SET', {ucMuteAfterAzanEnabled: JS_CUSTOM.ucMuteAfterAzanEnabled});
     };
 
     window._ucSilentAfterSliderInput = function(val) {
@@ -15795,44 +15806,6 @@ function selectQPTakbir() {
         _L('CFG', 'SET', {ucSilentAfterAzanMinutes: mins});
     };
 
-    // ── Coupure courte et indépendante après l'azan ─────────────────────────
-    //  Lit/écrit JS_CUSTOM.ucMuteAfterAzanEnabled / ucMuteAfterAzanMinutes
-    //  (0-30, défaut 5). Indépendante du toggle "كتم صوت الهاتف قبل الأذان"
-    //  ci-dessus : les deux peuvent être actives en même temps, leurs fenêtres
-    //  de coupure se contentent alors de s'additionner (cf. compteur par
-    //  "reason" côté natif, SilentModeReceiver.kt) plutôt que d'interférer.
-    //  Planification réelle : _installQuickMuteAfterAzan() plus bas, qui
-    //  expose window._ucRescheduleQuickMuteAfterAzan().
-    function _ucSyncQuickMuteAfterUI() {
-        if (!_modal) return;
-        var cb  = _modal.querySelector('#ucQuickMuteAfterToggle');
-        var sl  = _modal.querySelector('#ucQuickMuteAfterSlider');
-        var val = _modal.querySelector('#ucQuickMuteAfterValue');
-        var enabled = (JS_CUSTOM.ucMuteAfterAzanEnabled == 1);
-        var mins = parseInt(JS_CUSTOM.ucMuteAfterAzanMinutes, 10);
-        if (isNaN(mins) || mins < 0) mins = 5;
-        if (mins > 30) mins = 30;
-        if (cb) cb.checked = enabled;
-        if (sl) { sl.value = mins; sl.disabled = !enabled; }
-        if (val) val.textContent = mins + ' دقيقة';
-    }
-
-    window._ucToggleQuickMuteAfterAzan = function(checked) {
-        if (checked && window.AndroidMobile && typeof window.AndroidMobile.hasDndAccess === 'function'
-                && !window.AndroidMobile.hasDndAccess()) {
-            if (typeof window.AndroidMobile.requestDndAccess === 'function') window.AndroidMobile.requestDndAccess();
-        }
-        JS_CUSTOM.ucMuteAfterAzanEnabled = checked ? 1 : 0;
-        saveCustomSettingsFunction();
-        _ucSyncQuickMuteAfterUI();
-        if (checked) {
-            if (typeof window._ucRescheduleQuickMuteAfterAzan === 'function') window._ucRescheduleQuickMuteAfterAzan();
-        } else if (window.AndroidMobile && typeof window.AndroidMobile.disableQuickMuteAfterAzan === 'function') {
-            window.AndroidMobile.disableQuickMuteAfterAzan();
-        }
-        _L('CFG', 'SET', {ucMuteAfterAzanEnabled: JS_CUSTOM.ucMuteAfterAzanEnabled});
-    };
-
     window._ucQuickMuteAfterSliderInput = function(val) {
         var lbl = _modal ? _modal.querySelector('#ucQuickMuteAfterValue') : null;
         if (lbl) lbl.textContent = parseInt(val, 10) + ' دقيقة';
@@ -15848,12 +15821,19 @@ function selectQPTakbir() {
         _L('CFG', 'SET', {ucMuteAfterAzanMinutes: mins});
     };
 
-    // ── Couper l'azan en retournant le telephone ────────────────────────────
-    //  Lit/ecrit JS_CUSTOM.ucFlipToMuteAzan. La detection elle-meme (capteur
-    //  accelerometre) tourne cote natif, uniquement pendant la lecture reelle
-    //  de l'azan (AzanPlaybackService) -- le reglage est simplement pousse
-    //  vers le natif via setFlipToMuteEnabled() a chaque changement, stocke
-    //  dans les SharedPreferences pour persister meme appli fermee/relancee.
+    // ── Couper les sons en retournant le telephone ──────────────────────────
+    //  Lit/ecrit JS_CUSTOM.ucFlipToMuteAzan. DEUX detections independantes
+    //  partagent ce seul reglage :
+    //   1) Native (capteur accelerometre, AzanPlaybackService) -- uniquement
+    //      pendant la lecture REELLE de l'azan en plein-audio (MediaPlayer
+    //      natif) ; le reglage est pousse vers le natif via setFlipToMuteEnabled()
+    //      a chaque changement, stocke dans les SharedPreferences pour persister
+    //      meme appli fermee/relancee.
+    //   2) JS (API devicemotion, cf. _installUniversalFlipToMute plus bas) --
+    //      couvre tous les AUTRES sons joues par la WebView (Coran, fin.ogg,
+    //      azan en mode court/beep au premier plan, salatNabi, alerte vocale
+    //      avant iqama, takbir) : ces audios ne passent jamais par le natif,
+    //      donc le capteur natif seul ne les voit pas.
     function _ucSyncFlipToMuteUI() {
         if (!_modal) return;
         var cb = _modal.querySelector('#ucFlipToMuteToggle');
@@ -15938,7 +15918,6 @@ function selectQPTakbir() {
     window._ucOpenSettingsModal = function() {
         _buildModal();
         _ucSyncAzanAlertUI();
-        _ucSyncSilentModeUI();
         _ucSyncQuickMuteAfterUI();
         _ucSyncFlipToMuteUI();
         _ucSyncAutoStartUI();
@@ -15980,12 +15959,18 @@ function selectQPTakbir() {
 
 
 // ==========================================================================
-// -- SILENCIEUX AUTOMATIQUE AUTOUR DE L'AZAN (modale Réglages) ------------
-//  1) coupe la sonnerie X minutes avant l'azan de la prochaine prière
-//  2) la remet Y minutes après (uniquement si 1 est actif)
-//  Réglages : JS_CUSTOM.ucSilentBeforeAzanEnabled / ucSilentBeforeAzanMinutes
-//  (0-60) / ucSilentAfterAzanMinutes (1-180) — cf. UI dans
-//  _installSettingsModal ci-dessus (toggle + 2 jauges sous ucAzanAlertSlider).
+// -- JAUGE "REPRISE" APRÈS L'AZAN (modale Réglages) -----------------------
+//  Coupe la sonnerie pile à l'azan et la remet ucSilentAfterAzanMinutes (1-180)
+//  minutes après — gouvernée par le MÊME toggle que la coupure courte
+//  (ucMuteAfterAzanEnabled, bloc _installQuickMuteAfterAzan plus bas) : les
+//  deux jauges ("silencieux" 0-30 min ci-dessous, "reprise" 1-180 min ici)
+//  programment chacune leur propre fenêtre MUTE(azan)->RESTORE(azan+N) sur un
+//  compteur natif PAR REASON (SilentModeReceiver.kt, reason-aware) — le son
+//  n'est restauré que quand LES DEUX fenêtres sont fermées, donc la reprise
+//  effective a lieu à azan + max(silencieux, reprise) sans calcul de max
+//  nécessaire ici : propriété du compteur additif déjà en place.
+//  Réglages : JS_CUSTOM.ucSilentAfterAzanMinutes (1-180) — cf. UI dans
+//  _installSettingsModal ci-dessus (jauge sous ucQuickMuteAfterSlider).
 //
 //  Planification via AlarmManager natif (MobileJsBridge.scheduleSilentModeAlarms
 //  + SilentModeReceiver.kt), PAS de simple setTimeout JS : survit à la
@@ -16010,7 +15995,14 @@ function selectQPTakbir() {
     function _ucScheduleSilentModeAlarms() {
         if (!window.AndroidMobile || typeof window.AndroidMobile.scheduleSilentModeAlarms !== 'function') return; // pas dans l'app Android
 
-        if (JS_CUSTOM.ucSilentBeforeAzanEnabled != 1) {
+        // Seule la jauge "reprise" (ucSilentAfterAzanSlider) est gérée ici,
+        // gouvernée par ucMuteAfterAzanEnabled (le seul toggle restant, cf.
+        // commentaire d'en-tête _ucSyncQuickMuteAfterUI plus haut). Mute pile à
+        // l'azan (comme la jauge silencieux elle-même) ; seul le délai de
+        // restauration diffère — c'est le compteur natif par reason qui garantit
+        // que le son ne revient qu'une fois les DEUX fenêtres fermées.
+        var quickMuteEnabled = (JS_CUSTOM.ucMuteAfterAzanEnabled == 1);
+        if (!quickMuteEnabled) {
             if (typeof window.AndroidMobile.disableSilentMode === 'function') window.AndroidMobile.disableSilentMode();
             return;
         }
@@ -16018,9 +16010,6 @@ function selectQPTakbir() {
         var obj = prayerTimesMinutesObject;
         if (!obj || !obj.FAJR) return; // pas encore calculé
 
-        var beforeMin = parseInt(JS_CUSTOM.ucSilentBeforeAzanMinutes, 10);
-        if (isNaN(beforeMin) || beforeMin < 0) beforeMin = 15;
-        if (beforeMin > 60) beforeMin = 60;
         var afterMin = parseInt(JS_CUSTOM.ucSilentAfterAzanMinutes, 10);
         if (isNaN(afterMin) || afterMin < 1) afterMin = 30;
         if (afterMin > 180) afterMin = 180;
@@ -16037,7 +16026,7 @@ function selectQPTakbir() {
         prayerKeys.forEach(function(p) {
             var azanMin = obj[p.key];
             if (typeof azanMin !== 'number') return;
-            var mute    = _minutesToHHMM(azanMin - beforeMin);
+            var mute    = _minutesToHHMM(azanMin);
             var restore = _minutesToHHMM(azanMin + afterMin);
             items.push({
                 prayer: p.name,
@@ -16164,16 +16153,16 @@ function selectQPTakbir() {
 
 
 // ==========================================================================
-// -- FILET DE SÉCURITÉ : SON RESTÉ COUPÉ PAR ERREUR (silencieux autour de
-//    l'azan, cf. les deux blocs ci-dessus) -------------------------------
+// -- FILET DE SÉCURITÉ : SON RESTÉ COUPÉ PAR ERREUR (jauges après-azan,
+//    cf. les deux blocs ci-dessus) ----------------------------------------
 //  Une alarme AlarmManager RESTORE peut, sur certains constructeurs
 //  (optimisations batterie agressives Xiaomi/Huawei/Oppo..., redémarrage du
 //  téléphone avant reprogrammation), ne jamais se déclencher — laissant le
 //  téléphone muet indéfiniment, ce qui est un vrai problème (appels/messages
 //  manqués). Ce filet vérifie, à chaque ouverture/reprise de l'appli, si le
 //  natif signale encore une coupure active (isSilentModeActive()) alors
-//  qu'aucune fenêtre de coupure calculée (avant OU après-azan, les deux
-//  fonctionnalités confondues) ne couvre l'heure actuelle — auquel cas on
+//  qu'aucune des deux fenêtres calculées (jauge silencieux OU jauge reprise,
+//  cf. les deux blocs ci-dessus) ne couvre l'heure actuelle — auquel cas on
 //  force la restauration immédiate de la sonnerie (MobileJsBridge.
 //  forceRestoreAllSilentMode()), sans attendre une hypothétique prochaine
 //  alarme.
@@ -16200,26 +16189,25 @@ function selectQPTakbir() {
         var now = new Date();
         var nowMin = now.getHours() * 60 + now.getMinutes();
 
-        var beforeEnabled = (JS_CUSTOM.ucSilentBeforeAzanEnabled == 1);
-        var beforeMin = parseInt(JS_CUSTOM.ucSilentBeforeAzanMinutes, 10);
-        if (isNaN(beforeMin) || beforeMin < 0) beforeMin = 1;
-        if (beforeMin > 60) beforeMin = 60;
-        var afterMinBefore = parseInt(JS_CUSTOM.ucSilentAfterAzanMinutes, 10);
-        if (isNaN(afterMinBefore) || afterMinBefore < 1) afterMinBefore = 60;
-        if (afterMinBefore > 180) afterMinBefore = 180;
+        var enabled = (JS_CUSTOM.ucMuteAfterAzanEnabled == 1);
+        var afterMinReprise = parseInt(JS_CUSTOM.ucSilentAfterAzanMinutes, 10);
+        if (isNaN(afterMinReprise) || afterMinReprise < 1) afterMinReprise = 60;
+        if (afterMinReprise > 180) afterMinReprise = 180;
 
-        var afterEnabled = (JS_CUSTOM.ucMuteAfterAzanEnabled == 1);
-        var afterMinAfter = parseInt(JS_CUSTOM.ucMuteAfterAzanMinutes, 10);
-        if (isNaN(afterMinAfter) || afterMinAfter < 0) afterMinAfter = 5;
-        if (afterMinAfter > 30) afterMinAfter = 30;
+        var afterMinSilence = parseInt(JS_CUSTOM.ucMuteAfterAzanMinutes, 10);
+        if (isNaN(afterMinSilence) || afterMinSilence < 0) afterMinSilence = 5;
+        if (afterMinSilence > 30) afterMinSilence = 30;
 
         var prayerKeys = ['FAJR', 'DOHR', 'ASSR', 'MGRB', 'ISHA'];
         var anyExpected = false;
         prayerKeys.forEach(function(key) {
             var azanMin = obj[key];
             if (typeof azanMin !== 'number') return;
-            if (beforeEnabled && _inWindow(nowMin, azanMin - beforeMin, azanMin + afterMinBefore)) anyExpected = true;
-            if (afterEnabled && _inWindow(nowMin, azanMin, azanMin + afterMinAfter)) anyExpected = true;
+            if (!enabled) return;
+            // Jauge "reprise" (_ucScheduleSilentModeAlarms).
+            if (_inWindow(nowMin, azanMin, azanMin + afterMinReprise)) anyExpected = true;
+            // Jauge "silencieux" (_ucScheduleQuickMuteAfterAzanAlarms).
+            if (_inWindow(nowMin, azanMin, azanMin + afterMinSilence)) anyExpected = true;
         });
 
         if (!anyExpected && typeof window.AndroidMobile.forceRestoreAllSilentMode === 'function') {
@@ -16237,6 +16225,99 @@ function selectQPTakbir() {
         if (!document.hidden) setTimeout(_ucCheckStaleSilentMode, 1000);
     });
 
+})();
+
+
+// ==========================================================================
+// -- FLIP-TO-MUTE UNIVERSEL (JS, tous sons hors azan plein-audio natif) --
+//  cf. commentaire _ucToggleFlipToMuteAzan (_installSettingsModal) : la
+//  détection native (accéléromètre, AzanPlaybackService) ne couvre que l'azan
+//  joué nativement en plein-audio (MediaPlayer). Ce bloc couvre, via l'API
+//  standard `devicemotion` (aucun accès natif requis), tous les AUTRES sons
+//  joués par la WebView elle-même :
+//   - Coran / fin.ogg / salatNabi / alerte vocale iqama / takbir : coupés via
+//     window._ucFlipMuteRegistry (cf. tout en haut du fichier) — chaque
+//     producteur y a enregistré une fermeture () => HTMLAudioElement.
+//   - azan en mode court/beep au premier plan (le seul cas où le JS <audio>
+//     joue réellement, cf. audioEl.muted côté plein-audio natif) : traité à
+//     part, via la MÊME cascade de fermeture que _ucResyncPrayerSequence
+//     (_ucReleaseAzanBlock + hideAzanPopupFunction), pas un simple .pause() —
+//     nécessaire pour fermer proprement le popup, pas juste couper le son.
+//  Seuil/confirmation identiques à AzanPlaybackService.kt (FLIP_Z_THRESHOLD=-7,
+//  FLIP_CONFIRM_COUNT=3) pour un ressenti cohérent entre les deux mécanismes ;
+//  à recalibrer si l'axe Z de l'API web s'avère différent en pratique une fois
+//  testé sur le téléphone réel (aucun moyen de simuler une rotation physique
+//  via adb — cf. _L('FLIP','SAMPLE',...) pour observer les valeurs réelles).
+// ==========================================================================
+(function _installUniversalFlipToMute() {
+    if (typeof window.DeviceMotionEvent === 'undefined') return;
+
+    // Coran / fin.ogg : vrais éléments DOM (id fixe), retrouvables par
+    // getElementById à tout moment -- pas besoin de fermeture dédiée comme
+    // pour salatNabi/alerte-vocale/takbir (audios parfois détachés du DOM).
+    _ucRegisterFlipMuteTarget(function() { return document.getElementById('quranAudioPlayer'); });
+    _ucRegisterFlipMuteTarget(function() { return document.getElementById('quranFinAudio'); });
+
+    var Z_THRESHOLD   = -7;
+    var CONFIRM_COUNT = 3;
+    var COOLDOWN_MS   = 2000;
+
+    var consecutive   = 0;
+    var lastTriggerAt = 0;
+    var _sampleLogged = false;
+
+    function _stopEverythingPlaying() {
+        var stopped = [];
+
+        if (typeof window._ucIsAzanBlocked === 'function' && window._ucIsAzanBlocked()) {
+            if (typeof window._ucReleaseAzanBlock === 'function') window._ucReleaseAzanBlock('flip_to_mute_js');
+            if (typeof window.hideAzanPopupFunction === 'function') window.hideAzanPopupFunction();
+            stopped.push('azan_popup');
+        }
+
+        (window._ucFlipMuteRegistry || []).forEach(function(getAudioFn) {
+            var el;
+            try { el = getAudioFn(); } catch (e) { return; }
+            if (el && typeof el.pause === 'function' && !el.paused) {
+                try {
+                    el.pause();
+                    stopped.push(el.id || '(sans id)');
+                } catch (e) {}
+            }
+        });
+
+        if (stopped.length) {
+            _L('FLIP', 'FIRE', { action: 'universal_flip_mute', stopped: stopped.join(',') });
+        }
+    }
+
+    window.addEventListener('devicemotion', function(event) {
+        if (JS_CUSTOM.ucFlipToMuteAzan != 1) { consecutive = 0; return; }
+        var g = event.accelerationIncludingGravity;
+        if (!g || typeof g.z !== 'number') return;
+
+        // Trace ponctuelle (1 seule fois) pour calibrer le signe/seuil réel
+        // observé sur le téléphone, sans spammer le log à chaque event.
+        if (!_sampleLogged) {
+            _sampleLogged = true;
+            _L('FLIP', 'SAMPLE', { x: g.x, y: g.y, z: g.z });
+        }
+
+        if (g.z < Z_THRESHOLD) {
+            consecutive++;
+            if (consecutive >= CONFIRM_COUNT) {
+                consecutive = 0;
+                var now = Date.now();
+                if (now - lastTriggerAt < COOLDOWN_MS) return;
+                lastTriggerAt = now;
+                _stopEverythingPlaying();
+            }
+        } else {
+            consecutive = 0;
+        }
+    });
+
+    _L('CUSTOM', 'INIT', { item: 'universalFlipToMute' });
 })();
 
 
@@ -17696,6 +17777,10 @@ function selectQPTakbir() {
     var LOCAL_SRC  = 'spec/audio/alert_voice.ogg';
     var _audio     = null;
     var _resolvedSrc = null;
+    // _audio est un élément DÉTACHÉ du DOM (jamais appendChild), recréé au
+    // besoin par _getAudio() -- fermeture directe (cf. tout en haut du
+    // fichier, _installUniversalFlipToMute).
+    _ucRegisterFlipMuteTarget(function() { return _audio; });
     function _probe() {
         if (JS_CUSTOM.ucQuranServerEnabled != 1) { _resolvedSrc = LOCAL_SRC; return; }
         var base = (JS_CUSTOM.ucQuranServerUrl || 'http://127.0.0.1:8080').replace(/\/+$/, '');
@@ -22302,7 +22387,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     overlay.innerHTML =
         '<div id="ucLogoQuickBar">' +
             '<table id="ucLQBTable" dir="rtl"><tbody>' +
-                _lqbRow('ucLQBSettings',   'الإعدادات',      SVG_GEAR) +
+                _lqbRow('ucLQBSettings',   'إعدادات الهاتف', SVG_GEAR) +
                 _lqbRow('ucLQBMosqueInfo', 'معلومات المسجد', SVG_MOSQUE) +
                 _lqbRow('ucLQBSpeaker',    'صوت الأذان',     SVG_SPEAKER) +
                 _lqbRow('ucLQBQuran',      'القرآن الكريم',  SVG_QURAN) +

@@ -1271,6 +1271,7 @@
 
 #marqueeContainerVertical.ucAzanLargeText {
     height: 12% !important;           /* FIX : 8% = hauteur du texte (8vh) sans marge pour line-height → texte coupé en deux */
+    bottom: 5% !important;            /* remonté depuis la base (2.2%, style1.css) : trop bas sur la page azan (vertical/téléphone) */
 }
 #marqueeContainerVertical.ucAzanLargeText #marqueeTextVertical {
     font-size: 8.0vh !important;
@@ -3479,6 +3480,7 @@
 
 #marqueeContainerVertical.ucAzanLargeText {
     height: 12% !important;           /* FIX : 8% = hauteur du texte (8vh) sans marge pour line-height → texte coupé en deux */
+    bottom: 5% !important;            /* remonté depuis la base (2.2%, style1.css) : trop bas sur la page azan (vertical/téléphone) */
 }
 #marqueeContainerVertical.ucAzanLargeText #marqueeTextVertical {
     font-size: 8.0vh !important;
@@ -5618,11 +5620,10 @@
     text-align: center;
     padding-bottom: 2px;
 }
-/* Bloc "silencieux auto" (2 fonctions liées) : séparé visuellement du bloc
-   "alerte avant azan" au-dessus ; .ucSettingsRowSub = 2e ligne (remise du
-   son), sans interrupteur propre — elle n'est qu'un libellé pour la jauge
-   "après", activée/désactivée avec la 1ère fonction (cf. _ucSyncSilentModeUI
-   dans custom.js, sl2.disabled = !enabled). */
+/* Bloc "silencieux après azan" (2 jauges, 1 toggle) : séparé visuellement du
+   bloc "alerte avant azan" au-dessus ; .ucSettingsRowSub = jauge "reprise"
+   (ucSilentAfterAzanSlider), sans interrupteur propre, sous ucQuickMuteAfterSlider
+   (cf. _ucSyncQuickMuteAfterUI dans custom.js, sl2.disabled). */
 .ucSettingsRowSep {
     margin-top: 6px;
     padding-top: 18px;
@@ -7737,6 +7738,26 @@ input[type='checkbox']:checked::after {
 }
 .ucQATDelayCell:active {
     background: rgba(223, 205, 177, 0.28);
+}
+/* Ligne "التأخير (د)" (délai en minutes) : distincte des autres lignes du
+   tableau (en-tête neutre #DFCDB1, cases jour vertes #3ddc63) mais dans la
+   même palette or/anthracite que le reste de l'appli (#d4aa50, déjà utilisé
+   pour les titres de section — cf. modales Qibla/Localisation/lecteur Coran). */
+.ucQATDelayRow > th,
+.ucQATDelayRow > td {
+    background: rgba(212, 170, 80, 0.14);
+}
+.ucQATDelayRow > th.ucQATRowLabel {
+    color: #d4aa50;
+}
+.ucQATDelayRow > td.ucQATDelayCell {
+    color: #d4aa50;
+}
+.ucQATDelayRow > td.ucQATDelayCell:hover {
+    background: rgba(212, 170, 80, 0.24);
+}
+.ucQATDelayRow > td.ucQATDelayCell:active {
+    background: rgba(212, 170, 80, 0.34);
 }
 .ucQATDayCell {
     cursor: pointer;

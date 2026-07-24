@@ -130,7 +130,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.76';
+var CUSTOM_APP_VERSION = '11.77';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1424,6 +1424,19 @@ var _ucActiveIqamaSeqEpoch = -1;
             azanBlocked: _stillAzanBlocked, salatNabiVisible: _stillSalatNabiVis,
             recovered: (_wasAzanBlocked && !_stillAzanBlocked) || (_wasSalatNabiVis && !_stillSalatNabiVis)
         });
+
+        // Horodatage du dernier resync : cf. _installPostAzanDoua plus bas, qui
+        // l'utilise pour ignorer un AZAN_HIDE tardif emis par le
+        // setTimeout('hideAzanPopupFunction()', ...) du CORE (m2body.js
+        // showAzanPopup, eval'e en chaine, jamais annulable -- meme famille de
+        // probleme que _ucIqamaSeqEpoch plus haut, mais pour la fermeture du
+        // popup azan plutot que la sequence iqama). Ce timer, arme des
+        // l'ouverture du popup et gele pendant la mise en arriere-plan, peut se
+        // declencher juste APRES que ce resync ait deja tout nettoye, rouvrant
+        // une "nouvelle" postAzanDoua bien apres coup (constate en pratique :
+        // page doua encore affichee au retour au premier plan, alors que le
+        // compteur iqama etait attendu -- debug 24/07/2026).
+        window._ucLastResyncCloseAt = Date.now();
 
         _L('RESYNC', 'FIRE', { action: 'resync_prayer_sequence', reason: reason || 'visibilitychange' });
 
@@ -8978,7 +8991,18 @@ function _doAudioUnlock() {
     _overlay.addEventListener('touchstart', _hide, { passive: true });
 
     ucOn(UC_EVT.AZAN_HIDE, function() {
-        if (_lastAzanPrayer === 'JOMOA') _show();
+        if (_lastAzanPrayer !== 'JOMOA') return;
+        // AZAN_HIDE tardif issu du setTimeout('hideAzanPopupFunction()', ...)
+        // non annulable du CORE (cf. _ucLastResyncCloseAt tout en haut du
+        // fichier, _installResyncOnResume — meme bug que postAzanDoua) : si ce
+        // resync vient JUSTE de tout nettoyer, ignorer cet echo perime plutot
+        // que de rouvrir le rappel jomoaa hors contexte.
+        var _msSinceResync = Date.now() - (window._ucLastResyncCloseAt || 0);
+        if (_msSinceResync < 5000) {
+            _L('POPUP', 'SKIP', { item: 'jomoa_adab', reason: 'stale_echo_after_resync', msSinceResync: _msSinceResync });
+            return;
+        }
+        _show();
     });
 
     // Test depuis la console : testJomoaAdab()   → overlay seul
@@ -16650,6 +16674,16 @@ function selectQPTakbir() {
         var prayer = _lastAzanPrayer;
         if (!_5PRAYERS[prayer]) {
             _L('PAD', 'SKIP', { item: 'postAzanDoua', prayer: prayer, reason: 'not_5prayers' });
+            return;
+        }
+        // AZAN_HIDE tardif issu du setTimeout('hideAzanPopupFunction()', ...)
+        // non annulable du CORE (cf. _ucLastResyncCloseAt tout en haut du
+        // fichier, _installResyncOnResume) : si ce resync vient JUSTE de tout
+        // nettoyer, ignorer cet echo perime plutot que de rouvrir la doua
+        // juste apres l'avoir fermee de force.
+        var _msSinceResync = Date.now() - (window._ucLastResyncCloseAt || 0);
+        if (_msSinceResync < 5000) {
+            _L('PAD', 'SKIP', { item: 'postAzanDoua', prayer: prayer, reason: 'stale_echo_after_resync', msSinceResync: _msSinceResync });
             return;
         }
         _show();

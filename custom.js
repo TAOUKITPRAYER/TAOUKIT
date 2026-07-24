@@ -130,7 +130,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.77';
+var CUSTOM_APP_VERSION = '11.78';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -23126,4 +23126,138 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // FIN ONGLETS #adjustmentsSectionId
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BLOCS VERTICAUX PAR PRIÈRE (#adjustmentsContentContainer, onglets "تعديل
+// الإقامة" et "تعديل الأذان") ─────────────────────────────────────────────────
+// Les deux tableaux d'origine étaient trop condensés (colonnes étroites,
+// boutons +/- très rapprochés entre prières voisines -> appuis fréquents
+// sur le mauvais bouton, signalé par l'utilisateur) :
+//   - iqamaAdjustmentsTable : 5 colonnes serrées par ligne (label, valeur,
+//     -, +, FIXED) x 6 prières.
+//   - tableau des minutes d'azan (prayerNameFajrAdjust/athanMinutesFajrValue
+//     etc., sans id propre -> retrouvé via closest('table')) : 6 prières
+//     côte à côte sur des colonnes très étroites (3 lignes : nom / valeur /
+//     boutons).
+// Remplacés ici par une pile verticale d'une carte par prière (même langage
+// visuel que .ucOptionsPanel/.ucOptRow, cf. custom.css), avec des boutons
+// agrandis. Exécuté APRÈS _installAdjustmentsTabs() ci-dessus : les deux
+// tableaux sont déjà dans leurs panneaux respectifs à ce stade.
+// IMPORTANT : les éléments réels (label/valeur/boutons) sont DÉPLACÉS
+// (appendChild), jamais clonés ni recréés. Vérifié dans m2body.js : chaque
+// élément est capturé UNE SEULE FOIS par id dans une const/let de portée
+// module au chargement (ex. iqamaFajrValueElement, prayerNameFajrAdjustElement,
+// fixedIqamaFajrButtonElement) puis seulement mis à jour ensuite via
+// .innerHTML sur cette référence -- jamais re-récupéré par position dans le
+// tableau ni par un nouveau getElementById. Déplacer ces éléments ailleurs
+// dans le DOM ne casse donc rien côté core, quel que soit leur nouveau
+// parent.
+(function _installAdjustmentsBlocksLayout() {
+    var IQAMA_SUFFIXES = ['Fajr', 'Doha', 'Dohr', 'Asr', 'Mgrb', 'Isha'];
+    var AZAN_SUFFIXES  = ['Fajr', 'Shrq', 'Dohr', 'Asr', 'Mgrb', 'Isha'];
+
+    // "FIXED : " est un texte anglais figé dans index.html (jamais localisé
+    // par le core, même situation que prayersAdjustmentsTitle plus haut) --
+    // recréé ici comme un vrai libellé traduit.
+    var L_FIXED = { AR: 'ثابت', FR: 'Fixe', EN: 'Fixed', ES: 'Fijo', DE: 'Fest' };
+    function _lang() {
+        return (typeof _ucMenuLinkLang === 'function') ? _ucMenuLinkLang() : 'AR';
+    }
+
+    function _buildValueGroup(minusBtn, valueEl, plusBtn) {
+        var g = document.createElement('span');
+        g.className = 'ucAdjValueGroup';
+        if (minusBtn) g.appendChild(minusBtn);
+        if (valueEl)  g.appendChild(valueEl);
+        if (plusBtn)  g.appendChild(plusBtn);
+        return g;
+    }
+
+    function _buildBlock(headEl, bodyChildren) {
+        var card = document.createElement('div');
+        card.className = 'ucAdjBlock';
+        var head = document.createElement('div');
+        head.className = 'ucAdjBlockHead';
+        if (headEl) head.appendChild(headEl);
+        card.appendChild(head);
+        var body = document.createElement('div');
+        body.className = 'ucAdjBlockBody';
+        bodyChildren.forEach(function (c) { if (c) body.appendChild(c); });
+        card.appendChild(body);
+        return card;
+    }
+
+    var fixedLabelSpans = [];
+
+    // ── تعديل الإقامة : iqamaAdjustmentsTable (5 colonnes -> carte par ligne) ──
+    var iqamaTable = document.getElementById('iqamaAdjustmentsTable');
+    if (iqamaTable) {
+        var wrap1 = document.createElement('div');
+        wrap1.className = 'ucAdjBlocksWrap';
+        IQAMA_SUFFIXES.forEach(function (suf, i) {
+            var tr = iqamaTable.rows[i];
+            if (!tr) return;
+            var label    = document.getElementById('iqama' + suf + 'Label');
+            var value    = document.getElementById('iqama' + suf + 'Value');
+            var minusBtn = tr.cells[2] && tr.cells[2].querySelector('button');
+            var plusBtn  = tr.cells[3] && tr.cells[3].querySelector('button');
+            var fixedBtn = document.getElementById('fixedIqama' + suf + 'Button');
+
+            var bodyChildren = [_buildValueGroup(minusBtn, value, plusBtn)];
+            if (fixedBtn) {
+                var fixedWrap = document.createElement('span');
+                fixedWrap.className = 'ucAdjFixedWrap';
+                var fixedLabel = document.createElement('span');
+                fixedLabel.className = 'ucAdjFixedLabel';
+                fixedLabel.textContent = L_FIXED[_lang()] || L_FIXED.EN;
+                fixedLabelSpans.push(fixedLabel);
+                fixedWrap.appendChild(fixedLabel);
+                fixedWrap.appendChild(fixedBtn);
+                bodyChildren.push(fixedWrap);
+            }
+            wrap1.appendChild(_buildBlock(label, bodyChildren));
+        });
+        iqamaTable.parentNode.replaceChild(wrap1, iqamaTable);
+    }
+
+    // ── تعديل الأذان : tableau des minutes d'azan (6 colonnes -> carte par prière) ──
+    var azanNameEl = document.getElementById('prayerNameFajrAdjust');
+    var azanTable = azanNameEl && azanNameEl.closest('table');
+    if (azanTable) {
+        var wrap2 = document.createElement('div');
+        wrap2.className = 'ucAdjBlocksWrap';
+        AZAN_SUFFIXES.forEach(function (suf, i) {
+            var name     = document.getElementById('prayerName' + suf + 'Adjust');
+            var value    = document.getElementById('athanMinutes' + suf + 'Value');
+            var btnCell  = azanTable.rows[2] && azanTable.rows[2].cells[i];
+            var minusBtn = btnCell && btnCell.children[0];
+            var plusBtn  = btnCell && btnCell.children[1];
+            wrap2.appendChild(_buildBlock(name, [_buildValueGroup(minusBtn, value, plusBtn)]));
+        });
+        azanTable.parentNode.replaceChild(wrap2, azanTable);
+    }
+
+    // Le libellé "FIXED" traduit doit suivre les changements de langue, comme
+    // les onglets (_refreshLabels de _installAdjustmentsTabs) -- ré-appliqué
+    // à chaque réouverture de la page via le même type de MutationObserver
+    // sur adjustmentsSectionId.
+    var sectionEl = document.getElementById('adjustmentsSectionId');
+    if (sectionEl && fixedLabelSpans.length && typeof MutationObserver === 'function') {
+        var _wasVisible = false;
+        var _mo = new MutationObserver(function () {
+            var nowVisible = (sectionEl.style.visibility === 'visible');
+            if (nowVisible && !_wasVisible) {
+                var l = L_FIXED[_lang()] || L_FIXED.EN;
+                fixedLabelSpans.forEach(function (s) { s.textContent = l; });
+            }
+            _wasVisible = nowVisible;
+        });
+        _mo.observe(sectionEl, { attributes: true, attributeFilter: ['style'] });
+    }
+
+    _L('CUSTOM', 'INIT', { item: 'adjustmentsBlocksLayout' });
+})();
+// ═════════════════════════════════════════════════════════════════════════════
+// FIN BLOCS VERTICAUX #adjustmentsContentContainer
 // ═════════════════════════════════════════════════════════════════════════════

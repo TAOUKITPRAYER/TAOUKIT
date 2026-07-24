@@ -8838,3 +8838,88 @@ input[type='checkbox']:checked::after {
     justify-content: center;
     line-height: 1;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BLOCS VERTICAUX PAR PRIÈRE (#adjustmentsContentContainer, onglets "تعديل
+   الإقامة" et "تعديل الأذان") — cf. custom.js _installAdjustmentsBlocksLayout().
+   Remplace les tableaux d'origine (colonnes étroites, boutons +/- de prières
+   voisines très rapprochés) par une pile verticale d'une carte par prière —
+   même langage visuel que .ucOptionsPanel/.ucOptRow (fond légèrement
+   surélevé, coins arrondis) — avec des boutons agrandis pour réduire le
+   risque d'appui hors zone.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.ucAdjBlocksWrap {
+    display: flex;
+    flex-direction: column;
+    gap: 3%;
+    padding: 1% 0 2%;
+}
+.ucAdjBlock {
+    background: rgba(255, 255, 255, 0.035);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    overflow: hidden;
+}
+.ucAdjBlockHead {
+    padding: 3% 4% 2%;
+    font-size: 112%;
+    font-weight: bold;
+    color: #DFCDB1;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+/* iqama{X}Label / prayerName{X}Adjust sont des <td> core réutilisés hors de
+   tout tableau (déplacés, pas recréés, cf. custom.js) — display:table-cell
+   hérité produirait une boîte incohérente ici ; ramené à un simple bloc. */
+.ucAdjBlockHead td { display: block; }
+
+.ucAdjBlockBody {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 3%;
+    padding: 3% 4%;
+}
+
+.ucAdjValueGroup {
+    display: inline-flex;
+    align-items: center;
+    gap: 3vw;
+    flex: 0 0 auto;
+}
+/* Même remarque que .ucAdjBlockHead td ci-dessus : iqama{X}Value /
+   athanMinutes{X}Value sont eux aussi des <td> core réutilisés ici. */
+.ucAdjValueGroup td {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 3ch;
+    font-size: 128%;
+    line-height: 1;
+    text-align: center;
+}
+/* Boutons +/- nettement agrandis (zoom, pas de nouvelles valeurs vw
+   dupliquées par orientation) par rapport à la taille ambiante de
+   .adjustButtonClass héritée de style1.css (déjà responsive paysage/portrait)
+   -- cible tactile plus confortable maintenant qu'une carte pleine largeur
+   par prière laisse largement la place. */
+.ucAdjValueGroup .adjustButtonClass {
+    zoom: 1.5;
+    border-radius: 8px;
+}
+
+.ucAdjFixedWrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 1.5vw;
+    flex: 0 0 auto;
+}
+.ucAdjFixedLabel {
+    font-size: 78%;
+    color: rgba(223, 205, 177, 0.65);
+    white-space: nowrap;
+}
+.ucAdjFixedWrap .fixedIqamaButtonClass {
+    width: auto;
+    padding: 2% 5%;
+}

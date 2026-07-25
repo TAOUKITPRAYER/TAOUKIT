@@ -8714,7 +8714,10 @@ input[type='checkbox']:checked::after {
 .ucLQBLabel {
     color: #e7d9b8;
     font-size: 4vmin;
-    text-align: right;
+    /* start (pas right) : suit le dir="rtl"/"ltr" posé par custom.js selon
+       la langue courante (cf. _installLogoQuickBar) -- right serait faux en
+       LTR (FR/EN/...). */
+    text-align: start;
 }
 .ucLQBIconCell { width: 12vmin; }
 .ucLQBIconInner {
@@ -8932,4 +8935,87 @@ input[type='checkbox']:checked::after {
     width: auto;
     padding: 1.5% 4%;
     font-size: 88%;
+}
+
+/* ── Suggestion de mosquée proche (_installMosqueProximityCheck) ─────────
+   Overlay léger appendé à <html>, SANS fond noir plein écran (contrairement
+   à #mapLocatorOverlay/#qiblaOverlay) : c'est une suggestion ambiante, pas
+   une action bloquante -- l'utilisateur doit pouvoir continuer à voir les
+   horaires derrière. Carte ancrée en bas de l'écran, façon bottom-sheet. */
+#ucMosqueProxOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 999999998;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0 3vw 3vh;
+    pointer-events: none;
+}
+#ucMosqueProxOverlay.ucMosqueProxHidden { display: none; }
+
+#ucMosqueProxCard {
+    width: min(480px, 100%);
+    background: #2b2720;
+    border: 1px solid #6a5530;
+    border-radius: 14px;
+    box-shadow: 0 12px 44px rgba(0, 0, 0, 0.88);
+    padding: 16px;
+    pointer-events: auto;
+    font-size: clamp(13px, 2vmin, 17px);
+}
+
+#ucMosqueProxTitle {
+    color: #f0d080;
+    font-weight: 600;
+    margin-bottom: 10px;
+    line-height: 1.35;
+}
+
+#ucMosqueProxList {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 32vh;
+    overflow-y: auto;
+    margin-bottom: 12px;
+}
+
+.ucMosqueProxRow {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 10px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.ucMosqueProxRow:active,
+.ucMosqueProxRow:hover {
+    background: rgba(240, 208, 128, 0.14);
+}
+.ucMosqueProxRowName {
+    color: #fff;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ucMosqueProxRowDist {
+    color: rgba(223, 205, 177, 0.75);
+    white-space: nowrap;
+    font-size: 0.9em;
+}
+
+#ucMosqueProxActions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+#ucMosqueProxActions .ucModalBtn {
+    min-width: 0;
+    padding: 7px 14px;
+    font-size: 0.88em;
 }

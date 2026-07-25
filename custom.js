@@ -11,6 +11,77 @@ if (typeof _L === 'undefined') {
     }
 }
 
+// Langue courante de l'UI, code majuscule (ex. 'AR'/'FR'/'EN'/'DE'/'TR'...) --
+// point d'entrée UNIQUE pour tout le fichier (remplace ~13 réimplémentations
+// locales quasi identiques qui existaient auparavant : _lang(), _newsLang(),
+// _tourLang(), var LANG, etc., chacune avec son propre repli différent quand
+// JS_DATA/ucLangNOW n'est pas encore prêt -- source de mixage de langues
+// incohérent d'un dialogue à l'autre). Repli 'EN' partout, y compris ici :
+// l'anglais est LA langue de repli de référence pour tout ce fichier (choix
+// explicite, cf. discussion 25/07/2026) -- que ce soit parce que JS_DATA
+// n'est pas encore initialisé (cas quasi jamais atteint en pratique, le
+// script s'exécute après settings-defaults.js) ou parce que la langue
+// choisie par l'utilisateur (parmi les 47 proposées, cf. index.html
+// #languageSelectionContainer) n'est couverte par aucun dictionnaire local.
+// Tout dictionnaire de traduction de ce fichier DOIT définir au minimum
+// AR/FR/EN (les 3 langues garanties couvertes) ; l'appel doit toujours
+// prendre la forme `T[_ucLang()] || T.EN`.
+function _ucLang() {
+    return (typeof JS_DATA !== 'undefined' && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'EN';
+}
+
+// Vrai pour les langues RTL parmi les 47 proposées (arabe, ourdou, persan,
+// kurde, pashto, dari). Point d'entrée unique, comme _ucLang() ci-dessus --
+// remplace les réimplémentations locales éparses de la même liste.
+function _ucIsRtl(lang) {
+    lang = lang || _ucLang();
+    return (lang === 'AR' || lang === 'UR' || lang === 'FA' || lang === 'KU' || lang === 'PS' || lang === 'AF');
+}
+
+// Distance orthodromique (Haversine) entre deux points GPS, en km. Point
+// d'entrée générique réutilisable partout dans ce fichier -- injectQiblaFeature
+// garde sa propre implémentation privée ciblée uniquement sur la Kaaba (pas
+// touchée, pas de risque de régression sur une fonctionnalité qui marche déjà),
+// mais tout nouveau besoin de distance entre deux points arbitraires (ex.
+// _installMosqueProximityCheck) doit passer par celle-ci.
+function _ucHaversineKm(lat1, lng1, lat2, lng2) {
+    var R = 6371;
+    var toRad = function (d) { return d * Math.PI / 180; };
+    var dLat = toRad(lat2 - lat1);
+    var dLng = toRad(lng2 - lng1);
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Traductions AR/FR/EN des titres des ~15 boîtes de dialogue de saisie
+// techniques (openInputDialogFunction, core) auparavant 100% arabe figé --
+// cf. audit langue 25/07/2026. Point d'entrée unique pour tout le fichier,
+// même esprit que _ucLang()/_ucIsRtl() ci-dessus.
+const L_DIALOGS = {
+    blinkingSeconds:        { AR: 'مدة الوميض قبل الأذان (بالثواني)', FR: "Durée du clignotement avant l'azan (en secondes)", EN: 'Blink duration before azan (in seconds)' },
+    takbirM0Delay:          { AR: 'تأخير التكبير بعد انتهاء صلاة المغرب (بالدقائق)', FR: 'Délai du takbir après la fin de la prière du Maghreb (en minutes)', EN: 'Takbir delay after Maghreb prayer ends (in minutes)' },
+    takbirM0Duration:       { AR: 'مدة التكبير — بعد الصلاة (بالدقائق، 0 = بلا حدود)', FR: 'Durée du takbir — après la prière (en minutes, 0 = illimité)', EN: 'Takbir duration — after prayer (in minutes, 0 = unlimited)' },
+    takbirM1Delay:          { AR: 'تقدم التكبير قبل أذان المغرب (بالدقائق)', FR: "Avance du takbir avant l'azan du Maghreb (en minutes)", EN: "Takbir lead time before Maghreb's azan (in minutes)" },
+    takbirM1Duration:       { AR: 'مدة التكبير — قبل الأذان (بالدقائق، 0 = بلا حدود)', FR: "Durée du takbir — avant l'azan (en minutes, 0 = illimité)", EN: 'Takbir duration — before azan (in minutes, 0 = unlimited)' },
+    iqamaZeroBlinkMinaret:  { AR: 'مدة وميض المِأذنة (ثواني)', FR: 'Durée du clignotement du minaret (secondes)', EN: 'Minaret blink duration (seconds)' },
+    iqamaZeroBlinkMihrab:   { AR: 'مدة وميض المحراب (ثواني)', FR: 'Durée du clignotement du mihrab (secondes)', EN: 'Mihrab blink duration (seconds)' },
+    stopQuranBeforeAzan:    { AR: 'التوقف قبل الأذان بـ (ثواني)', FR: "Arrêt avant l'azan dans (secondes)", EN: 'Stop before azan in (seconds)' },
+    quranServerUrl:         { AR: 'عنوان سيرفر القرآن', FR: 'Adresse du serveur Coran', EN: 'Quran server address' },
+    reciterName:            { AR: 'اسم القارئ', FR: 'Nom du récitateur', EN: 'Reciter name' },
+    reciterCatalogUrl:      { AR: 'رابط كتالوج القرّاء (JSON)', FR: 'Lien du catalogue des récitateurs (JSON)', EN: 'Reciters catalog link (JSON)' },
+    nmrInterval:            { AR: 'فترة التكرار (ثانية)', FR: 'Intervalle de répétition (secondes)', EN: 'Repeat interval (seconds)' },
+    nmrDuration:            { AR: 'مدة العرض (ثانية)', FR: "Durée d'affichage (secondes)", EN: 'Display duration (seconds)' },
+    hijriSyncUrl:           { AR: 'عنوان API التقويم الهجري', FR: "Adresse de l'API du calendrier hijri", EN: 'Hijri calendar API address' },
+    alertVoiceDelay:        { AR: 'الثانية من العدّ التنازلي (12 — 59)', FR: 'Seconde du compte à rebours (12 — 59)', EN: 'Countdown second (12 — 59)' },
+    boxServerUrl:           { AR: 'عنوان خادم الصندوق (مثال: 192.168.1.10:8080)', FR: 'Adresse serveur box (ex: 192.168.1.10:8080)', EN: 'Box server address (e.g. 192.168.1.10:8080)' }
+};
+function _dlgT(key) {
+    var row = L_DIALOGS[key];
+    if (!row) return key;
+    return row[_ucLang()] || row.EN;
+}
+
 // Registre global des audios "mutables au retournement du téléphone" (cf.
 // _installUniversalFlipToMute plus bas, tout en bas du fichier). Déclaré ICI,
 // tout en haut, car plusieurs IIFE plus bas (SalatNabi, alerte vocale iqama,
@@ -130,7 +201,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.79';
+var CUSTOM_APP_VERSION = '11.83';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -327,6 +398,24 @@ const JS_CUSTOM_DEFAULTS = {
     ucSilentAfterAzanMinutes:    60,  // minutes après l'azan où la sonnerie est remise (jauge 1-180)
     ucFlipToMuteAzan:            1,   // 1 = poser le téléphone écran contre la table coupe l'azan (capteur natif)
     ucAutoStartEnabled:          1,   // 1 = relance silencieuse au démarrage du téléphone (natif, cf. AutoStartPrefs) — sans effet sur boîtier Android TV
+    // ── Rappel hadith avant chaque salat (notification native, 10 min avant,
+    // cf. _installHadithReminder plus bas + HadithAlarmReceiver.kt) : un
+    // hadith authentique différent chaque jour par prière (rotation, cf.
+    // ucHadithIdx{PRAYER} ci-dessous), toujours en arabe.
+    ucHadithReminderEnabled:     0,
+    ucHadithIdxFAJR:             0,
+    ucHadithIdxDOHR:             0,
+    ucHadithIdxASSR:             0,
+    ucHadithIdxMGRB:             0,
+    ucHadithIdxISHA:             0,
+    ucHadithLastRotationDay:     -1,  // jour du mois (1-31) de la dernière rotation -- évite d'avancer 2x le même jour
+    // ── Suggestion de mosquée proche quand le GPS s'éloigne de la mosquée
+    // configurée (téléphone uniquement, cf. _installMosqueProximityCheck) :
+    // désactivée par défaut -- on ne veut jamais déclencher la demande de
+    // permission de localisation sans que l'utilisateur ait explicitement
+    // activé ce réglage (cf. discussion 25/07/2026).
+    ucMosqueProximityEnabled:    0,
+    ucMosqueProximitySnoozeUntil: 0,  // epoch ms -- pas de nouvelle proposition avant cette date ("Rester ici"/"Ne plus demander")
     ucMosqueConfigVersion:       '',  // version de la config APK déjà appliquée (comparée à MOSQUE_CONFIG.VERSION)
     ucReciters: [
         {enabled:1, name:'عبد الباسط عبد الصمد', dir:'C1',  format:'mp3' },   // ABDULBASIT
@@ -390,7 +479,7 @@ function _localizedReciterName(nameVal, fallbackId) {
     if (!nameVal) return fallbackId;
     if (typeof nameVal === 'string') return nameVal || fallbackId;
     if (typeof nameVal === 'object') {
-        var lang = (JS_DATA && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR';
+        var lang = _ucLang();
         if (nameVal[lang]) return nameVal[lang];
         if (nameVal.AR) return nameVal.AR;
         if (nameVal.FR) return nameVal.FR;
@@ -1726,6 +1815,48 @@ const _lightProgramConfig = [
     { key: 'rollerOpen',   trigger: 'beforeIqama',   title: 'فتح الستارة',             enabledSetting: 'ucLightRollerOpenEnabled',  pairEnabledSetting: 'ucLightRollerCloseEnabled', urlSetting: 'ucLightRollerOpenUrl',  delaySetting: 'ucLightRollerOpenDelay',  delayDefault: 60, delayTitle: 'فتح الستارة قبل الإقامة بـ (ثواني)' },
     { key: 'rollerClose',  trigger: 'afterBlackHide',title: 'إغلاق الستارة',           enabledSetting: 'ucLightRollerCloseEnabled', pairEnabledSetting: 'ucLightRollerOpenEnabled', urlSetting: 'ucLightRollerCloseUrl', delaySetting: 'ucLightRollerCloseDelay', delayDefault: 10, delayTitle: 'إغلاق الستارة بعد نهاية الصلاة بـ (ثواني)' }
 ];
+
+// Traductions AR/FR/EN des titres de dialogues d'édition ci-dessus (title/
+// delayTitle/jomaDelayTitle utilisés par openInputDialogFunction, cf.
+// editLightProgrammingUrlFunction/editLightProgrammingDelayFunction/
+// editLightProgrammingJomaDelayFunction plus bas) -- auparavant 100% arabe
+// figé (les champs title/delayTitle/jomaDelayTitle de _lightProgramConfig
+// ci-dessus restent en arabe, servent de repli), cf. audit langue 25/07/2026.
+const L_LIGHT_TITLES = {
+    ampliIntOn:  { title: { FR: 'Activer le haut-parleur imam', EN: 'Turn on the imam speaker' },
+                   delayTitle: { FR: "Activer le haut-parleur imam X secondes avant l'iqama", EN: 'Turn on the imam speaker X seconds before iqama' } },
+    ampliIntOff: { title: { FR: 'Éteindre le haut-parleur imam', EN: 'Turn off the imam speaker' },
+                   delayTitle: { FR: "Délai d'extinction du haut-parleur imam après la prière (secondes)", EN: 'Delay before turning off the imam speaker after prayer (seconds)' } },
+    ampliExtOn:  { title: { FR: 'Activer le haut-parleur azan', EN: 'Turn on the azan speaker' },
+                   delayTitle: { FR: "Délai d'activation du haut-parleur azan (secondes)", EN: 'Delay before turning on the azan speaker (seconds)' } },
+    ampliExtOff: { title: { FR: 'Éteindre le haut-parleur azan', EN: 'Turn off the azan speaker' },
+                   delayTitle: { FR: "Délai d'extinction du haut-parleur azan après l'azan (secondes)", EN: 'Delay before turning off the azan speaker after azan (seconds)' },
+                   jomaDelayTitle: { FR: "Délai d'extinction du haut-parleur azan après l'azan du vendredi (secondes)", EN: 'Delay before turning off the azan speaker after Friday azan (seconds)' } },
+    minaretOn:   { title: { FR: "Allumer le minaret (après l'azan du Maghreb)", EN: 'Turn on the minaret light (after Maghreb azan)' },
+                   delayTitle: { FR: "Allumer le minaret X secondes après l'azan du Maghreb", EN: 'Turn on the minaret light X seconds after Maghreb azan' } },
+    minaretOff:  { title: { FR: "Éteindre le minaret (après l'azan du Fajr)", EN: 'Turn off the minaret light (after Fajr azan)' },
+                   delayTitle: { FR: "Éteindre le minaret X secondes après l'azan du Fajr", EN: 'Turn off the minaret light X seconds after Fajr azan' } },
+    mihrabOn:    { title: { FR: 'Allumer le mihrab', EN: 'Turn on the mihrab light' },
+                   delayTitle: { FR: "Allumer le mihrab X secondes après la fenêtre de l'azan", EN: 'Turn on the mihrab light X seconds after the azan window' } },
+    mihrabOff:   { title: { FR: 'Éteindre le mihrab', EN: 'Turn off the mihrab light' },
+                   delayTitle: { FR: 'Éteindre le mihrab X secondes après la fermeture du rideau noir', EN: 'Turn off the mihrab light X seconds after the black screen closes' } },
+    rollerOpen:  { title: { FR: 'Ouvrir le rideau', EN: 'Open the curtain' },
+                   delayTitle: { FR: "Ouvrir le rideau X secondes avant l'iqama", EN: 'Open the curtain X seconds before iqama' } },
+    rollerClose: { title: { FR: 'Fermer le rideau', EN: 'Close the curtain' },
+                   delayTitle: { FR: 'Fermer le rideau après la fin de la prière (secondes)', EN: 'Close the curtain after prayer ends (seconds)' } }
+};
+function _lightT(item, field) {
+    var entry = L_LIGHT_TITLES[item.key];
+    var row = entry && entry[field];
+    // item[field] (ex. item.title) est l'original ARABE de _lightProgramConfig
+    // ci-dessus -- pas de clé AR séparée dans L_LIGHT_TITLES (répéterait ce
+    // même texte). Prioritaire pour AR ; sert aussi de dernier repli.
+    var fallback = item[field] || '';
+    var lang = _ucLang();
+    if (lang === 'AR' || !row) return fallback;
+    return row[lang] || row.EN || fallback;
+}
+
 let _lightEditKey = 'ampliIntOn';
 let _lightDelayEditKey = 'ampliIntOn';
 let _lightJomaDelayEditKey = 'ampliExtOff';
@@ -3158,7 +3289,7 @@ function editBlinkingSecondsFunction() {
     if (!isInputDialogOpen) {
         inputDialogValue  = "";
         isInputDialogOpen = false;
-        openInputDialogFunction('مدة الوميض قبل الأذان (بالثواني)', JS_CUSTOM.ucStartPrayerBlinking, 'editBlinkingSecondsFunction()', true);
+        openInputDialogFunction(_dlgT('blinkingSeconds'), JS_CUSTOM.ucStartPrayerBlinking, 'editBlinkingSecondsFunction()', true);
         return;
     }
     let val = parseInt(inputDialogValue);
@@ -3211,7 +3342,7 @@ function editTakbirM0DelayFunction() {
     if (!isInputDialogOpen) {
         inputDialogValue  = '';
         isInputDialogOpen = false;
-        openInputDialogFunction('تأخير التكبير بعد انتهاء صلاة المغرب (بالدقائق)', _getTakbirDelayMinutes(0), 'editTakbirM0DelayFunction()', true);
+        openInputDialogFunction(_dlgT('takbirM0Delay'), _getTakbirDelayMinutes(0), 'editTakbirM0DelayFunction()', true);
         return;
     }
     var minutes = parseInt(inputDialogValue, 10);
@@ -3225,7 +3356,7 @@ function editTakbirM0DurationFunction() {
     if (!isInputDialogOpen) {
         inputDialogValue  = '';
         isInputDialogOpen = false;
-        openInputDialogFunction('مدة التكبير — بعد الصلاة (بالدقائق، 0 = بلا حدود)', _getTakbirDurationMinutes(0), 'editTakbirM0DurationFunction()', true);
+        openInputDialogFunction(_dlgT('takbirM0Duration'), _getTakbirDurationMinutes(0), 'editTakbirM0DurationFunction()', true);
         return;
     }
     var minutes = parseInt(inputDialogValue, 10);
@@ -3245,7 +3376,7 @@ function editTakbirM1DelayFunction() {
     if (!isInputDialogOpen) {
         inputDialogValue  = '';
         isInputDialogOpen = false;
-        openInputDialogFunction('تقدم التكبير قبل أذان المغرب (بالدقائق)', _getTakbirDelayMinutes(1), 'editTakbirM1DelayFunction()', true);
+        openInputDialogFunction(_dlgT('takbirM1Delay'), _getTakbirDelayMinutes(1), 'editTakbirM1DelayFunction()', true);
         return;
     }
     var minutes = parseInt(inputDialogValue, 10);
@@ -3259,7 +3390,7 @@ function editTakbirM1DurationFunction() {
     if (!isInputDialogOpen) {
         inputDialogValue  = '';
         isInputDialogOpen = false;
-        openInputDialogFunction('مدة التكبير — قبل الأذان (بالدقائق، 0 = بلا حدود)', _getTakbirDurationMinutes(1), 'editTakbirM1DurationFunction()', true);
+        openInputDialogFunction(_dlgT('takbirM1Duration'), _getTakbirDurationMinutes(1), 'editTakbirM1DurationFunction()', true);
         return;
     }
     var minutes = parseInt(inputDialogValue, 10);
@@ -3315,8 +3446,8 @@ function editIqamaZeroBlinkDurFunction(target) {
             ? JS_CUSTOM.ucIqamaZeroMinaretBlinkDuration
             : JS_CUSTOM.ucIqamaZeroMihrabBlinkDuration;
         const lbl = (_iqamaZeroBlinkDurEditTarget === 'minaret')
-            ? 'مدة وميض المِأذنة (ثواني)'
-            : 'مدة وميض المحراب (ثواني)';
+            ? _dlgT('iqamaZeroBlinkMinaret')
+            : _dlgT('iqamaZeroBlinkMihrab');
         inputDialogValue  = '';
         isInputDialogOpen = false;
         openInputDialogFunction(lbl, cur, "editIqamaZeroBlinkDurFunction('" + _iqamaZeroBlinkDurEditTarget + "')", true);
@@ -3354,7 +3485,7 @@ function editStopQuranBeforeAzanDelayFunction() {
     if (!isInputDialogOpen) {
         inputDialogValue  = '';
         isInputDialogOpen = false;
-        openInputDialogFunction('التوقف قبل الأذان بـ (ثواني)', JS_CUSTOM.ucStopQuranBeforeAzanDelay, 'editStopQuranBeforeAzanDelayFunction()', true);
+        openInputDialogFunction(_dlgT('stopQuranBeforeAzan'), JS_CUSTOM.ucStopQuranBeforeAzanDelay, 'editStopQuranBeforeAzanDelayFunction()', true);
         return;
     }
     let val = parseInt(inputDialogValue);
@@ -3641,7 +3772,7 @@ function editLightProgrammingUrlFunction(itemKey) {
         if (!item) return;
         _lightEditKey = itemKey;
         inputDialogValue = '';
-        openInputDialogFunction(item.title, JS_CUSTOM[item.urlSetting] || '', "editLightProgrammingUrlFunction()", true);
+        openInputDialogFunction(_lightT(item, 'title'), JS_CUSTOM[item.urlSetting] || '', "editLightProgrammingUrlFunction()", true);
         return;
     }
 
@@ -3660,7 +3791,7 @@ function editLightProgrammingDelayFunction(itemKey) {
         if (!item || !item.delaySetting) return;
         _lightDelayEditKey = itemKey;
         inputDialogValue = '';
-        openInputDialogFunction(item.delayTitle || 'Delay (s)', JS_CUSTOM[item.delaySetting] || item.delayDefault || 0, "editLightProgrammingDelayFunction()", true);
+        openInputDialogFunction(_lightT(item, 'delayTitle'), JS_CUSTOM[item.delaySetting] || item.delayDefault || 0, "editLightProgrammingDelayFunction()", true);
         return;
     }
 
@@ -3680,7 +3811,7 @@ function editLightProgrammingJomaDelayFunction(itemKey) {
         if (!item || !item.jomaDelaySetting) return;
         _lightJomaDelayEditKey = itemKey;
         inputDialogValue = '';
-        openInputDialogFunction(item.jomaDelayTitle || 'Délai Jum\'uah (s)', JS_CUSTOM[item.jomaDelaySetting] || item.jomaDelayDefault || 0, "editLightProgrammingJomaDelayFunction()", true);
+        openInputDialogFunction(_lightT(item, 'jomaDelayTitle'), JS_CUSTOM[item.jomaDelaySetting] || item.jomaDelayDefault || 0, "editLightProgrammingJomaDelayFunction()", true);
         return;
     }
 
@@ -3853,7 +3984,7 @@ function editQuranServerUrlFunction() {
     if (!isInputDialogOpen) {
         inputDialogValue  = "";
         isInputDialogOpen = false;
-        openInputDialogFunction('عنوان سيرفر القرآن', JS_CUSTOM.ucQuranServerUrl, 'editQuranServerUrlFunction()', true);
+        openInputDialogFunction(_dlgT('quranServerUrl'), JS_CUSTOM.ucQuranServerUrl, 'editQuranServerUrlFunction()', true);
         return;
     }
     const val = inputDialogValue.trim();
@@ -3872,7 +4003,7 @@ function editReciterNameFunction(i) {
     if (!isInputDialogOpen) {
         inputDialogValue  = "";
         isInputDialogOpen = false;
-        openInputDialogFunction('اسم القارئ ' + (i + 1), JS_CUSTOM.ucReciters[i].name, 'editReciterNameFunction(' + i + ')', true);
+        openInputDialogFunction(_dlgT('reciterName') + ' ' + (i + 1), JS_CUSTOM.ucReciters[i].name, 'editReciterNameFunction(' + i + ')', true);
         return;
     }
     JS_CUSTOM.ucReciters[i].name = inputDialogValue.trim();
@@ -3928,7 +4059,7 @@ function editReciterCatalogUrlFunction() {
     if (!isInputDialogOpen) {
         inputDialogValue  = "";
         isInputDialogOpen = false;
-        openInputDialogFunction('رابط كتالوج القرّاء (JSON)', JS_CUSTOM.ucReciterCatalogUrl || UC_RECITER_CATALOG_DEFAULT_URL, 'editReciterCatalogUrlFunction()', true);
+        openInputDialogFunction(_dlgT('reciterCatalogUrl'), JS_CUSTOM.ucReciterCatalogUrl || UC_RECITER_CATALOG_DEFAULT_URL, 'editReciterCatalogUrlFunction()', true);
         return;
     }
     const val = inputDialogValue.trim();
@@ -8387,13 +8518,35 @@ function _doAudioUnlock() {
     var _startTime = -1;   // Date.now() au démarrage du compteur
     var _startRem  = -1;   // remainingSeconds au démarrage
 
+    // BUG (rapport debug #26, mosquée Ennour Ksibet, 25/07/2026) : _startTime/
+    // _startRem ne sont réinitialisés qu'à la fin NATURELLE du compteur
+    // (UC_EVT.IQAMA_TIME), jamais quand _ucResyncPrayerSequence redémarre le
+    // compteur en cours de cycle (retour au premier plan). Après une mise en
+    // arrière-plan prolongée qui englobe l'heure réelle de l'iqama, le premier
+    // tick au réveil calcule encore l'écart par rapport à la référence
+    // D'ORIGINE (avant la pause) au lieu du dernier redémarrage -- l'écart
+    // devient énorme, la correction écrase remainingSeconds à ~1, et le tick
+    // suivant déclenche startIqamaSequenceFunction() comme si l'iqama sonnait
+    // à l'instant, alors que son horaire réel est passé depuis longtemps
+    // (constaté : "texte_iqama" rejoué à l'ouverture de l'app après la prière).
+    // Un Date.now() ne doit jamais servir de référence à travers une pause de
+    // durée inconnue -- on détecte donc tout passage en arrière-plan depuis le
+    // dernier tick et on réamorce la référence au lieu de "corriger" dessus.
+    var _wasHiddenSinceLastTick = false;
+    document.addEventListener('visibilitychange', function () {
+        if (document.hidden) _wasHiddenSinceLastTick = true;
+    });
+
     ucOn(UC_EVT.COUNTDOWN_TICK, function(e) {
         var rem = e.remainingSeconds;
 
-        // Premier tick : mémoriser l’état de départ
-        if (_startTime === -1) {
+        // Premier tick, ou reprise après une mise en arrière-plan : la
+        // référence précédente ne dit plus rien de fiable -- on réamorce
+        // sans appliquer de correction sur ce tick.
+        if (_startTime === -1 || _wasHiddenSinceLastTick) {
             _startTime = Date.now();
             _startRem  = rem;
+            _wasHiddenSinceLastTick = false;
             return;
         }
 
@@ -8417,6 +8570,7 @@ function _doAudioUnlock() {
     ucOn(UC_EVT.IQAMA_TIME, function() {
         _startTime = -1;
         _startRem  = -1;
+        _wasHiddenSinceLastTick = false;
     });
 
 })();
@@ -8757,7 +8911,7 @@ function _doAudioUnlock() {
     window.editNMRIntervalFunction = function () {
         if (!isInputDialogOpen) {
             inputDialogValue = '';
-            openInputDialogFunction('فترة التكرار (ثانية)', String(JS_CUSTOM.ucNMRInterval || 120), 'editNMRIntervalFunction()', true);
+            openInputDialogFunction(_dlgT('nmrInterval'), String(JS_CUSTOM.ucNMRInterval || 120), 'editNMRIntervalFunction()', true);
             return;
         }
         var n = parseInt(inputDialogValue, 10);
@@ -8772,7 +8926,7 @@ function _doAudioUnlock() {
     window.editNMRDurationFunction = function () {
         if (!isInputDialogOpen) {
             inputDialogValue = '';
-            openInputDialogFunction('مدة العرض (ثانية)', String(JS_CUSTOM.ucNMRDuration || 5), 'editNMRDurationFunction()', true);
+            openInputDialogFunction(_dlgT('nmrDuration'), String(JS_CUSTOM.ucNMRDuration || 5), 'editNMRDurationFunction()', true);
             return;
         }
         var n = parseInt(inputDialogValue, 10);
@@ -8887,7 +9041,7 @@ function _doAudioUnlock() {
 // ─────────────────────────────────────────────────────────────────────────────
 (function _initSwapAzanIqama() {
 
-    var lang = (typeof JS_DATA !== 'undefined' && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR';
+    var lang = _ucLang();
     var T = {
         label: {
             AR: 'تبديل مكاني توقيت الأذان والإقامة',
@@ -10153,7 +10307,7 @@ function editHijriSyncUrlFunction() {
     if (!isInputDialogOpen) {
         inputDialogValue  = '';
         isInputDialogOpen = false;
-        openInputDialogFunction('عنوان API التقويم الهجري', JS_CUSTOM.ucHijriSyncUrl, 'editHijriSyncUrlFunction()', true);
+        openInputDialogFunction(_dlgT('hijriSyncUrl'), JS_CUSTOM.ucHijriSyncUrl, 'editHijriSyncUrlFunction()', true);
         return;
     }
     const val = String(inputDialogValue || '').trim();
@@ -10429,10 +10583,12 @@ function forceHijriSyncFunction() {
         }).then(function(r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             _reset('✓ تم الإرسال');
-            if (window._ucToast) window._ucToast('Rapport envoyé', 'ok');
+            var _L_SENT = { AR: 'تم إرسال التقرير', FR: 'Rapport envoyé', EN: 'Report sent' };
+            if (window._ucToast) window._ucToast(_L_SENT[_ucLang()] || _L_SENT.EN, 'ok');
         }).catch(function(err) {
             _reset('✗ فشل الإرسال');
-            if (window._ucToast) window._ucToast('Échec envoi rapport', 'err');
+            var _L_FAILED = { AR: 'فشل إرسال التقرير', FR: 'Échec envoi rapport', EN: 'Report send failed' };
+            if (window._ucToast) window._ucToast(_L_FAILED[_ucLang()] || _L_FAILED.EN, 'err');
             console.error('[DIAG] send report failed', err.message || String(err));
         });
     }
@@ -10456,7 +10612,8 @@ function forceHijriSyncFunction() {
             if (window.AndroidMobile && typeof window.AndroidMobile.clearNativeEventLog === 'function') {
                 window.AndroidMobile.clearNativeEventLog();
                 console.log('[AZAN] historique natif efface (nouveau depart)');
-                if (window._ucToast) window._ucToast('Historique natif effacé', 'ok');
+                var _L_CLEARED = { AR: 'تم مسح السجل الأصلي', FR: 'Historique natif effacé', EN: 'Native history cleared' };
+                if (window._ucToast) window._ucToast(_L_CLEARED[_ucLang()] || _L_CLEARED.EN, 'ok');
             }
         });
     }
@@ -13045,6 +13202,20 @@ function selectQPTakbir() {
 // ═══════════════════════════════════════════════════════════════════════════
 (function _installMosqueSelector() {
 
+    // Traductions AR/FR/EN (auparavant mélange arabe/français figé selon
+    // l'endroit -- cf. audit langue 25/07/2026).
+    var L_MOSEL = {
+        selectMosque:  { AR: 'إختيار المسجد', FR: 'Choisir la mosquée', EN: 'Choose mosque' },
+        serviceUnavail:{ AR: 'الخدمة غير متوفرة', FR: 'Service indisponible', EN: 'Service unavailable' },
+        loading:       { AR: 'جارٍ التحميل...', FR: 'Chargement...', EN: 'Loading...' },
+        mosqueNotFound:{ AR: 'تعذر العثور على المسجد', FR: 'Mosquée introuvable', EN: 'Mosque not found' }
+    };
+    function _msT(key) {
+        var row = L_MOSEL[key];
+        if (!row) return key;
+        return row[_ucLang()] || row.EN;
+    }
+
     var _modal       = null;
     var _searchInput = null;
     var _list        = null;
@@ -13260,7 +13431,7 @@ function selectQPTakbir() {
         if (!btn) return;
         // Libellé fixe (action "choisir la mosquée"), quel que soit l'état —
         // ne reflète plus le nom de la mosquée actuellement sélectionnée.
-        btn.textContent = 'إختيار المسجد';
+        btn.textContent = _msT('selectMosque');
     }
 
     // ── API publique ──────────────────────────────────────────────────────
@@ -13292,13 +13463,13 @@ function selectQPTakbir() {
         }
         if (isRemote || !reg[id]) {
             if (typeof window._ucPullRemoteBackup !== 'function' || typeof window._ucRestoreFromJson !== 'function') {
-                alert('Service indisponible');
+                alert(_msT('serviceUnavail'));
                 return;
             }
-            window._ucToast && window._ucToast('جارٍ التحميل...', 'ok');
+            window._ucToast && window._ucToast(_msT('loading'), 'ok');
             window._ucPullRemoteBackup(id, function(json) {
                 if (json) window._ucRestoreFromJson(json, true);
-                else window._ucToast && window._ucToast('تعذر العثور على المسجد', 'err');
+                else window._ucToast && window._ucToast(_msT('mosqueNotFound'), 'err');
             });
             return;
         }
@@ -13811,11 +13982,11 @@ function selectQPTakbir() {
     var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
                || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
 
-    function _newsLang() { return (JS_DATA && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR'; }
+    function _newsLang() { return _ucLang(); }
 
     function _newsTitleLabel() {
         var L = { AR:'آخر الإشعارات', FR:'Dernières notifications', EN:'Latest notifications', TR:'Son bildirimler', ID:'Notifikasi terbaru' };
-        return L[_newsLang()] || L.FR;
+        return L[_newsLang()] || L.EN;
     }
 
     function _newsTypeLabel(type) {
@@ -13825,12 +13996,12 @@ function selectQPTakbir() {
             janaza:   { AR:'جنازة',         FR:'Janaza',                  EN:'Janaza',           TR:'Cenaze',               ID:'Janazah' }
         };
         var row = L[type] || L.message;
-        return row[_newsLang()] || row.FR;
+        return row[_newsLang()] || row.EN;
     }
 
     function _newsEmptyLabel() {
         var L = { AR:'لا توجد إشعارات', FR:'Aucune notification', EN:'No notifications', TR:'Bildirim yok', ID:'Tidak ada notifikasi' };
-        return L[_newsLang()] || L.FR;
+        return L[_newsLang()] || L.EN;
     }
 
     function _newsFmtTs(iso) {
@@ -13943,7 +14114,7 @@ function selectQPTakbir() {
             TR: ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'],
             ID: ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']
         };
-        return L[_newsLang()] || L.FR;
+        return L[_newsLang()] || L.EN;
     }
 
     function _calMonthLabel(date) {
@@ -13996,7 +14167,7 @@ function selectQPTakbir() {
 
     function _calTimesTitleLabel(date) {
         var L = { AR:'مواقيت الصلاة', FR:'Horaires de prière', EN:'Prayer times', TR:'Namaz vakitleri', ID:'Waktu shalat' };
-        var prefix = L[_newsLang()] || L.FR;
+        var prefix = L[_newsLang()] || L.EN;
         var monthNames = _calMonthNames();
         var dateStr = _calWeekDayFullName(date) + ' ' + date.getDate() + ' '
                     + (monthNames[date.getMonth()] || '') + ' ' + date.getFullYear();
@@ -14354,11 +14525,11 @@ function selectQPTakbir() {
 
     function _calHolidaysTitleLabel() {
         var L = { AR: 'الأعياد والمناسبات', FR: 'Fêtes du mois', EN: 'Holidays this month', TR: 'Bu ayki bayramlar', ID: 'Hari raya bulan ini' };
-        return L[_newsLang()] || L.FR;
+        return L[_newsLang()] || L.EN;
     }
     function _calHolidaysEmptyLabel() {
         var L = { AR: 'لا توجد أعياد هذا الشهر', FR: 'Aucune fête ce mois-ci', EN: 'No holidays this month', TR: 'Bu ay bayram yok', ID: 'Tidak ada hari raya bulan ini' };
-        return L[_newsLang()] || L.FR;
+        return L[_newsLang()] || L.EN;
     }
     // Sous-liste distincte (cf. choix utilisateur) : ces dates ne sont PAS
     // des jours fériés officiels tunisiens, juste des repères historiques/
@@ -14366,7 +14537,7 @@ function selectQPTakbir() {
     // que ce sont des jours chômés.
     function _calNotableTitleLabel() {
         var L = { AR: 'مناسبات إسلامية بارزة', FR: 'Dates notables', EN: 'Notable Islamic dates', TR: 'Önemli İslami tarihler', ID: 'Tanggal penting Islam' };
-        return L[_newsLang()] || L.FR;
+        return L[_newsLang()] || L.EN;
     }
 
     // ── Rendu du bloc "Fêtes du mois" sous #ucCalTimesSection ─────────────
@@ -14410,7 +14581,7 @@ function selectQPTakbir() {
         }
 
         items.forEach(function(item) {
-            var lbl = item.h.labels[lang] || item.h.labels.FR;
+            var lbl = item.h.labels[lang] || item.h.labels.EN;
             var row = document.createElement('div');
             row.className = 'ucCalHolidayItem ' + (item.h.type === 'civil' ? 'ucCalHolidayCivil' : 'ucCalHolidayReligious');
 
@@ -14476,7 +14647,7 @@ function selectQPTakbir() {
         titleEl.textContent = _calNotableTitleLabel();
 
         items.forEach(function(item) {
-            var lbl = item.h.labels[lang] || item.h.labels.FR;
+            var lbl = item.h.labels[lang] || item.h.labels.EN;
             var row = document.createElement('div');
             row.className = 'ucCalHolidayItem ucCalHolidayNotable';
 
@@ -14704,7 +14875,7 @@ function selectQPTakbir() {
             var L = { AR:'الأوقات غير متوفرة', FR:'Horaires indisponibles', EN:'Times unavailable', TR:'Saatler mevcut değil', ID:'Waktu tidak tersedia' };
             var empty = document.createElement('div');
             empty.className = 'ucCalTimesUnavailable';
-            empty.textContent = L[_newsLang()] || L.FR;
+            empty.textContent = L[_newsLang()] || L.EN;
             gridEl.appendChild(empty);
             return;
         }
@@ -14854,7 +15025,7 @@ function selectQPTakbir() {
                   janaza:'Salat jenazah', kottab:'Sekolah Quran', parking:'Parkir',
                   openInApp:'Buka masjid ini di aplikasi' },
         };
-        return T[_newsLang()] || T.FR;
+        return T[_newsLang()] || T.EN;
     }
 
     // Lit une valeur déjà calculée/affichée par le moteur core (m2body.js)
@@ -15020,7 +15191,7 @@ function selectQPTakbir() {
         html += _buildPrayerTimesTableHtml();
         html += _buildJumuaChouroukTableHtml();
         html += _buildPrestationsTableHtml();
-        if (canEdit) html += '<div id="ucMosqueProfileEditBtn" class="clickableWhiteClass">✏️ تعديل معلومات المسجد</div>';
+        if (canEdit) html += '<div id="ucMosqueProfileEditBtn" class="clickableWhiteClass">✏️ ' + _mpeT('title') + '</div>';
         html += '</div>';
         return html;
     }
@@ -15165,6 +15336,37 @@ function selectQPTakbir() {
     }
 
     // ── Overlay d'édition ───────────────────────────────────────────────────
+    // Traductions AR/FR/EN (auparavant 100% arabe figé, aucune logique de
+    // langue -- cf. audit langue 25/07/2026). Réutilise _newsLang() (= _ucLang(),
+    // déjà défini plus haut dans cette même IIFE) pour rester cohérent avec le
+    // reste de _installMosqueInfoModal.
+    var L_MPE = {
+        title:       { AR: 'تعديل معلومات المسجد', FR: 'Modifier les informations de la mosquée', EN: 'Edit mosque information' },
+        address:     { AR: 'العنوان', FR: 'Adresse', EN: 'Address' },
+        phone:       { AR: 'الهاتف', FR: 'Téléphone', EN: 'Phone' },
+        email:       { AR: 'البريد الإلكتروني', FR: 'E-mail', EN: 'Email' },
+        gpsLocation: { AR: 'الموقع الجغرافي (GPS)', FR: 'Position géographique (GPS)', EN: 'Geographic location (GPS)' },
+        latitude:    { AR: 'خط العرض', FR: 'Latitude', EN: 'Latitude' },
+        longitude:   { AR: 'خط الطول', FR: 'Longitude', EN: 'Longitude' },
+        useMyLocation: { AR: '📍 استخدام موقعي الحالي', FR: '📍 Utiliser ma position actuelle', EN: '📍 Use my current location' },
+        women:       { AR: 'مصلى مخصص للنساء', FR: 'Salle de prière réservée aux femmes', EN: 'Prayer area reserved for women' },
+        ablution:    { AR: 'دورة مياه/وضوء للنساء', FR: 'Toilettes/ablutions pour femmes', EN: 'Toilets/ablutions for women' },
+        janaza:      { AR: 'صلاة الجنازة', FR: 'Prière funéraire (Janaza)', EN: 'Funeral prayer (Janaza)' },
+        kottab:      { AR: 'كُتّاب (تعليم القرآن)', FR: "Kottab (école coranique)", EN: 'Kottab (Quran school)' },
+        parking:     { AR: 'موقف سيارات مخصص', FR: 'Parking dédié', EN: 'Dedicated parking' },
+        socialLink:  { AR: 'رابط (فيسبوك/موقع الويب...)', FR: 'Lien (Facebook/site web...)', EN: 'Link (Facebook/website...)' },
+        cancel:      { AR: 'إلغاء', FR: 'Annuler', EN: 'Cancel' },
+        save:        { AR: 'حفظ', FR: 'Enregistrer', EN: 'Save' },
+        gpsUnavail:  { AR: 'GPS غير متوفر', FR: 'GPS indisponible', EN: 'GPS unavailable' },
+        locateFailed:{ AR: 'تعذر تحديد الموقع', FR: 'Impossible de déterminer la position', EN: 'Could not determine the location' },
+        saved:       { AR: 'تم الحفظ', FR: 'Enregistré', EN: 'Saved' }
+    };
+    function _mpeT(key) {
+        var row = L_MPE[key];
+        if (!row) return key;
+        return row[_newsLang()] || row.EN;
+    }
+
     var _profileEditOv = null;
     function _buildMosqueProfileEditOverlay() {
         if (document.getElementById('ucMosqueProfileEditOverlay')) {
@@ -15175,30 +15377,30 @@ function selectQPTakbir() {
         ov.id = 'ucMosqueProfileEditOverlay';
         ov.innerHTML =
             '<div id="ucMosqueProfileEditBox">' +
-                '<p id="ucMosqueProfileEditTitle">تعديل معلومات المسجد</p>' +
-                '<label class="ucMPELabel">العنوان</label>' +
+                '<p id="ucMosqueProfileEditTitle">' + _mpeT('title') + '</p>' +
+                '<label class="ucMPELabel">' + _mpeT('address') + '</label>' +
                 '<input id="ucMPEAddress" type="text" class="ucMPEInput"/>' +
-                '<label class="ucMPELabel">الهاتف</label>' +
+                '<label class="ucMPELabel">' + _mpeT('phone') + '</label>' +
                 '<input id="ucMPEPhone" type="tel" class="ucMPEInput"/>' +
-                '<label class="ucMPELabel">البريد الإلكتروني</label>' +
+                '<label class="ucMPELabel">' + _mpeT('email') + '</label>' +
                 '<input id="ucMPEEmail" type="email" class="ucMPEInput" placeholder="example@mail.com"/>' +
-                '<label class="ucMPELabel">الموقع الجغرافي (GPS)</label>' +
+                '<label class="ucMPELabel">' + _mpeT('gpsLocation') + '</label>' +
                 '<div class="ucMPERow">' +
-                    '<input id="ucMPELat" type="number" step="any" placeholder="خط العرض" class="ucMPEInput ucMPEInputHalf"/>' +
-                    '<input id="ucMPELng" type="number" step="any" placeholder="خط الطول" class="ucMPEInput ucMPEInputHalf"/>' +
+                    '<input id="ucMPELat" type="number" step="any" placeholder="' + _mpeT('latitude') + '" class="ucMPEInput ucMPEInputHalf"/>' +
+                    '<input id="ucMPELng" type="number" step="any" placeholder="' + _mpeT('longitude') + '" class="ucMPEInput ucMPEInputHalf"/>' +
                 '</div>' +
-                '<div id="ucMPEGeoBtn" class="clickableWhiteClass">📍 استخدام موقعي الحالي</div>' +
+                '<div id="ucMPEGeoBtn" class="clickableWhiteClass">' + _mpeT('useMyLocation') + '</div>' +
                 '<p id="ucMPEGeoErr" class="ucMPEErr"></p>' +
-                '<label class="ucMPECheckRow"><input id="ucMPEWomen" type="checkbox"/> مصلى مخصص للنساء</label>' +
-                '<label class="ucMPECheckRow"><input id="ucMPEAblution" type="checkbox"/> دورة مياه/وضوء للنساء</label>' +
-                '<label class="ucMPECheckRow"><input id="ucMPEJanaza" type="checkbox"/> صلاة الجنازة</label>' +
-                '<label class="ucMPECheckRow"><input id="ucMPEKottab" type="checkbox"/> كُتّاب (تعليم القرآن)</label>' +
-                '<label class="ucMPECheckRow"><input id="ucMPEParking" type="checkbox"/> موقف سيارات مخصص</label>' +
-                '<label class="ucMPELabel">رابط (فيسبوك/موقع الويب...)</label>' +
+                '<label class="ucMPECheckRow"><input id="ucMPEWomen" type="checkbox"/> ' + _mpeT('women') + '</label>' +
+                '<label class="ucMPECheckRow"><input id="ucMPEAblution" type="checkbox"/> ' + _mpeT('ablution') + '</label>' +
+                '<label class="ucMPECheckRow"><input id="ucMPEJanaza" type="checkbox"/> ' + _mpeT('janaza') + '</label>' +
+                '<label class="ucMPECheckRow"><input id="ucMPEKottab" type="checkbox"/> ' + _mpeT('kottab') + '</label>' +
+                '<label class="ucMPECheckRow"><input id="ucMPEParking" type="checkbox"/> ' + _mpeT('parking') + '</label>' +
+                '<label class="ucMPELabel">' + _mpeT('socialLink') + '</label>' +
                 '<input id="ucMPESocial" type="url" class="ucMPEInput" placeholder="https://…"/>' +
                 '<div id="ucMosqueProfileEditFooter">' +
-                    '<span id="ucMPECancel" class="ucModalBtn ucModalBtn--secondary">إلغاء</span>' +
-                    '<span id="ucMPESave" class="ucModalBtn ucModalBtn--primary">حفظ</span>' +
+                    '<span id="ucMPECancel" class="ucModalBtn ucModalBtn--secondary">' + _mpeT('cancel') + '</span>' +
+                    '<span id="ucMPESave" class="ucModalBtn ucModalBtn--primary">' + _mpeT('save') + '</span>' +
                 '</div>' +
             '</div>';
         document.body.appendChild(ov);
@@ -15209,12 +15411,12 @@ function selectQPTakbir() {
         document.getElementById('ucMPEGeoBtn').addEventListener('click', function () {
             var errEl = document.getElementById('ucMPEGeoErr');
             errEl.textContent = '';
-            if (!navigator.geolocation) { errEl.textContent = 'GPS غير متوفر'; return; }
+            if (!navigator.geolocation) { errEl.textContent = _mpeT('gpsUnavail'); return; }
             navigator.geolocation.getCurrentPosition(function (pos) {
                 document.getElementById('ucMPELat').value = pos.coords.latitude.toFixed(6);
                 document.getElementById('ucMPELng').value = pos.coords.longitude.toFixed(6);
             }, function () {
-                errEl.textContent = 'تعذر تحديد الموقع';
+                errEl.textContent = _mpeT('locateFailed');
             });
         });
         document.getElementById('ucMPESave').addEventListener('click', function () {
@@ -15233,7 +15435,7 @@ function selectQPTakbir() {
             _autoPushProfileIfRealMosque();
             _closeMosqueProfileEdit();
             _refreshMosqueProfileBlock();
-            window._ucToast && window._ucToast('تم الحفظ', 'ok');
+            window._ucToast && window._ucToast(_mpeT('saved'), 'ok');
         });
     }
 
@@ -15309,6 +15511,21 @@ function selectQPTakbir() {
         .catch(function () { cb(null); });
     }
 
+    // Traductions AR/FR/EN (auparavant 100% arabe figé) -- réutilise _newsLang(),
+    // même remarque que L_MPE plus haut dans cette même IIFE.
+    var L_PHOTO = {
+        processing:   { AR: 'جارٍ المعالجة...', FR: 'Traitement en cours...', EN: 'Processing...' },
+        imageError:   { AR: 'خطأ في الصورة', FR: "Erreur d'image", EN: 'Image error' },
+        uploading:    { AR: 'جارٍ الرفع...', FR: 'Envoi en cours...', EN: 'Uploading...' },
+        uploadError:  { AR: 'خطأ في الرفع', FR: "Erreur d'envoi", EN: 'Upload error' },
+        imageUpdated: { AR: 'تم تحديث الصورة', FR: 'Image mise à jour', EN: 'Image updated' }
+    };
+    function _photoT(key) {
+        var row = L_PHOTO[key];
+        if (!row) return key;
+        return row[_newsLang()] || row.EN;
+    }
+
     var _mosquePhotoInput = null;
     function _openMosquePhotoPicker() {
         if (!_mosquePhotoInput) {
@@ -15322,12 +15539,12 @@ function selectQPTakbir() {
                 var f = e.target.files && e.target.files[0];
                 _mosquePhotoInput.value = '';
                 if (!f) return;
-                window._ucToast && window._ucToast('جارٍ المعالجة...', 'ok');
+                window._ucToast && window._ucToast(_photoT('processing'), 'ok');
                 _compressImageFile(f, 800, 0.8, function (blob) {
-                    if (!blob) { window._ucToast && window._ucToast('خطأ في الصورة', 'err'); return; }
-                    window._ucToast && window._ucToast('جارٍ الرفع...', 'ok');
+                    if (!blob) { window._ucToast && window._ucToast(_photoT('imageError'), 'err'); return; }
+                    window._ucToast && window._ucToast(_photoT('uploading'), 'ok');
                     _uploadMosquePhoto(blob, function (url) {
-                        if (!url) { window._ucToast && window._ucToast('خطأ في الرفع', 'err'); return; }
+                        if (!url) { window._ucToast && window._ucToast(_photoT('uploadError'), 'err'); return; }
                         JS_CUSTOM.ucMosqueImageUrl = url;
                         saveCustomSettingsFunction();
                         _autoPushProfileIfRealMosque();
@@ -15344,7 +15561,7 @@ function selectQPTakbir() {
                                 else imgWrap.insertBefore(img, imgWrap.firstChild);
                             }
                         }
-                        window._ucToast && window._ucToast('تم تحديث الصورة', 'ok');
+                        window._ucToast && window._ucToast(_photoT('imageUpdated'), 'ok');
                     });
                 });
             });
@@ -15627,6 +15844,32 @@ function selectQPTakbir() {
 // ═══════════════════════════════════════════════════════════════════════════
 (function _installSettingsModal() {
 
+    // Traductions AR/FR/EN (auparavant 100% arabe figé, aucune logique de
+    // langue -- cf. audit langue 25/07/2026). Pas besoin de rafraîchir sur
+    // réouverture : tout changement de langue déclenche un
+    // restartApplicationReload() côté core (changeLanguageFunction,
+    // m2body.js) -- custom.js se ré-exécute donc entièrement à chaque
+    // changement, ces valeurs lues une seule fois à la construction de la
+    // modale sont toujours à jour avec la langue courante.
+    var L_SETTINGS = {
+        title:           { AR: '&#128276; إعدادات الهاتف', FR: '&#128276; Réglages du téléphone', EN: '&#128276; Phone settings' },
+        alertBeforeAzan: { AR: 'تنبيه قبل أذان الصلاة القادمة', FR: "Alerte avant l'azan de la prochaine prière", EN: 'Alert before the next prayer’s azan' },
+        muteAfterAzan:   { AR: 'كتم صوت الهاتف بعد الأذان', FR: "Couper le son du téléphone après l'azan", EN: 'Mute phone sound after azan' },
+        restoreAfterAzan:{ AR: 'إعادة الصوت بعد الأذان بـ', FR: "Réactiver le son après l'azan dans", EN: 'Restore sound after azan in' },
+        flipToMute:      { AR: 'كتم الأصوات عند قلب الهاتف على وجهه', FR: 'Couper les sons en retournant le téléphone face contre table', EN: 'Mute sounds by flipping the phone face down' },
+        autoStart:       { AR: 'تشغيل تلقائي للبرنامج عند إعادة تشغيل الهاتف', FR: "Lancement automatique de l'application au redémarrage du téléphone", EN: 'Automatically launch the app when the phone restarts' },
+        autoStartVendor: { AR: 'فتح إعدادات التشغيل التلقائي للجهاز ←', FR: "Ouvrir les réglages de démarrage automatique de l'appareil ←", EN: "Open the device's auto-start settings ←" },
+        hadithReminder:  { AR: 'تنبيه بحديث نبوي قبل كل صلاة (10 د)', FR: 'Rappel avec un hadith avant chaque prière (10 min)', EN: 'Hadith reminder before each prayer (10 min)' },
+        mosqueProximity: { AR: 'اقتراح مسجد أقرب عند الابتعاد عن المسجد الحالي', FR: 'Suggérer une mosquée plus proche en cas d’éloignement', EN: 'Suggest a nearer mosque when far from the current one' },
+        minute:          { AR: 'دقيقة', FR: 'min', EN: 'min' }
+    };
+    function _stT(key) {
+        var row = L_SETTINGS[key];
+        if (!row) return key;
+        return row[_ucLang()] || row.EN;
+    }
+    function _stMinLabel(n) { return n + ' ' + _stT('minute'); }
+
     var _modal = null;
 
     function _buildModal() {
@@ -15638,7 +15881,7 @@ function selectQPTakbir() {
         modal.id = 'ucSettingsModal';
         modal.innerHTML =
             '<div id="ucSettingsModalHeader">' +
-                '<span id="ucSettingsModalTitle">&#128276; إعدادات الهاتف</span>' +
+                '<span id="ucSettingsModalTitle">' + _stT('title') + '</span>' +
                 '<span id="ucSettingsModalClose" onclick="window._ucCloseSettingsModal()">&#10006;</span>' +
             '</div>' +
             '<div id="ucSettingsModalBody">' +
@@ -15650,7 +15893,7 @@ function selectQPTakbir() {
                                 '<span class="ucSettingsToggleSlider"></span>' +
                             '</label>' +
                             '<div class="ucSettingsRowLabel">' +
-                                '<span class="ucSettingsRowTitle">تنبيه قبل أذان الصلاة القادمة</span>' +
+                                '<span class="ucSettingsRowTitle">' + _stT('alertBeforeAzan') + '</span>' +
                             '</div>' +
                         '</div>' +
                         '<div class="ucSettingsSliderValueRow">' +
@@ -15667,7 +15910,7 @@ function selectQPTakbir() {
                                 '<span class="ucSettingsToggleSlider"></span>' +
                             '</label>' +
                             '<div class="ucSettingsRowLabel">' +
-                                '<span class="ucSettingsRowTitle">كتم صوت الهاتف بعد الأذان</span>' +
+                                '<span class="ucSettingsRowTitle">' + _stT('muteAfterAzan') + '</span>' +
                             '</div>' +
                         '</div>' +
                         '<div class="ucSettingsSliderValueRow">' +
@@ -15680,7 +15923,7 @@ function selectQPTakbir() {
                         '</div>' +
                         '<div class="ucSettingsRow ucSettingsRowSub">' +
                             '<div class="ucSettingsRowLabel">' +
-                                '<span class="ucSettingsRowTitle">إعادة الصوت بعد الأذان بـ</span>' +
+                                '<span class="ucSettingsRowTitle">' + _stT('restoreAfterAzan') + '</span>' +
                             '</div>' +
                         '</div>' +
                         '<div class="ucSettingsSliderValueRow">' +
@@ -15697,7 +15940,25 @@ function selectQPTakbir() {
                                 '<span class="ucSettingsToggleSlider"></span>' +
                             '</label>' +
                             '<div class="ucSettingsRowLabel">' +
-                                '<span class="ucSettingsRowTitle">كتم الأصوات عند قلب الهاتف على وجهه</span>' +
+                                '<span class="ucSettingsRowTitle">' + _stT('flipToMute') + '</span>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="ucSettingsRow ucSettingsRowSep">' +
+                            '<label class="ucSettingsToggleWrap">' +
+                                '<input type="checkbox" id="ucHadithReminderToggle" onchange="window._ucToggleHadithReminder(this.checked)">' +
+                                '<span class="ucSettingsToggleSlider"></span>' +
+                            '</label>' +
+                            '<div class="ucSettingsRowLabel">' +
+                                '<span class="ucSettingsRowTitle">' + _stT('hadithReminder') + '</span>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="ucSettingsRow ucSettingsRowSep" id="ucMosqueProximityRow">' +
+                            '<label class="ucSettingsToggleWrap">' +
+                                '<input type="checkbox" id="ucMosqueProximityToggle" onchange="window._ucToggleMosqueProximity(this.checked)">' +
+                                '<span class="ucSettingsToggleSlider"></span>' +
+                            '</label>' +
+                            '<div class="ucSettingsRowLabel">' +
+                                '<span class="ucSettingsRowTitle">' + _stT('mosqueProximity') + '</span>' +
                             '</div>' +
                         '</div>' +
                         '<div class="ucSettingsRow ucSettingsRowSep" id="ucAutoStartRow">' +
@@ -15706,12 +15967,12 @@ function selectQPTakbir() {
                                 '<span class="ucSettingsToggleSlider"></span>' +
                             '</label>' +
                             '<div class="ucSettingsRowLabel">' +
-                                '<span class="ucSettingsRowTitle">تشغيل تلقائي للبرنامج عند إعادة تشغيل الهاتف</span>' +
+                                '<span class="ucSettingsRowTitle">' + _stT('autoStart') + '</span>' +
                             '</div>' +
                         '</div>' +
                         '<div class="ucSettingsRow ucSettingsRowSub" id="ucAutoStartVendorRow" style="display:none;">' +
                             '<div class="ucSettingsRowLabel">' +
-                                '<span class="ucSettingsRowTitle clickableWhiteClass" onclick="window._ucOpenAutoStartVendorSettings()">فتح إعدادات التشغيل التلقائي للجهاز ←</span>' +
+                                '<span class="ucSettingsRowTitle clickableWhiteClass" onclick="window._ucOpenAutoStartVendorSettings()">' + _stT('autoStartVendor') + '</span>' +
                             '</div>' +
                         '</div>' +
                     '</div>' +
@@ -15736,7 +15997,7 @@ function selectQPTakbir() {
         if (mins > 30) mins = 30;
         if (cb) cb.checked = enabled;
         if (sl) { sl.value = mins; sl.disabled = !enabled; }
-        if (val) val.textContent = mins + ' دقيقة';
+        if (val) val.textContent = _stMinLabel(mins);
     }
 
     window._ucToggleAzanAlert = function(checked) {
@@ -15754,7 +16015,7 @@ function selectQPTakbir() {
     // a chaque pixel parcouru, seulement l'affichage de la valeur courante.
     window._ucAzanAlertSliderInput = function(val) {
         var lbl = _modal ? _modal.querySelector('#ucAzanAlertValue') : null;
-        if (lbl) lbl.textContent = parseInt(val, 10) + ' دقيقة';
+        if (lbl) lbl.textContent = _stMinLabel(parseInt(val, 10));
     };
 
     // Persistance au relâchement du curseur (onchange), pas à chaque oninput.
@@ -15804,9 +16065,9 @@ function selectQPTakbir() {
         if (after > 180) after = 180;
         if (cb) cb.checked = enabled;
         if (sl) { sl.value = mins; sl.disabled = !enabled; }
-        if (val) val.textContent = mins + ' دقيقة';
+        if (val) val.textContent = _stMinLabel(mins);
         if (sl2) { sl2.value = after; sl2.disabled = !enabled; }
-        if (val2) val2.textContent = after + ' دقيقة';
+        if (val2) val2.textContent = _stMinLabel(after);
     }
 
     window._ucToggleQuickMuteAfterAzan = function(checked) {
@@ -15833,7 +16094,7 @@ function selectQPTakbir() {
 
     window._ucSilentAfterSliderInput = function(val) {
         var lbl = _modal ? _modal.querySelector('#ucSilentAfterValue') : null;
-        if (lbl) lbl.textContent = parseInt(val, 10) + ' دقيقة';
+        if (lbl) lbl.textContent = _stMinLabel(parseInt(val, 10));
     };
 
     window._ucSilentAfterSliderChange = function(val) {
@@ -15848,7 +16109,7 @@ function selectQPTakbir() {
 
     window._ucQuickMuteAfterSliderInput = function(val) {
         var lbl = _modal ? _modal.querySelector('#ucQuickMuteAfterValue') : null;
-        if (lbl) lbl.textContent = parseInt(val, 10) + ' دقيقة';
+        if (lbl) lbl.textContent = _stMinLabel(parseInt(val, 10));
     };
 
     window._ucQuickMuteAfterSliderChange = function(val) {
@@ -15901,6 +16162,47 @@ function selectQPTakbir() {
     if (window.AndroidMobile && typeof window.AndroidMobile.setFlipToMuteEnabled === 'function') {
         window.AndroidMobile.setFlipToMuteEnabled(JS_CUSTOM.ucFlipToMuteAzan == 1);
     }
+
+    // ── Rappel hadith avant chaque salat (toggle seul, pas de jauge) ────────
+    //  Lit/écrit JS_CUSTOM.ucHadithReminderEnabled ; planification réelle via
+    //  _installHadithReminder plus bas (window._ucRescheduleHadithReminder).
+    function _ucSyncHadithReminderUI() {
+        if (!_modal) return;
+        var cb = _modal.querySelector('#ucHadithReminderToggle');
+        if (cb) cb.checked = (JS_CUSTOM.ucHadithReminderEnabled == 1);
+    }
+
+    window._ucToggleHadithReminder = function(checked) {
+        JS_CUSTOM.ucHadithReminderEnabled = checked ? 1 : 0;
+        saveCustomSettingsFunction();
+        _ucSyncHadithReminderUI();
+        if (typeof window._ucRescheduleHadithReminder === 'function') window._ucRescheduleHadithReminder();
+        _L('CFG', 'SET', {ucHadithReminderEnabled: JS_CUSTOM.ucHadithReminderEnabled});
+    };
+
+    // ── Suggestion de mosquée proche (toggle seul) ──────────────────────────
+    //  Lit/écrit JS_CUSTOM.ucMosqueProximityEnabled ; masqué sur boîtier
+    //  Android TV (un écran mural ne se déplace jamais). Aucune permission
+    //  GPS demandée tant que ce toggle reste désactivé (cf.
+    //  _installMosqueProximityCheck plus bas).
+    function _ucSyncMosqueProximityUI() {
+        if (!_modal) return;
+        var cb  = _modal.querySelector('#ucMosqueProximityToggle');
+        if (cb) cb.checked = (JS_CUSTOM.ucMosqueProximityEnabled == 1);
+        var row = document.getElementById('ucMosqueProximityRow');
+        var isTv = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && window.AndroidMobile.isAndroidTv());
+        if (row) row.style.display = isTv ? 'none' : '';
+    }
+
+    window._ucToggleMosqueProximity = function(checked) {
+        JS_CUSTOM.ucMosqueProximityEnabled = checked ? 1 : 0;
+        JS_CUSTOM.ucMosqueProximitySnoozeUntil = 0;
+        saveCustomSettingsFunction();
+        _ucSyncMosqueProximityUI();
+        if (typeof window._ucRescheduleMosqueProximityCheck === 'function') window._ucRescheduleMosqueProximityCheck();
+        _L('CFG', 'SET', {ucMosqueProximityEnabled: JS_CUSTOM.ucMosqueProximityEnabled});
+    };
 
     // ── Démarrage automatique silencieux (téléphone) ────────────────────────
     //  Lit/écrit JS_CUSTOM.ucAutoStartEnabled, poussé vers le natif via
@@ -15960,6 +16262,8 @@ function selectQPTakbir() {
         _ucSyncAzanAlertUI();
         _ucSyncQuickMuteAfterUI();
         _ucSyncFlipToMuteUI();
+        _ucSyncHadithReminderUI();
+        _ucSyncMosqueProximityUI();
         _ucSyncAutoStartUI();
         window._ucSettingsModalSwitchTab('azan');
         if (_modal) _modal.classList.add('ucSettingsModalOpen');
@@ -16867,6 +17171,57 @@ function selectQPTakbir() {
 // ==========================================================================
 (function _installConfigBackup() {
 
+    // Traductions AR/FR/EN (auparavant mélange arabe/français figé selon
+    // l'endroit, un cas bilingue AR|FR concaténé dans la même chaîne -- cf.
+    // audit langue 25/07/2026).
+    var L_CFGBK = {
+        proposeNameRequired: { AR: 'يرجى تخصيص اسم المسجد (الإعدادات ← اسم المسجد) قبل اقتراحه كمسجد جديد.',
+                                FR: 'Veuillez personnaliser le nom de la mosquée (Réglages ← nom de la mosquée) avant de la proposer comme nouvelle mosquée.',
+                                EN: 'Please customize the mosque name (Settings ← mosque name) before proposing it as a new mosque.' },
+        proposeCooldown:     { AR: 'تم إرسال اقتراح مؤخرًا. يرجى الانتظار بضع دقائق قبل إعادة المحاولة.',
+                                FR: 'Une proposition a été envoyée récemment. Veuillez patienter quelques minutes avant de réessayer.',
+                                EN: 'A proposal was sent recently. Please wait a few minutes before trying again.' },
+        proposeConfirm:      { AR: 'اقتراح "{name}" كمسجد جديد؟ سيظهر للجميع بعد المراجعة.',
+                                FR: 'Proposer « {name} » comme nouvelle mosquée ? Elle sera visible par tous après validation.',
+                                EN: 'Propose "{name}" as a new mosque? It will be visible to everyone after review.' },
+        sending:             { AR: 'جارٍ الإرسال...', FR: 'Envoi en cours...', EN: 'Sending...' },
+        proposeSentOk:       { AR: 'تم الإرسال، بانتظار المراجعة', FR: 'Envoyé, en attente de validation', EN: 'Sent, pending review' },
+        sendError:           { AR: 'خطأ في الإرسال', FR: "Erreur d'envoi", EN: 'Send error' },
+        importPartialError:  { AR: 'خطأ جزئي أثناء الاستيراد: فشل {count} عنصر.', FR: "Erreur partielle lors de l'import : {count} clé(s) en échec.", EN: 'Partial import error: {count} key(s) failed.' },
+        importOk:            { AR: 'تم استيراد الإعدادات ✔', FR: 'Configuration importée ✔', EN: 'Configuration imported ✔' },
+        importError:         { AR: 'خطأ في الاستيراد: {msg}', FR: 'Erreur import : {msg}', EN: 'Import error: {msg}' },
+        deepLinkConfirm:      { AR: 'فتح هذا المسجد في التطبيق؟', FR: 'Ouvrir cette mosquée dans l\'application ?', EN: 'Open this mosque in the app?' },
+        exportConfigTitle:   { AR: 'تصدير الإعدادات', FR: 'Export config', EN: 'Export config' },
+        importConfigTitle:   { AR: 'استيراد الإعدادات', FR: 'Import config', EN: 'Import config' },
+        chooseDestination:   { AR: 'اختر الوجهة:', FR: 'Choisissez la destination :', EN: 'Choose the destination:' },
+        local:               { AR: '💾 محلي', FR: '💾 Local', EN: '💾 Local' },
+        remoteSupabase:      { AR: '☁ عن بعد (Supabase)', FR: '☁ Distant (Supabase)', EN: '☁ Remote (Supabase)' },
+        savedOk:             { AR: 'تم حفظ الإعدادات', FR: 'Configuration enregistrée', EN: 'Configuration saved' },
+        exportRemoteTitle:   { AR: 'تصدير عن بعد — اختر الوجهة', FR: 'Export distant — choisir la destination', EN: 'Remote export — choose the destination' },
+        importRemoteTitle:   { AR: 'استيراد عن بعد — اختر المسجد', FR: 'Import distant — choisir la mosquée', EN: 'Remote import — choose the mosque' },
+        loadingEllipsis:     { AR: 'جارٍ التحميل…', FR: 'Chargement…', EN: 'Loading…' },
+        defaultMosqueLabel:  { AR: 'الافتراضي (مسجد افتراضي)', FR: 'Par défaut (مسجد افتراضي)', EN: 'Default (مسجد افتراضي)' },
+        myCurrentMosque:     { AR: 'مسجدي الحالي', FR: 'Ma mosquée actuelle', EN: 'My current mosque' },
+        retrieving:          { AR: 'جارٍ الاسترجاع...', FR: 'Récupération...', EN: 'Retrieving...' },
+        configNotFound:      { AR: 'تعذر العثور على الإعدادات', FR: 'Configuration introuvable', EN: 'Configuration not found' },
+        importModalInstructions: { AR: 'الصق JSON النسخة الاحتياطية أدناه ثم اضغط على استيراد.', FR: 'Collez le JSON de sauvegarde ci-dessous puis appuyez sur Importer.', EN: 'Paste the backup JSON below then tap Import.' },
+        pasteFromClipboard:  { AR: 'لصق من الحافظة', FR: 'Coller depuis le presse-papiers', EN: 'Paste from clipboard' },
+        pasteTextareaPlaceholder: { AR: 'الصق محتوى JSON هنا...', FR: 'Collez ici le contenu JSON...', EN: 'Paste the JSON content here...' },
+        importBtn:           { AR: 'استيراد', FR: 'Importer', EN: 'Import' },
+        fileReadError:       { AR: 'خطأ في قراءة الملف', FR: 'Erreur lecture fichier', EN: 'File read error' },
+        longPressPaste:      { AR: 'اضغط مطولاً على منطقة النص واختر لصق.', FR: 'Appuyez longtemps sur la zone de texte et sélectionnez Coller.', EN: 'Long-press the text area and select Paste.' },
+        emptyTextarea:       { AR: 'منطقة النص فارغة.', FR: 'Zone de texte vide.', EN: 'Text area is empty.' }
+    };
+    function _cfgT(key, vars) {
+        var row = L_CFGBK[key];
+        if (!row) return key;
+        var s = row[_ucLang()] || row.EN;
+        if (vars) {
+            Object.keys(vars).forEach(function (k) { s = s.replace('{' + k + '}', vars[k]); });
+        }
+        return s;
+    }
+
     var _EXPORT_KEYS = [
         'JS_DATA', 'JS_DATA_CUSTOM', 'UC_MOSQUE_ID', 'UC_MOSQUE_HISTORY', 'UC_MOSQUE_MUTED',
         'STORAGE_JS_REMINDERS', 'STORAGE_JS_SLIDES', 'STORAGE_ADMIN_MESSAGES',
@@ -16958,27 +17313,27 @@ function selectQPTakbir() {
         var name = '';
         try { name = (typeof JS_DATA !== 'undefined' && JS_DATA.ucMosqueName) ? String(JS_DATA.ucMosqueName).trim() : ''; } catch (e) {}
         if (!name || name === UC_ANON_PLACEHOLDER_NAME) {
-            alert('يرجى تخصيص اسم المسجد (الإعدادات ← اسم المسجد) قبل اقتراحه كمسجد جديد.');
+            alert(_cfgT('proposeNameRequired'));
             return;
         }
         var last = 0;
         try { last = parseInt(localStorage.getItem(UC_MOSQUE_PROPOSAL_TS_KEY), 10) || 0; } catch (e) {}
         if (Date.now() - last < UC_MOSQUE_PROPOSAL_COOLDOWN_MS) {
-            alert('تم إرسال اقتراح مؤخرًا. يرجى الانتظار بضع دقائق قبل إعادة المحاولة.');
+            alert(_cfgT('proposeCooldown'));
             return;
         }
-        if (!confirm('اقتراح "' + name + '" كمسجد جديد؟ سيظهر للجميع بعد المراجعة.')) return;
+        if (!confirm(_cfgT('proposeConfirm', { name: name }))) return;
 
         var locationCode = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.LOCATION_CODE) || 'tn.tunis';
         var newId = _ucGenerateMosqueId(name, locationCode);
 
-        window._ucToast && window._ucToast('جارٍ الإرسال...', 'ok');
+        window._ucToast && window._ucToast(_cfgT('sending'), 'ok');
         _pushRemoteBackup(newId, function (ok) {
             if (ok) {
                 try { localStorage.setItem(UC_MOSQUE_PROPOSAL_TS_KEY, String(Date.now())); } catch (e) {}
-                window._ucToast && window._ucToast('تم الإرسال، بانتظار المراجعة', 'ok');
+                window._ucToast && window._ucToast(_cfgT('proposeSentOk'), 'ok');
             } else {
-                window._ucToast && window._ucToast('خطأ في الإرسال', 'err');
+                window._ucToast && window._ucToast(_cfgT('sendError'), 'err');
             }
         }, name);
     };
@@ -17070,11 +17425,11 @@ function selectQPTakbir() {
 
             _L('CFG', 'IMPORT', { keys: count, mosque: backup.mosque || '?', errors: errors.length });
 
-            if (errors.length) alert('Erreur partielle lors de l\'import : ' + errors.length + ' clé(s) en échec.');
-            else window._ucToast && window._ucToast('Configuration importée ✔', 'ok');
+            if (errors.length) alert(_cfgT('importPartialError', { count: errors.length }));
+            else window._ucToast && window._ucToast(_cfgT('importOk'), 'ok');
             location.reload();
         } catch(ex) {
-            alert('Erreur import : ' + ex.message);
+            alert(_cfgT('importError', { msg: ex.message }));
             _L('CFG', 'IMPORT_ERR', { err: ex.message });
         }
     }
@@ -17099,7 +17454,7 @@ function selectQPTakbir() {
         try { current = localStorage.getItem('UC_MOSQUE_ID') || ''; } catch (e) {}
         if (mosqueId === current) return;
         if (typeof window._ucSelectMosque !== 'function') return;
-        if (confirm('فتح هذا المسجد في التطبيق؟ | Ouvrir cette mosquée dans l\'application ?')) {
+        if (confirm(_cfgT('deepLinkConfirm'))) {
             window._ucSelectMosque(mosqueId, false);
         }
     };
@@ -17208,7 +17563,7 @@ function selectQPTakbir() {
                 if (!f) return;
                 var reader = new FileReader();
                 reader.onload = function(ev) { _restoreFromJson(ev.target.result); };
-                reader.onerror = function() { alert('Erreur lecture fichier'); };
+                reader.onerror = function() { alert(_cfgT('fileReadError')); };
                 reader.readAsText(f, 'utf-8');
                 inp.value = '';
             });
@@ -17220,12 +17575,12 @@ function selectQPTakbir() {
     // -- Import via modale textarea (Android) -----------------------------
     function _importViaModal() {
         _openModal(
-            'Import config',
-            '<p style="font-size:12px;margin:0 0 6px;">Collez le JSON de sauvegarde ci-dessous puis appuyez sur Importer.</p>' +
-            '<button id="ucImpPasteBtn" style="margin-bottom:6px;padding:4px 10px;cursor:pointer;">Coller depuis le presse-papiers</button>' +
-            '<textarea id="ucImpTextarea" placeholder="Collez ici le contenu JSON..." style="width:100%;height:220px;font-size:10px;font-family:monospace;box-sizing:border-box;"></textarea>' +
+            _cfgT('importConfigTitle'),
+            '<p style="font-size:12px;margin:0 0 6px;">' + _cfgT('importModalInstructions') + '</p>' +
+            '<button id="ucImpPasteBtn" style="margin-bottom:6px;padding:4px 10px;cursor:pointer;">' + _cfgT('pasteFromClipboard') + '</button>' +
+            '<textarea id="ucImpTextarea" placeholder="' + _cfgT('pasteTextareaPlaceholder') + '" style="width:100%;height:220px;font-size:10px;font-family:monospace;box-sizing:border-box;"></textarea>' +
             '<div style="margin-top:8px;text-align:right;">' +
-            '<button id="ucImpDoBtn" style="padding:6px 16px;cursor:pointer;background:#2a7;color:#fff;border:none;border-radius:4px;">Importer</button></div>',
+            '<button id="ucImpDoBtn" style="padding:6px 16px;cursor:pointer;background:#2a7;color:#fff;border:none;border-radius:4px;">' + _cfgT('importBtn') + '</button></div>',
             function(modalEl) {
                 var pasteBtn = modalEl.querySelector('#ucImpPasteBtn');
                 var ta       = modalEl.querySelector('#ucImpTextarea');
@@ -17235,17 +17590,17 @@ function selectQPTakbir() {
                         if (navigator.clipboard && navigator.clipboard.readText) {
                             navigator.clipboard.readText()
                                 .then(function(txt) { ta.value = txt; })
-                                .catch(function() { ta.focus(); alert('Appuyez longtemps sur la zone de texte et selectionnez Coller.'); });
+                                .catch(function() { ta.focus(); alert(_cfgT('longPressPaste')); });
                         } else {
                             ta.focus();
-                            alert('Appuyez longtemps sur la zone de texte et selectionnez Coller.');
+                            alert(_cfgT('longPressPaste'));
                         }
                     });
                 }
                 if (doBtn && ta) {
                     doBtn.addEventListener('click', function() {
                         var txt = (ta.value || '').trim();
-                        if (!txt) { alert('Zone de texte vide.'); return; }
+                        if (!txt) { alert(_cfgT('emptyTextarea')); return; }
                         _closeModal();
                         _restoreFromJson(txt);
                     });
@@ -17268,13 +17623,13 @@ function selectQPTakbir() {
 
     // -- Modale de choix Local / Distant --------------------------------
     function _showLocalRemoteChoice(mode) {
-        var title = (mode === 'export') ? 'Export config' : 'Import config';
+        var title = (mode === 'export') ? _cfgT('exportConfigTitle') : _cfgT('importConfigTitle');
         _openModal(
             title,
-            '<p style="font-size:12px;margin:0 0 10px;">Choisissez la destination :</p>' +
+            '<p style="font-size:12px;margin:0 0 10px;">' + _cfgT('chooseDestination') + '</p>' +
             '<div style="display:flex;flex-direction:column;gap:8px;">' +
-            '<button id="ucCfgChoiceLocal" style="padding:10px;cursor:pointer;">💾 Local</button>' +
-            '<button id="ucCfgChoiceRemote" style="padding:10px;cursor:pointer;">☁ Distant (Supabase)</button>' +
+            '<button id="ucCfgChoiceLocal" style="padding:10px;cursor:pointer;">' + _cfgT('local') + '</button>' +
+            '<button id="ucCfgChoiceRemote" style="padding:10px;cursor:pointer;">' + _cfgT('remoteSupabase') + '</button>' +
             '</div>',
             function (modalEl) {
                 modalEl.querySelector('#ucCfgChoiceLocal').addEventListener('click', function () {
@@ -17292,9 +17647,9 @@ function selectQPTakbir() {
                     var curId = _currentMosqueId();
                     if (mode === 'export' && curId && curId !== _DEFAULT_TEMPLATE_ID) {
                         _closeModal();
-                        window._ucToast && window._ucToast('Envoi en cours...', 'ok');
+                        window._ucToast && window._ucToast(_cfgT('sending'), 'ok');
                         _pushRemoteBackup(curId, function (ok) {
-                            window._ucToast && window._ucToast(ok ? 'Configuration enregistree' : 'Erreur envoi', ok ? 'ok' : 'err');
+                            window._ucToast && window._ucToast(ok ? _cfgT('savedOk') : _cfgT('sendError'), ok ? 'ok' : 'err');
                         });
                         return;
                     }
@@ -17307,17 +17662,17 @@ function selectQPTakbir() {
     // -- Liste distante (défaut épinglé + mosquée courante + reste) -----
     function _showRemotePicker(mode) {
         _openModal(
-            (mode === 'export') ? 'Export distant — choisir la destination' : 'Import distant — choisir la mosquée',
-            '<p style="font-size:12px;margin:0 0 8px;">Chargement…</p><div id="ucCfgRemoteList"></div>',
+            (mode === 'export') ? _cfgT('exportRemoteTitle') : _cfgT('importRemoteTitle'),
+            '<p style="font-size:12px;margin:0 0 8px;">' + _cfgT('loadingEllipsis') + '</p><div id="ucCfgRemoteList"></div>',
             function (modalEl) {
                 var listEl = modalEl.querySelector('#ucCfgRemoteList');
                 var infoEl = modalEl.querySelector('p');
                 _fetchRemoteList(function (rows) {
                     if (infoEl) infoEl.textContent = '';
                     var curId = _currentMosqueId();
-                    var pinned = [{ mosque_id: _DEFAULT_TEMPLATE_ID, mosque_name: 'Par défaut (مسجد افتراضي)', updated_at: null }];
+                    var pinned = [{ mosque_id: _DEFAULT_TEMPLATE_ID, mosque_name: _cfgT('defaultMosqueLabel'), updated_at: null }];
                     if (curId && curId !== _DEFAULT_TEMPLATE_ID) {
-                        pinned.push({ mosque_id: curId, mosque_name: 'Ma mosquée actuelle (' + curId + ')', updated_at: null });
+                        pinned.push({ mosque_id: curId, mosque_name: _cfgT('myCurrentMosque') + ' (' + curId + ')', updated_at: null });
                     }
                     var pinnedIds = pinned.map(function (p) { return p.mosque_id; });
                     var rest = rows.filter(function (r) { return pinnedIds.indexOf(r.mosque_id) === -1; });
@@ -17337,15 +17692,15 @@ function selectQPTakbir() {
                             var id = el.getAttribute('data-id');
                             _closeModal();
                             if (mode === 'export') {
-                                window._ucToast && window._ucToast('Envoi en cours...', 'ok');
+                                window._ucToast && window._ucToast(_cfgT('sending'), 'ok');
                                 _pushRemoteBackup(id, function (ok) {
-                                    window._ucToast && window._ucToast(ok ? 'Configuration enregistree' : 'Erreur envoi', ok ? 'ok' : 'err');
+                                    window._ucToast && window._ucToast(ok ? _cfgT('savedOk') : _cfgT('sendError'), ok ? 'ok' : 'err');
                                 });
                             } else {
-                                window._ucToast && window._ucToast('Recuperation...', 'ok');
+                                window._ucToast && window._ucToast(_cfgT('retrieving'), 'ok');
                                 _pullRemoteBackup(id, function (json) {
                                     if (json) _restoreFromJson(json);
-                                    else window._ucToast && window._ucToast('Configuration introuvable', 'err');
+                                    else window._ucToast && window._ucToast(_cfgT('configNotFound'), 'err');
                                 });
                             }
                         });
@@ -17912,7 +18267,7 @@ function selectQPTakbir() {
     window._ucEditAlertVoiceDelay = function() {
         var container = document.getElementById('inputDialogContainer');
         if (!container || container.style.visibility !== 'visible') {
-            openInputDialogFunction('الثانية من العدّ التنازلي (12 — 59)', JS_CUSTOM.ucAlertByVoiceDelay || 12, 'window._ucEditAlertVoiceDelay()', true);
+            openInputDialogFunction(_dlgT('alertVoiceDelay'), JS_CUSTOM.ucAlertByVoiceDelay || 12, 'window._ucEditAlertVoiceDelay()', true);
             return;
         }
         var field = document.getElementById('inputDialogTextField');
@@ -18142,7 +18497,7 @@ function selectQPTakbir() {
             // Phase 1 : ouvrir le dialog
             _bcServerDlgOpen = true;
             openInputDialogFunction(
-                'Adresse serveur box (ex: 192.168.1.10:8080)',
+                _dlgT('boxServerUrl'),
                 JS_CUSTOM.ucBoxServerUrl || 'http://127.0.0.1:8080',
                 'window._bcEditServerUrl()', true);
         } else {
@@ -18235,7 +18590,7 @@ var _ucPinGuard = (function() {
         return rem > 0 ? rem : 0;
     }
     function _lockedMsg(seconds) {
-        var lang = (JS_DATA && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR';
+        var lang = _ucLang();
         var L = {
             AR: 'محاولات كثيرة، أعد المحاولة بعد ' + seconds + ' ثانية',
             FR: 'Trop d’essais, réessayez dans ' + seconds + 's',
@@ -18243,7 +18598,7 @@ var _ucPinGuard = (function() {
             TR: 'Çok fazla deneme, ' + seconds + 's sonra tekrar deneyin',
             ID: 'Terlalu banyak percobaan, coba lagi dalam ' + seconds + 'd'
         };
-        return L[lang] || L.FR;
+        return L[lang] || L.EN;
     }
     // Vérifie l'état du verrou ; si bloqué, écrit le décompte dans errEl (si
     // fourni) et retourne true (l'appelant doit stopper son traitement).
@@ -18506,7 +18861,7 @@ function _ucDefaultAdminPin() {
 // Applique les libellés des boutons + dialogs selon JS_DATA.ucLangNOW.
 // window._ucAdminMsg est lu par les handlers déjà créés dans _installAdminNotifyPanel.
 function _updateAdminLabels() {
-    var lang = (JS_DATA && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR';
+    var lang = _ucLang();
     var isRtl = (lang === 'AR' || lang === 'UR' || lang === 'FA' || lang === 'KU');
 
     // Clés en Unicode pur pour éviter la troncature des fichiers contenant de l'arabe
@@ -18798,7 +19153,8 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             primary_azan:        payload.primary_azan,
             dohr_before_asr_min: payload.dohr_before_asr_min
         };
-        _ucToast('Envoi en cours...', 'ok');
+        var _L_SENDING = { AR: 'جارٍ الإرسال...', FR: 'Envoi en cours...', EN: 'Sending...' };
+        _ucToast(_L_SENDING[_ucLang()] || _L_SENDING.EN, 'ok');
         fetch(_SB_URL + '/rest/v1/mosques', {
             method:  'POST',
             headers: {
@@ -18873,6 +19229,28 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
 // Bouton 'Message' dans #ucAdminBtnRow -> overlay textarea + PIN -> POST Edge Function
 // Edge Function mode : { type:'custom_message', mosque_id, mosque_name, message }
 (function _installAdminMessagePanel() {
+    // Traductions AR/FR/EN (auparavant mélange arabe/français figé au sein
+    // de la MÊME modale -- titre/placeholder déjà corrigés via
+    // _updateAdminLabels ci-dessus, mais placeholder PIN, boutons Annuler/
+    // Envoyer et messages de validation restaient 100% français -- cf. audit
+    // langue 25/07/2026).
+    var L_MSGPANEL = {
+        pinPlaceholder: { AR: 'رمز PIN', FR: 'Code PIN', EN: 'PIN code' },
+        cancel:         { AR: 'إلغاء', FR: 'Annuler', EN: 'Cancel' },
+        send:           { AR: 'إرسال', FR: 'Envoyer', EN: 'Send' },
+        emptyMessage:   { AR: 'الرسالة فارغة', FR: 'Message vide', EN: 'Message is empty' },
+        tooLong:        { AR: 'الرسالة طويلة جدًا ({len}/{max})', FR: 'Message trop long ({len}/{max})', EN: 'Message too long ({len}/{max})' },
+        sending:        { AR: 'جارٍ الإرسال...', FR: 'Envoi en cours...', EN: 'Sending...' },
+        sentOk:         { AR: 'تم إرسال الرسالة ✔', FR: 'Message envoyé ✔', EN: 'Message sent ✔' },
+        networkError:   { AR: 'خطأ في الشبكة', FR: 'Erreur réseau', EN: 'Network error' }
+    };
+    function _mpT(key, vars) {
+        var row = L_MSGPANEL[key];
+        if (!row) return key;
+        var s = row[_ucLang()] || row.EN;
+        if (vars) Object.keys(vars).forEach(function (k) { s = s.replace('{' + k + '}', vars[k]); });
+        return s;
+    }
 
     var MC     = window.MOSQUE_CONFIG || {};
     var _SB_URL = MC.SUPABASE_URL     || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
@@ -18889,9 +19267,9 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     btnMsg.id        = 'ucMsgBtn';
     btnMsg.className = 'addSlideButtonClass cursorPointerClass';
     (function(){
-        var _l = (JS_DATA && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR';
+        var _l = _ucLang();
         var _T = { AR:'رسالة', FR:'Message', EN:'Message', TR:'Mesaj', ID:'Pesan' };
-        btnMsg.textContent = _T[_l] || _T.FR;
+        btnMsg.textContent = _T[_l] || _T.EN;
     })();
     // Ligne 3 : ucMsgBtn (droite) puis ucJanazaBtn (gauche, ajouté par
     // _installAdminJanazaPanel juste après).
@@ -18924,11 +19302,11 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         '<div style="text-align:right;font-size:0.78em;color:#aaa;margin:2px 0 0;">',
         '<span id="ucMsgCount">0</span>/' + MAX + '</div>',
         '<input id="ucMsgPin" type="password" maxlength="8" inputmode="numeric"',
-        ' placeholder="Code PIN" style="' + IPN + '"/>',
+        ' placeholder="' + _mpT('pinPlaceholder') + '" style="' + IPN + '"/>',
         '<p id="ucMsgErr" style="' + ERR + '"></p>',
         '<div style="' + BRW + '">',
-        '<span id="ucMsgCancel" class="ucModalBtn ucModalBtn--secondary">Annuler</span>',
-        '<span id="ucMsgSend"   class="ucModalBtn ucModalBtn--primary">Envoyer</span>',
+        '<span id="ucMsgCancel" class="ucModalBtn ucModalBtn--secondary">' + _mpT('cancel') + '</span>',
+        '<span id="ucMsgSend"   class="ucModalBtn ucModalBtn--primary">' + _mpT('send') + '</span>',
         '</div></div>'
     ].join('');
     document.body.appendChild(ov);
@@ -18967,16 +19345,16 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         if (window._ucPinGuard && window._ucPinGuard.check(_e('ucMsgErr'))) return;
 
         if (!msg) {
-            _e('ucMsgErr').textContent = 'Message vide';
+            _e('ucMsgErr').textContent = _mpT('emptyMessage');
             return;
         }
         if (msg.length > MAX) {
-            _e('ucMsgErr').textContent = 'Message trop long (' + msg.length + '/' + MAX + ')';
+            _e('ucMsgErr').textContent = _mpT('tooLong', { len: msg.length, max: MAX });
             return;
         }
         if (pin !== storedPin) {
             window._ucPinGuard && window._ucPinGuard.fail();
-            _e('ucMsgErr').textContent = 'Code PIN incorrect';
+            _e('ucMsgErr').textContent = (window._ucAdminMsg && window._ucAdminMsg.pinErr) || 'Wrong PIN';
             _e('ucMsgPin').select();
             return;
         }
@@ -18987,7 +19365,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         var mname = MC.MOSQUE_NAME || mid;
 
         ov.style.display = 'none';
-        window._ucToast && window._ucToast('Envoi en cours...', 'ok');
+        window._ucToast && window._ucToast(_mpT('sending'), 'ok');
 
         fetch(_FN_URL, {
             method: 'POST',
@@ -19007,12 +19385,12 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         .then(function(r) { return r.json(); })
         .then(function(res) {
             _L('MSG', 'SENT', res);
-            window._ucToast && window._ucToast('Message envoy\u00e9 \u2714', 'ok');
+            window._ucToast && window._ucToast(_mpT('sentOk'), 'ok');
             window._ucAddNotifHistory && window._ucAddNotifHistory('message', msg, true);
         })
         .catch(function(e) {
             _L('MSG', 'NET_ERR', e.message || String(e));
-            window._ucToast && window._ucToast('Erreur r\u00e9seau', 'err');
+            window._ucToast && window._ucToast(_mpT('networkError'), 'err');
             window._ucAddNotifHistory && window._ucAddNotifHistory('message', msg, false);
         });
     }
@@ -19029,6 +19407,24 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
 // -- Panneau Janaza (admin -> fideles) ------------------------------------
 // Bouton 'جنازة' dans #ucAdminBtnRow -> overlay inputs + PIN -> POST Edge Function
 (function _installAdminJanazaPanel() {
+    // Traductions AR/FR/EN (auparavant mélange arabe/français figé au sein
+    // de la MÊME modale -- ex. titre/libellés en arabe mais placeholder PIN
+    // et boutons Annuler/Envoyer toujours en français -- cf. audit langue
+    // 25/07/2026).
+    var L_JANAZA = {
+        pinPlaceholder: { AR: 'رمز PIN', FR: 'Code PIN', EN: 'PIN code' },
+        cancel:         { AR: 'إلغاء', FR: 'Annuler', EN: 'Cancel' },
+        send:           { AR: 'إرسال', FR: 'Envoyer', EN: 'Send' },
+        sending:        { AR: 'جارٍ الإرسال...', FR: 'Envoi en cours...', EN: 'Sending...' },
+        sentOk:         { AR: 'تم إرسال الرسالة ✔', FR: 'Message envoyé ✔', EN: 'Message sent ✔' },
+        networkError:   { AR: 'خطأ في الشبكة', FR: 'Erreur réseau', EN: 'Network error' }
+    };
+    function _jzT(key) {
+        var row = L_JANAZA[key];
+        if (!row) return key;
+        return row[_ucLang()] || row.EN;
+    }
+
     var MC     = window.MOSQUE_CONFIG || {};
     var _SB_URL = MC.SUPABASE_URL     || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
     var _SB_KEY = MC.SUPABASE_ANON_KEY|| 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
@@ -19043,9 +19439,9 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     btnJanaza.id        = 'ucJanazaBtn';
     btnJanaza.className = 'addSlideButtonClass cursorPointerClass';
     (function(){
-        var _l = (JS_DATA && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR';
+        var _l = _ucLang();
         var _T = { AR:'جنازة', FR:'Janaza', EN:'Janaza', TR:'Cenaze', ID:'Janazah' };
-        btnJanaza.textContent = _T[_l] || _T.AR;
+        btnJanaza.textContent = _T[_l] || _T.EN;
     })();
 
     // Ligne 3 : ucMsgBtn (créé avant, cf. _installAdminMessagePanel) puis
@@ -19084,11 +19480,11 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         '    <input type="radio" name="janazaSalat" value="ASR"> <span id="ucJanazaAsr">\u0627\u0644\u0639\u0635\u0631</span></label>',
         '</div>',
         '<input id="ucJanazaPin" type="password" maxlength="8" inputmode="numeric"',
-        ' placeholder="Code PIN" style="' + IPN + '"/>',
+        ' placeholder="' + _jzT('pinPlaceholder') + '" style="' + IPN + '"/>',
         '<p id="ucJanazaErr" style="' + ERR + '"></p>',
         '<div style="' + BRW + '">',
-        '<span id="ucJanazaCancel" class="ucModalBtn ucModalBtn--secondary">Annuler</span>',
-        '<span id="ucJanazaSend"   class="ucModalBtn ucModalBtn--primary">Envoyer</span>',
+        '<span id="ucJanazaCancel" class="ucModalBtn ucModalBtn--secondary">' + _jzT('cancel') + '</span>',
+        '<span id="ucJanazaSend"   class="ucModalBtn ucModalBtn--primary">' + _jzT('send') + '</span>',
         '</div></div>'
     ].join('');
     document.body.appendChild(ov);
@@ -19122,7 +19518,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         if (window._ucPinGuard && window._ucPinGuard.check(_e('ucJanazaErr'))) return;
 
         if (!name) {
-            _e('ucJanazaErr').textContent = '\u0627\u0644\u0627\u0633\u0645 \u0648\u0627\u0644\u0644\u0642\u0628 \u0645\u0637\u0644\u0648\u0628';
+            _e('ucJanazaErr').textContent = (window._ucAdminMsg && window._ucAdminMsg.janazaNameReq) || 'Name and surname required';
             return;
         }
         if (pin !== storedPin) {
@@ -19143,7 +19539,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
                 + "\u0646\u0633\u0623\u0644 \u0627\u0644\u0644\u0647 \u0623\u0646 \u064a\u062a\u063a\u0645\u062f\u0647 \u0628\u0648\u0627\u0633\u0639 \u0631\u062d\u0645\u062a\u0647 \u0648\u0623\u0646 \u064a\u0633\u0643\u0646\u0647 \u0627\u0644\u0641\u0631\u062f\u0648\u0633 \u0627\u0644\u0623\u0639\u0644\u0649.";
 
         ov.style.display = 'none';
-        window._ucToast && window._ucToast('Envoi en cours...', 'ok');
+        window._ucToast && window._ucToast(_jzT('sending'), 'ok');
 
         fetch(_FN_URL, {
             method: 'POST',
@@ -19163,12 +19559,12 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         .then(function(r) { return r.json(); })
         .then(function(res) {
             _L('JANAZA', 'SENT', res);
-            window._ucToast && window._ucToast('Message envoy\u00e9 \u2714', 'ok');
+            window._ucToast && window._ucToast(_jzT('sentOk'), 'ok');
             window._ucAddNotifHistory && window._ucAddNotifHistory('janaza', msg, true);
         })
         .catch(function(e) {
             _L('JANAZA', 'NET_ERR', e.message || String(e));
-            window._ucToast && window._ucToast('Erreur r\u00e9seau', 'err');
+            window._ucToast && window._ucToast(_jzT('networkError'), 'err');
             window._ucAddNotifHistory && window._ucAddNotifHistory('janaza', msg, false);
         });
     }
@@ -19197,9 +19593,9 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     btnHist.id        = 'ucHistoryBtn';
     btnHist.className = 'addSlideButtonClass cursorPointerClass';
     (function(){
-        var _l = (JS_DATA && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR';
+        var _l = _ucLang();
         var _T = { AR:'سجل الإرساليات', FR:'Historique', EN:'History', TR:'Geçmiş', ID:'Riwayat' };
-        btnHist.textContent = _T[_l] || _T.FR;
+        btnHist.textContent = _T[_l] || _T.EN;
     })();
     // Ligne 5 : ucHistoryBtn seul, centré.
     line5.appendChild(btnHist);
@@ -19228,7 +19624,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
 
     var _e = function(id) { return document.getElementById(id); };
 
-    function _lang() { return (JS_DATA && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR'; }
+    function _lang() { return _ucLang(); }
 
     function _typeLabel(type) {
         var L = {
@@ -19237,12 +19633,12 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             janaza:   { AR:'جنازة',         FR:'Janaza',                  EN:'Janaza',           TR:'Cenaze',                   ID:'Janazah' }
         };
         var row = L[type] || L.message;
-        return row[_lang()] || row.FR;
+        return row[_lang()] || row.EN;
     }
 
     function _emptyLabel() {
         var L = { AR:'لا توجد رسائل مرسلة', FR:'Aucun message envoyé', EN:'No messages sent', TR:'Gönderilen mesaj yok', ID:'Belum ada pesan terkirim' };
-        return L[_lang()] || L.FR;
+        return L[_lang()] || L.EN;
     }
 
     function _fmtTs(iso) {
@@ -19314,6 +19710,21 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
 // -- Synchronisation config Supabase (bouton MaJ) ---------------------------
 (function _installConfigSync() {
 
+    // Traductions AR/FR/EN (auparavant 100% français figé) -- cf. audit
+    // langue 25/07/2026.
+    var L_SYNC = {
+        mosqueUndefined: { AR: 'المسجد غير محدد', FR: 'Mosquée non définie', EN: 'Mosque not defined' },
+        syncing:         { AR: 'جارٍ المزامنة...', FR: 'Synchronisation...', EN: 'Syncing...' },
+        noData:          { AR: 'لا توجد بيانات', FR: 'Aucune donnée', EN: 'No data' },
+        configUpToDate:  { AR: 'الإعدادات محدّثة ✔', FR: 'Config à jour ✔', EN: 'Config up to date ✔' },
+        networkError:    { AR: 'خطأ في الشبكة', FR: 'Erreur réseau', EN: 'Network error' }
+    };
+    function _syncT(key) {
+        var row = L_SYNC[key];
+        if (!row) return key;
+        return row[_ucLang()] || row.EN;
+    }
+
     var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
                || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
     var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
@@ -19371,19 +19782,19 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     window._ucSyncFromSupabase = function(mosqueId, silent) {
         var mid = mosqueId || (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '';
         if (!mid) { try { mid = localStorage.getItem('UC_MOSQUE_ID') || ''; } catch(e) {} }
-        if (!mid) { if (!silent) window._ucToast && window._ucToast('Mosquée non définie', 'err'); return; }
-        if (!silent) window._ucToast && window._ucToast('Synchronisation...', 'ok');
+        if (!mid) { if (!silent) window._ucToast && window._ucToast(_syncT('mosqueUndefined'), 'err'); return; }
+        if (!silent) window._ucToast && window._ucToast(_syncT('syncing'), 'ok');
         fetch(_SB_URL + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid) + '&select=*',
               { headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY } })
         .then(function(r) { return r.json(); })
         .then(function(rows) {
-            if (!rows || !rows.length) { window._ucToast && window._ucToast('Aucune donnée', 'err'); return; }
+            if (!rows || !rows.length) { window._ucToast && window._ucToast(_syncT('noData'), 'err'); return; }
             _applyRow(rows[0]);
-            window._ucToast && window._ucToast('Config à jour ✔', 'ok');
+            window._ucToast && window._ucToast(_syncT('configUpToDate'), 'ok');
         })
         .catch(function(e) {
             _L('SYNC', 'ERR', e.message || String(e));
-            window._ucToast && window._ucToast('Erreur réseau', 'err');
+            window._ucToast && window._ucToast(_syncT('networkError'), 'err');
         });
     };
 
@@ -19395,9 +19806,9 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         btnMaj.id        = 'ucMaJBtn';
         btnMaj.className = 'addSlideButtonClass cursorPointerClass';
         (function(){
-            var _l = (JS_DATA && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR';
+            var _l = _ucLang();
             var _T = { AR:'تنزيل', FR:'Mise à jour', EN:'Update', TR:'Güncelle', ID:'Perbarui' };
-            btnMaj.textContent = _T[_l] || _T.FR;
+            btnMaj.textContent = _T[_l] || _T.EN;
         })();
         // Ligne 1 : ucMaJBtn seul, centré.
         alwaysRow.appendChild(btnMaj);
@@ -19414,7 +19825,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
 })();
 
 (function _installAdminBtnTooltips() {
-    var LANG = (JS_DATA && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR';
+    var LANG = _ucLang();
 
     var TIPS = {
         ucPinChangeBtn: {
@@ -19469,7 +19880,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         var msgs = TIPS[btn.id];
         if (!msgs) return;
         clearTimeout(_hideTimer);
-        tip.textContent = msgs[LANG] || msgs.FR;
+        tip.textContent = msgs[LANG] || msgs.EN;
         var r    = btn.getBoundingClientRect();
         var tw   = tip.offsetWidth  || 230;
         var th   = tip.offsetHeight || 42;
@@ -19746,7 +20157,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
 
     var UC_TOUR_DONE_KEY = 'UC_ONBOARDING_DONE';
 
-    function _tourLang()  { return (JS_DATA && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'FR'; }
+    function _tourLang()  { return _ucLang(); }
     function _tourIsRtl(lang) { return (lang === 'AR' || lang === 'UR' || lang === 'FA' || lang === 'KU'); }
     function _tourIsHR()  { return (typeof isHorizontalOrientation !== 'undefined') && isHorizontalOrientation; }
 
@@ -19999,11 +20410,11 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         var total    = STEPS.length;
         var stepText = step.getText ? step.getText() : step.text;
         stepCountEl.textContent = (_tourIdx + 1) + ' / ' + total;
-        textEl.textContent      = stepText[lang] || stepText.FR;
+        textEl.textContent      = stepText[lang] || stepText.EN;
         prevBtn.style.visibility = (_tourIdx === 0) ? 'hidden' : 'visible';
-        nextBtn.textContent = (_tourIdx === total - 1) ? (L_DONE[lang] || L_DONE.FR) : (L_NEXT[lang] || L_NEXT.FR);
-        prevBtn.textContent = L_PREV[lang] || L_PREV.FR;
-        skipBtn.textContent = L_SKIP[lang] || L_SKIP.FR;
+        nextBtn.textContent = (_tourIdx === total - 1) ? (L_DONE[lang] || L_DONE.EN) : (L_NEXT[lang] || L_NEXT.EN);
+        prevBtn.textContent = L_PREV[lang] || L_PREV.EN;
+        skipBtn.textContent = L_SKIP[lang] || L_SKIP.EN;
 
         _tourReposition();
     }
@@ -20089,7 +20500,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         a.href = '#';
         a.id   = 'ucTourRelaunchLink';
         var lang = _tourLang();
-        a.innerHTML = L_LINK[lang] || L_LINK.FR;
+        a.innerHTML = L_LINK[lang] || L_LINK.EN;
         a.onclick = function(e) {
             e.preventDefault();
             if (typeof closeMenuFunction === 'function') closeMenuFunction();
@@ -20106,7 +20517,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
 // par les liens de menu ci-dessous pour n'afficher qu'une seule langue au lieu
 // d'un libellé bilingue figé "AR | EN".
 function _ucMenuLinkLang() {
-    return (typeof JS_DATA !== 'undefined' && JS_DATA.ucLangNOW) ? JS_DATA.ucLangNOW.toUpperCase() : 'AR';
+    return _ucLang();
 }
 
 // ── Conteneur des liens de menu "prioritaires" ──────────────────────────────
@@ -20196,6 +20607,11 @@ function _ucPrependTopMenuLink(a) {
         AR: 'التحقق من التحديثات', FR: 'Vérifier les mises à jour', EN: 'Check for updates',
         ES: 'Buscar actualizaciones', DE: 'Nach Updates suchen'
     };
+    var L_UPDATE_NATIVE_ONLY = {
+        AR: 'التحقق من التحديثات متاح داخل تطبيق أندرويد.',
+        FR: 'La vérification des mises à jour est disponible dans l’application Android.',
+        EN: 'Checking for updates is only available inside the Android app.'
+    };
     var SVG_UPDATE_ICON =
         '<svg viewBox="0 0 24 24" width="1em" height="1em" ' +
              'style="vertical-align:-0.15em;margin-left:6px;" fill="currentColor">' +
@@ -20217,7 +20633,8 @@ function _ucPrependTopMenuLink(a) {
                 typeof window.AndroidMobile.checkForAppUpdate === 'function') {
                 window.AndroidMobile.checkForAppUpdate();
             } else {
-                alert('La vérification des mises à jour est disponible dans l’application Android.');
+                var _lang = _ucMenuLinkLang();
+                alert(L_UPDATE_NATIVE_ONLY[_lang] || L_UPDATE_NATIVE_ONLY.EN);
             }
         };
         _ucPrependTopMenuLink(a);
@@ -20243,10 +20660,15 @@ function _ucPrependTopMenuLink(a) {
     if (!el) return;
     el.innerHTML = '<a href="#" id="ucResetLink">RESET</a> | <a href="#" id="ucReloadLink">RELOAD</a>';
 
+    var L_RESET_CONFIRM = {
+        AR: 'إعادة ضبط جميع الإعدادات وإعادة تشغيل التطبيق؟',
+        FR: 'Réinitialiser tous les réglages et redémarrer l\'application ?',
+        EN: 'Reset all settings and restart the app?'
+    };
     var resetLink = document.getElementById('ucResetLink');
     if (resetLink) resetLink.onclick = function (e) {
         e.preventDefault();
-        if (confirm('Réinitialiser tous les réglages et redémarrer l\'application ?')) {
+        if (confirm(L_RESET_CONFIRM[_ucLang()] || L_RESET_CONFIRM.EN)) {
             ClearSETTINGS();
         }
     };
@@ -20408,6 +20830,32 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
 (function injectMapLocatorFeature() {
 
+    // Traductions AR/FR/EN (auparavant 100% arabe figé, aucune logique de
+    // langue -- cf. audit langue 25/07/2026, même remarque que la modale
+    // Qibla juste après). Pas besoin de rafraîchir sur réouverture : tout
+    // changement de langue déclenche un restartApplicationReload() côté core
+    // (changeLanguageFunction, m2body.js) -- custom.js se ré-exécute donc
+    // entièrement à chaque changement, ces valeurs lues une seule fois ici
+    // sont toujours à jour avec la langue courante.
+    var L_LOCATOR = {
+        title:            { AR: 'الموقع الحالي', FR: 'Position actuelle', EN: 'Current location' },
+        titleMosques:     { AR: 'المساجد القريبة', FR: 'Mosquées à proximité', EN: 'Nearby mosques' },
+        tabMe:            { AR: 'موقعي', FR: 'Ma position', EN: 'My location' },
+        tabMosques:       { AR: 'المساجد القريبة', FR: 'Mosquées à proximité', EN: 'Nearby mosques' },
+        openInGoogleMaps: { AR: 'فتح في خرائط Google ↗', FR: 'Ouvrir dans Google Maps ↗', EN: 'Open in Google Maps ↗' },
+        serviceUnavail:   { AR: 'الخدمة غير متوفرة على هذا الجهاز', FR: "Le service n'est pas disponible sur cet appareil", EN: 'This service is unavailable on this device' },
+        locating:         { AR: 'جارٍ تحديد الموقع…', FR: 'Localisation en cours…', EN: 'Locating…' },
+        locationRequired: { AR: 'يجب تفعيل صلاحية الموقع للمتابعة.', FR: 'La permission de localisation est requise pour continuer.', EN: 'Location permission is required to continue.' },
+        openAppSettingsBtn: { AR: 'فتح إعدادات التطبيق', FR: "Ouvrir les paramètres de l'application", EN: 'Open app settings' },
+        timeout:          { AR: 'انتهت مهلة تحديد الموقع. حاول مجدداً.', FR: 'Délai de localisation dépassé. Réessayez.', EN: 'Location request timed out. Please try again.' },
+        locationFailed:   { AR: 'تعذّر تحديد الموقع الحالي.', FR: 'Impossible de déterminer la position actuelle.', EN: 'Could not determine the current location.' }
+    };
+    function _mlT(key) {
+        var row = L_LOCATOR[key];
+        if (!row) return key;
+        return row[_ucLang()] || row.EN;
+    }
+
     // ── Modale (overlay appendé à <html> pour ne pas subir la rotation
     //      appliquée à <body> en mode vrRIGHT/vrLEFT — même technique que
     //      #quranPlayerOverlay) ─────────────────────────────────────────────
@@ -20421,19 +20869,19 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     overlay.innerHTML =
         '<div id="mapLocatorModal">' +
             '<div id="mapLocatorHeader">' +
-                '<div id="mapLocatorTitle">الموقع الحالي</div>' +
+                '<div id="mapLocatorTitle">' + _mlT('title') + '</div>' +
                 '<div id="mapLocatorClose">&#10006;</div>' +
             '</div>' +
             '<div id="mapLocatorTabs">' +
-                '<div id="mapLocatorTabMe" class="mlTabActive">موقعي</div>' +
-                '<div id="mapLocatorTabMosques">المساجد القريبة</div>' +
+                '<div id="mapLocatorTabMe" class="mlTabActive">' + _mlT('tabMe') + '</div>' +
+                '<div id="mapLocatorTabMosques">' + _mlT('tabMosques') + '</div>' +
             '</div>' +
             '<div id="mapLocatorBody">' +
                 '<div id="mapLocatorStateMsg"></div>' +
                 '<iframe id="mapLocatorIframe" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>' +
             '</div>' +
             '<div id="mapLocatorFooter">' +
-                '<a id="mapLocatorExternalLink" target="_blank" rel="noopener">فتح في خرائط Google &#8599;</a>' +
+                '<a id="mapLocatorExternalLink" target="_blank" rel="noopener">' + _mlT('openInGoogleMaps') + '</a>' +
             '</div>' +
         '</div>';
 
@@ -20480,7 +20928,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         if (_mlTabMe) _mlTabMe.classList.toggle('mlTabActive', mode === 'me');
         if (_mlTabMosques) _mlTabMosques.classList.toggle('mlTabActive', mode === 'mosques');
         var titleEl = document.getElementById('mapLocatorTitle');
-        if (titleEl) titleEl.textContent = (mode === 'mosques') ? 'المساجد القريبة' : 'الموقع الحالي';
+        if (titleEl) titleEl.textContent = (mode === 'mosques') ? _mlT('titleMosques') : _mlT('title');
         if (_mlLat != null) _mlRenderMap();
     }
 
@@ -20519,11 +20967,11 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _L('LOCATOR', 'FIRE', { action: 'open' });
 
         if (!('geolocation' in navigator)) {
-            _mlSetState('الخدمة غير متوفرة على هذا الجهاز');
+            _mlSetState(_mlT('serviceUnavail'));
             return;
         }
 
-        _mlSetState('جارٍ تحديد الموقع…');
+        _mlSetState(_mlT('locating'));
         navigator.geolocation.getCurrentPosition(
             function (pos) {
                 _mlLat = pos.coords.latitude;
@@ -20535,13 +20983,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 _L('LOCATOR', 'SKIP', { action: 'position_error', code: err.code, message: err.message });
                 if (err.code === 1) {
                     _mlSetState(
-                        'يجب تفعيل صلاحية الموقع للمتابعة.<br>' +
-                        '<button id="mlOpenSettingsBtn">فتح إعدادات التطبيق</button>'
+                        _mlT('locationRequired') + '<br>' +
+                        '<button id="mlOpenSettingsBtn">' + _mlT('openAppSettingsBtn') + '</button>'
                     );
                 } else if (err.code === 3) {
-                    _mlSetState('انتهت مهلة تحديد الموقع. حاول مجدداً.');
+                    _mlSetState(_mlT('timeout'));
                 } else {
-                    _mlSetState('تعذّر تحديد الموقع الحالي.');
+                    _mlSetState(_mlT('locationFailed'));
                 }
             },
             { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
@@ -20602,6 +21050,64 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
 (function injectQiblaFeature() {
 
+    // Traductions AR/FR/EN de toute la modale Qibla (auparavant 100% arabe
+    // figé, aucune logique de langue -- cf. audit langue 25/07/2026, modale
+    // parmi les plus visibles de l'appli). _qbT(key) lit toujours la langue
+    // AU MOMENT de l'appel (pas figée à l'init) : rappelée à chaque ouverture
+    // via _qbApplyStaticLabels(), plus à chaque mise à jour dynamique
+    // (précision boussole, messages de géolocalisation...).
+    var L_QIBLA = {
+        title:                 { AR: 'اتجاه القبلة', FR: 'Direction de la Qibla', EN: 'Qibla Direction' },
+        tabCompass:            { AR: 'البوصلة', FR: 'Boussole', EN: 'Compass' },
+        tabMap:                { AR: 'خريطة Google', FR: 'Carte Google', EN: 'Google Map' },
+        noSensorTitle:         { AR: 'لا يمكن استخدام البوصلة', FR: "Impossible d'utiliser la boussole", EN: 'Compass unavailable' },
+        noSensorText:          { AR: 'جهازك لا يتوفر على حساس اتجاه (جيروسكوب / بوصلة مغناطيسية)، أو المتصفح لا يسمح بالوصول إليه.',
+                                  FR: "Votre appareil ne dispose pas de capteur d'orientation (gyroscope / boussole magnétique), ou le navigateur n'autorise pas son accès.",
+                                  EN: "Your device has no orientation sensor (gyroscope / magnetic compass), or the browser doesn't allow access to it." },
+        readoutBearingLabel:   { AR: 'اتجاه القبلة :', FR: 'Direction de la Qibla :', EN: 'Qibla direction:' },
+        readoutDistanceLabel:  { AR: 'المسافة إلى الكعبة :', FR: "Distance jusqu'à la Kaaba :", EN: 'Distance to the Kaaba:' },
+        km:                    { AR: 'كم', FR: 'km', EN: 'km' },
+        readoutAccuracyLabel:  { AR: 'دقة البوصلة :', FR: 'Précision de la boussole :', EN: 'Compass accuracy:' },
+        enableCompassBtn:      { AR: 'تفعيل البوصلة', FR: 'Activer la boussole', EN: 'Enable compass' },
+        calibrateBtn:          { AR: 'معايرة البوصلة', FR: 'Calibrer la boussole', EN: 'Calibrate compass' },
+        calibrateTitle:        { AR: 'معايرة البوصلة', FR: 'Calibration de la boussole', EN: 'Compass calibration' },
+        calibrateText:         { AR: 'حرّك هاتفك في الهواء على شكل الرقم 8 عدة مرات لتحسين دقة البوصلة',
+                                  FR: "Déplacez votre téléphone en l'air en formant un 8 plusieurs fois pour améliorer la précision de la boussole",
+                                  EN: 'Move your phone through the air in a figure-8 shape several times to improve compass accuracy' },
+        calibrateAccLiveLabel: { AR: 'الدقة الحالية :', FR: 'Précision actuelle :', EN: 'Current accuracy:' },
+        done:                  { AR: 'تم', FR: 'Terminé', EN: 'Done' },
+        mapLegendYourLocation: { AR: 'موقعك', FR: 'Votre position', EN: 'Your location' },
+        mapLegendQiblaDir:     { AR: 'اتجاه القبلة', FR: 'Direction de la Qibla', EN: 'Qibla direction' },
+        openInGoogleMaps:      { AR: 'فتح في خرائط Google ↗', FR: 'Ouvrir dans Google Maps ↗', EN: 'Open in Google Maps ↗' },
+        accUncertain:          { AR: 'غير مؤكدة', FR: 'incertaine', EN: 'uncertain' },
+        accHigh:               { AR: 'عالية', FR: 'élevée', EN: 'high' },
+        accMedium:             { AR: 'متوسطة', FR: 'moyenne', EN: 'medium' },
+        accLow:                { AR: 'منخفضة', FR: 'faible', EN: 'low' },
+        accApprox:             { AR: ' (تقريبي)', FR: ' (estimé)', EN: ' (estimated)' },
+        locating:              { AR: 'جارٍ تحديد الموقع…', FR: 'Localisation en cours…', EN: 'Locating…' },
+        locationFailed:        { AR: 'تعذّر تحديد الموقع الحالي.', FR: 'Impossible de déterminer la position actuelle.', EN: 'Could not determine the current location.' },
+        locationPermHint:      { AR: 'يُفضّل تفعيل صلاحية الموقع لدقة أعلى.', FR: "Il est préférable d'activer la permission de localisation pour plus de précision.", EN: 'Enabling location permission is recommended for better accuracy.' },
+        openAppSettingsBtn:    { AR: 'فتح إعدادات التطبيق', FR: "Ouvrir les paramètres de l'application", EN: 'Open app settings' },
+        sensorPermDenied:      { AR: 'تم رفض إذن الوصول إلى حساس الاتجاه.', FR: "L'accès au capteur d'orientation a été refusé.", EN: 'Orientation sensor access was denied.' },
+        sensorPermDeniedHint:  { AR: 'يمكنك تفعيله من إعدادات المتصفح، أو الاستعانة ببوصلة حقيقية بزاوية {deg}&deg; من الشمال.',
+                                  FR: "Vous pouvez l'activer depuis les paramètres du navigateur, ou utiliser une vraie boussole à {deg}&deg; depuis le nord.",
+                                  EN: 'You can enable it from the browser settings, or use a real compass at {deg}&deg; from north.' },
+        noSensorFallback:      { AR: 'وجّه نفسك ببوصلة حقيقية بزاوية {deg}&deg; من الشمال لمعرفة اتجاه القبلة.',
+                                  FR: 'Orientez-vous avec une vraie boussole à {deg}&deg; depuis le nord pour trouver la direction de la Qibla.',
+                                  EN: 'Orient yourself with a real compass at {deg}&deg; from north to find the Qibla direction.' }
+    };
+    function _qbT(key, vars) {
+        var row = L_QIBLA[key];
+        if (!row) return key;
+        var s = row[_ucLang()] || row.EN;
+        if (vars) {
+            Object.keys(vars).forEach(function (k) {
+                s = s.replace('{' + k + '}', vars[k]);
+            });
+        }
+        return s;
+    }
+
     var KAABA_LAT = 21.4225;
     var KAABA_LNG = 39.8262;
 
@@ -20645,12 +21151,12 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     overlay.innerHTML =
         '<div id="qiblaModal">' +
             '<div id="qiblaHeader">' +
-                '<div id="qiblaTitleText">اتجاه القبلة</div>' +
+                '<div id="qiblaTitleText">' + _qbT('title') + '</div>' +
                 '<div id="qiblaClose">&#10006;</div>' +
             '</div>' +
             '<div id="qiblaTabs">' +
-                '<div id="qiblaTabCompass" class="qbTabActive">البوصلة</div>' +
-                '<div id="qiblaTabMap">خريطة Google</div>' +
+                '<div id="qiblaTabCompass" class="qbTabActive">' + _qbT('tabCompass') + '</div>' +
+                '<div id="qiblaTabMap">' + _qbT('tabMap') + '</div>' +
             '</div>' +
             '<div id="qiblaBody">' +
                 '<div id="qiblaStateMsg"></div>' +
@@ -20673,39 +21179,39 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                     '</div>' +
                     '<div id="qbNoSensorBanner">' +
                         '<div id="qbNoSensorIcon">&#9888;</div>' +
-                        '<div id="qbNoSensorTitle">لا يمكن استخدام البوصلة</div>' +
-                        '<div id="qbNoSensorText">جهازك لا يتوفر على حساس اتجاه (جيروسكوب / بوصلة مغناطيسية)، أو المتصفح لا يسمح بالوصول إليه.</div>' +
-                        '<div id="qbNoSensorFallback">وجّه نفسك ببوصلة حقيقية بزاوية <b id="qbNoSensorBearing">--</b>&deg; من الشمال لمعرفة اتجاه القبلة.</div>' +
+                        '<div id="qbNoSensorTitle">' + _qbT('noSensorTitle') + '</div>' +
+                        '<div id="qbNoSensorText">' + _qbT('noSensorText') + '</div>' +
+                        '<div id="qbNoSensorFallback">' + _qbT('noSensorFallback', { deg: '<b id="qbNoSensorBearing">--</b>' }) + '</div>' +
                     '</div>' +
                     '<div id="qbReadout">' +
-                        '<div class="qbLine">اتجاه القبلة : <b id="qbBearingVal">--</b>&deg;</div>' +
-                        '<div class="qbLine">المسافة إلى الكعبة : <b id="qbDistanceVal">--</b> كم</div>' +
-                        '<div class="qbLine" id="qbAccuracyRow">دقة البوصلة : <b id="qbAccuracyVal">--</b> ' +
+                        '<div class="qbLine">' + _qbT('readoutBearingLabel') + ' <b id="qbBearingVal">--</b>&deg;</div>' +
+                        '<div class="qbLine">' + _qbT('readoutDistanceLabel') + ' <b id="qbDistanceVal">--</b> ' + _qbT('km') + '</div>' +
+                        '<div class="qbLine" id="qbAccuracyRow">' + _qbT('readoutAccuracyLabel') + ' <b id="qbAccuracyVal">--</b> ' +
                             '<span id="qbAccuracyBadge" class="qbAccBadge">--</span></div>' +
                         '<div id="qbHint"></div>' +
-                        '<button id="qbEnableCompassBtn">تفعيل البوصلة</button>' +
-                        '<button id="qbCalibrateBtn">&#8734; معايرة البوصلة</button>' +
+                        '<button id="qbEnableCompassBtn">' + _qbT('enableCompassBtn') + '</button>' +
+                        '<button id="qbCalibrateBtn">&#8734; ' + _qbT('calibrateBtn') + '</button>' +
                     '</div>' +
                     '<div id="qbCalibrateOverlay">' +
-                        '<div id="qbCalibrateTitle">معايرة البوصلة</div>' +
+                        '<div id="qbCalibrateTitle">' + _qbT('calibrateTitle') + '</div>' +
                         '<svg id="qbFig8Svg" viewBox="0 0 100 60">' +
                             '<path d="M 50 30 C 50 10 20 10 20 30 C 20 50 50 50 50 30 C 50 10 80 10 80 30 C 80 50 50 50 50 30" ' +
                                   'fill="none" stroke="#6a5530" stroke-width="2.4" stroke-linecap="round"/>' +
                             '<circle id="qbFig8Dot" cx="50" cy="30" r="4" fill="#3ddc63"/>' +
                         '</svg>' +
-                        '<div id="qbCalibrateText">حرّك هاتفك في الهواء على شكل الرقم 8 عدة مرات لتحسين دقة البوصلة</div>' +
-                        '<div id="qbCalibrateAccLive">الدقة الحالية : <b id="qbCalLiveVal">--</b></div>' +
-                        '<button id="qbCalibrateDoneBtn">تم</button>' +
+                        '<div id="qbCalibrateText">' + _qbT('calibrateText') + '</div>' +
+                        '<div id="qbCalibrateAccLive">' + _qbT('calibrateAccLiveLabel') + ' <b id="qbCalLiveVal">--</b></div>' +
+                        '<button id="qbCalibrateDoneBtn">' + _qbT('done') + '</button>' +
                     '</div>' +
                 '</div>' +
                 '<div id="qiblaMapBody">' +
                     '<iframe id="qiblaMapIframe" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>' +
                     '<svg id="qiblaMapArrowSvg" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>' +
                     '<div id="qiblaMapLegend">' +
-                        '<span class="qbLegendDot"></span>موقعك' +
-                        '<span class="qbLegendLine"></span>اتجاه القبلة' +
+                        '<span class="qbLegendDot"></span>' + _qbT('mapLegendYourLocation') +
+                        '<span class="qbLegendLine"></span>' + _qbT('mapLegendQiblaDir') +
                     '</div>' +
-                    '<a id="qiblaMapExternalLink" target="_blank" rel="noopener">فتح في خرائط Google &#8599;</a>' +
+                    '<a id="qiblaMapExternalLink" target="_blank" rel="noopener">' + _qbT('openInGoogleMaps') + '</a>' +
                 '</div>' +
             '</div>' +
         '</div>';
@@ -20876,13 +21382,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
         var cls, label;
         if (invalid || accDeg == null) {
-            cls = 'qbAccLow'; label = 'غير مؤكدة';
+            cls = 'qbAccLow'; label = _qbT('accUncertain');
             valEl.textContent = '--';
         } else {
-            valEl.textContent = '±' + Math.round(accDeg) + '°' + (isEstimate ? ' (تقريبي)' : '');
-            if (accDeg <= 8)       { cls = 'qbAccHigh'; label = 'عالية';   }
-            else if (accDeg <= 20) { cls = 'qbAccMed';  label = 'متوسطة'; }
-            else                   { cls = 'qbAccLow';  label = 'منخفضة'; }
+            valEl.textContent = '±' + Math.round(accDeg) + '°' + (isEstimate ? _qbT('accApprox') : '');
+            if (accDeg <= 8)       { cls = 'qbAccHigh'; label = _qbT('accHigh');   }
+            else if (accDeg <= 20) { cls = 'qbAccMed';  label = _qbT('accMedium'); }
+            else                   { cls = 'qbAccLow';  label = _qbT('accLow'); }
         }
         badgeEl.className = 'qbAccBadge ' + cls;
         badgeEl.textContent = label;
@@ -20998,9 +21504,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     function _qbShowPermissionDenied() {
         var hint = document.getElementById('qbHint');
         if (hint && _qbBearing != null) {
-            hint.innerHTML = 'تم رفض إذن الوصول إلى حساس الاتجاه.<br>' +
-                'يمكنك تفعيله من إعدادات المتصفح، أو الاستعانة ببوصلة حقيقية بزاوية ' +
-                '<b>' + Math.round(_qbBearing) + '&deg;</b> من الشمال.';
+            hint.innerHTML = _qbT('sensorPermDenied') + '<br>' +
+                _qbT('sensorPermDeniedHint', { deg: '<b>' + Math.round(_qbBearing) + '</b>' });
         }
         var dial = document.getElementById('qbDial');
         if (dial) dial.style.transform = 'rotate(0deg)';
@@ -21043,7 +21548,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
     // ── 6) Localisation (GPS → fallback coords mosquée) ─────────────────
     function _qbLocateAndCompute() {
-        _qbSetState('جارٍ تحديد الموقع…');
+        _qbSetState(_qbT('locating'));
 
         function _withCoords(lat, lng, srcLabel) {
             _qbLat = lat; _qbLng = lng;
@@ -21068,7 +21573,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 _withCoords(JS_DATA.ucMeteoLatitude, JS_DATA.ucMeteoLongitude, 'js_data');
                 return;
             }
-            _qbSetState('تعذّر تحديد الموقع الحالي.');
+            _qbSetState(_qbT('locationFailed'));
         }
 
         if (!('geolocation' in navigator)) { _fallback(); return; }
@@ -21078,8 +21583,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 _L('QIBLA', 'SKIP', { action: 'position_error', code: err.code, message: err.message });
                 if (err.code === 1) {
                     _qbSetState(
-                        'يُفضّل تفعيل صلاحية الموقع لدقة أعلى.<br>' +
-                        '<button id="qbOpenSettingsBtn">فتح إعدادات التطبيق</button>'
+                        _qbT('locationPermHint') + '<br>' +
+                        '<button id="qbOpenSettingsBtn">' + _qbT('openAppSettingsBtn') + '</button>'
                     );
                     setTimeout(_fallback, 50); // affiche quand même un cap approximatif
                 } else {
@@ -21504,6 +22009,402 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     _L('CUSTOM', 'INIT', { item: 'nativeAzanAlarms' });
 })();
 // ═══ FIN NATIVE AZAN ALARMS ═══
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RAPPEL HADITH AVANT CHAQUE SALAT (notification native, 10 min avant)
+// (MobileJsBridge.scheduleHadithNotifications -> HadithAlarmReceiver)
+// ─────────────────────────────────────────────────────────────────────────────
+// Reglage independant JS_CUSTOM.ucHadithReminderEnabled (toggle modale
+// Reglages) : notification native (fonctionne appli fermee/en arriere-plan,
+// meme mecanisme AlarmManager que _installNativeAzanAlarms ci-dessus, mais
+// recepteur natif DEDIE -- cf. HadithAlarmReceiver.kt) affichant un hadith
+// authentique specifique a la priere qui approche (ou, a defaut, un hadith
+// general sur la priere). Un seul hadith par priere par jour ; s'il y en a
+// plusieurs pour une meme priere, rotation quotidienne (indice persiste
+// JS_CUSTOM.ucHadithIdx{PRAYER}, incremente une fois par jour, boucle a la
+// fin de la liste) -- cf. discussion 25/07/2026. Texte toujours en arabe,
+// quelle que soit la langue de l'interface (contenu religieux authentique,
+// jamais traduit).
+//
+// Sources : hadiths authentiques (sahih), verifies un par un via recherche
+// (dorar.net / sunnah.com / sites de verification de hadith) le 25/07/2026 --
+// chaque entree porte sa reference exacte (recueil + rapporteur).
+(function _installHadithReminder() {
+    if (typeof window.AndroidMobile === 'undefined' ||
+        typeof window.AndroidMobile.scheduleHadithNotifications !== 'function') return;
+
+    var UC_HADITH_GENERAL = [
+        { t: 'العهدُ الذي بينَنا وبينَهم الصلاةُ، فمَن ترَكَها فقد كفَر', s: 'رواه الترمذي والنسائي وابن ماجه وأحمد عن بريدة، وصححه الألباني' },
+        { t: 'إنَّ أولَ ما يُحاسَبُ به العبدُ يومَ القيامةِ مِن عملِه صلاتُه، فإن صلَحَت فقد أفلَحَ وأنجَحَ، وإن فسَدَت فقد خابَ وخسِرَ', s: 'رواه الترمذي وحسّنه، وأصله عند النسائي عن تميم الداري' },
+        { t: 'بينَ الرجلِ وبينَ الشركِ والكفرِ تركُ الصلاةِ', s: 'رواه مسلم عن جابر بن عبد الله' }
+    ];
+
+    var UC_HADITH_DB = {
+        FAJR: [
+            { t: 'مَن صلَّى البردَينِ دخَلَ الجنةَ', s: 'متفق عليه (البخاري ومسلم) عن أبي موسى الأشعري' },
+            { t: 'مَن صلَّى الصبحَ فهو في ذمةِ اللهِ، فلا يَطلُبَنَّكم اللهُ مِن ذمتِه بشيءٍ', s: 'رواه مسلم عن جندب بن عبد الله' },
+            { t: 'إنَّ أثقَلَ صلاةٍ على المنافقينَ صلاةُ العشاءِ وصلاةُ الفجرِ، ولو يعلمونَ ما فيهما لأتَوهما ولو حَبوًا', s: 'متفق عليه عن أبي هريرة' },
+            { t: 'مَن صلَّى الصبحَ في جماعةٍ فكأنَّما صلَّى الليلَ كلَّه', s: 'رواه مسلم عن عثمان بن عفان' }
+        ].concat(UC_HADITH_GENERAL),
+        DOHR: [
+            { t: 'أبرِدوا بالظهرِ فإنَّ شدةَ الحرِّ مِن فَيحِ جهنَّمَ', s: 'متفق عليه عن أبي هريرة' }
+        ].concat(UC_HADITH_GENERAL),
+        ASSR: [
+            { t: 'مَن صلَّى البردَينِ دخَلَ الجنةَ', s: 'متفق عليه (البخاري ومسلم) عن أبي موسى الأشعري' },
+            { t: 'مَن فاتَتْه صلاةُ العصرِ فكأنَّما وُتِرَ أهلَه ومالَه', s: 'رواه البخاري عن ابن عمر' },
+            { t: 'مَن تركَ صلاةَ العصرِ فقد حبِطَ عملُه', s: 'رواه البخاري عن بريدة بن الحصيب' }
+        ].concat(UC_HADITH_GENERAL),
+        MGRB: [].concat(UC_HADITH_GENERAL),
+        ISHA: [
+            { t: 'إنَّ أثقَلَ صلاةٍ على المنافقينَ صلاةُ العشاءِ وصلاةُ الفجرِ، ولو يعلمونَ ما فيهما لأتَوهما ولو حَبوًا', s: 'متفق عليه عن أبي هريرة' },
+            { t: 'مَن صلَّى العشاءَ في جماعةٍ فكأنَّما قامَ نصفَ الليلِ، ومَن صلَّى الصبحَ في جماعةٍ فكأنَّما صلَّى الليلَ كلَّه', s: 'رواه مسلم عن عثمان بن عفان' }
+        ].concat(UC_HADITH_GENERAL)
+    };
+
+    var ARABIC_NAMES = { Fajr: 'الفجر', Dhuhr: 'الظهر', Asr: 'العصر', Maghreb: 'المغرب', Isha: 'العشاء' };
+
+    // Fait avancer d'un cran (avec bouclage) l'indice de rotation de chaque
+    // priere, une seule fois par jour calendaire -- comparaison au jour du
+    // mois deja stocke (ucHadithLastRotationDay) pour ne jamais avancer 2x
+    // le meme jour (plusieurs appels possibles : ouverture app, changement
+    // de priere UC_EVT.AZAN_TIME, activation du toggle...).
+    function _ucRotateHadithIfNewDay() {
+        var today = new Date().getDate();
+        if (JS_CUSTOM.ucHadithLastRotationDay === today) return;
+        JS_CUSTOM.ucHadithLastRotationDay = today;
+        Object.keys(UC_HADITH_DB).forEach(function (key) {
+            var pool = UC_HADITH_DB[key];
+            if (!pool.length) return;
+            var idxKey = 'ucHadithIdx' + key;
+            JS_CUSTOM[idxKey] = ((parseInt(JS_CUSTOM[idxKey], 10) || 0) + 1) % pool.length;
+        });
+        saveCustomSettingsFunction();
+        _L('HADITH', 'ROTATE', { day: today });
+    }
+
+    function _ucHadithFor(key) {
+        var pool = UC_HADITH_DB[key];
+        if (!pool || !pool.length) return null;
+        var idx = parseInt(JS_CUSTOM['ucHadithIdx' + key], 10) || 0;
+        if (idx >= pool.length) idx = 0;
+        return pool[idx];
+    }
+
+    function _sendHadithToNative() {
+        if (JS_CUSTOM.ucHadithReminderEnabled != 1) {
+            if (typeof window.AndroidMobile.cancelHadithAlarms === 'function') window.AndroidMobile.cancelHadithAlarms();
+            return;
+        }
+        var obj = prayerTimesMinutesObject;
+        if (!obj || typeof obj.FAJR !== 'number') return; // pas encore calcule
+
+        _ucRotateHadithIfNewDay();
+
+        var keys = [
+            { k: 'FAJR', name: 'Fajr' },
+            { k: 'DOHR', name: 'Dhuhr' },
+            { k: 'ASSR', name: 'Asr' },
+            { k: 'MGRB', name: 'Maghreb' },
+            { k: 'ISHA', name: 'Isha' }
+        ];
+        var list = [];
+        keys.forEach(function (p) {
+            var m = obj[p.k];
+            if (typeof m !== 'number') return;
+            var h = _ucHadithFor(p.k);
+            if (!h) return; // pool vide (ne devrait jamais arriver, general toujours present)
+            var alarmTotal = m - 10;
+            if (alarmTotal < 0) return; // deborde avant minuit -- meme limite que l'alerte "N min avant" existante
+            var ah = Math.floor(alarmTotal / 60), ami = alarmTotal % 60;
+            list.push({
+                prayer: p.name, arabicName: ARABIC_NAMES[p.name] || p.name,
+                hour: ah, minute: ami,
+                hadithText: h.t, hadithSource: h.s
+            });
+        });
+        if (!list.length) return;
+
+        window.AndroidMobile.scheduleHadithNotifications(JSON.stringify(list));
+        _L('HADITH', 'FIRE', { action: 'scheduled', count: list.length });
+    }
+
+    // Meme schema que _installNativeAzanAlarms : appel initial differe (laisse
+    // le temps a calculateAndDisplayTimesFunction), reprogrammation quotidienne
+    // sur UC_EVT.AZAN_TIME, rappel immediat expose pour le toggle reglages.
+    setTimeout(_sendHadithToNative, 5000);
+    var _hadithLastDay = -1;
+    ucOn(UC_EVT.AZAN_TIME, function () {
+        var today = new Date().getDate();
+        if (today !== _hadithLastDay) { _hadithLastDay = today; setTimeout(_sendHadithToNative, 2500); }
+    });
+    window._ucRescheduleHadithReminder = _sendHadithToNative;
+
+    // Meme raisonnement que _installNativeAzanAlarms plus haut : un ajustement
+    // manuel de l'heure d'azan (+/-) doit aussi reprogrammer ce rappel-ci,
+    // sinon il reste fige sur l'ancien horaire (10 min avant l'ancienne heure).
+    if (typeof window.incrementAthanMinutesFunction === 'function') {
+        var _origIncrementAthanMinutesH = window.incrementAthanMinutesFunction;
+        window.incrementAthanMinutesFunction = function () {
+            var ret = _origIncrementAthanMinutesH.apply(this, arguments);
+            _sendHadithToNative();
+            return ret;
+        };
+    }
+    if (typeof window.decrementAthanMinutesFunction === 'function') {
+        var _origDecrementAthanMinutesH = window.decrementAthanMinutesFunction;
+        window.decrementAthanMinutesFunction = function () {
+            var ret = _origDecrementAthanMinutesH.apply(this, arguments);
+            _sendHadithToNative();
+            return ret;
+        };
+    }
+
+    _L('CUSTOM', 'INIT', { item: 'hadithReminder' });
+})();
+// ═══ FIN RAPPEL HADITH ═══
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SUGGESTION DE MOSQUÉE PROCHE QUAND LE GPS S'ÉLOIGNE DE LA MOSQUÉE CONFIGURÉE
+// ─────────────────────────────────────────────────────────────────────────────
+// Réglage indépendant JS_CUSTOM.ucMosqueProximityEnabled (toggle modale
+// Réglages, désactivé par défaut -- cf. _installSettingsModal plus haut) :
+// aucune demande de permission GPS tant que l'utilisateur n'a pas activé ce
+// réglage explicitement. Téléphone uniquement (masqué sur boîtier Android TV,
+// qui ne se déplace jamais).
+//
+// Détection UNIQUEMENT au premier plan (chargement + retour d'arrière-plan
+// réel) -- pas de geofencing natif ni de sondage en tâche de fond (cf.
+// discussion 25/07/2026) : l'app est de toute façon en pause quand elle est
+// fermée (MainActivity.onPause -> webView.pauseTimers()), donc l'unique
+// moment pertinent pour poser la question est celui où l'utilisateur rouvre
+// l'app. Pas de nouvelle permission native requise (ACCESS_FINE_LOCATION/
+// ACCESS_COARSE_LOCATION déjà déclarées, déjà utilisées par Qibla/Locator).
+//
+// Fiabilité : DEUX lectures GPS fraîches (maximumAge:0) à ~3s d'intervalle
+// doivent confirmer TOUTES LES DEUX un éloignement > seuil avant d'afficher
+// quoi que ce soit, et toute lecture de précision dégradée (>150m, typique en
+// intérieur) est ignorée -- évite un faux positif sur un simple rebond GPS ou
+// un bref passage en voiture près d'une autre mosquée.
+//
+// Sources des mosquées candidates : registre local MOSQUES_REGISTRY (spec/
+// mosques-registry.js, instantané/offline) + table Supabase `mosques` en
+// filtre bounding-box (couvre les mosquées connues du réseau au-delà de ce
+// build précis) -- fusionnées, dédoublonnées, triées par distance.
+// ═════════════════════════════════════════════════════════════════════════════
+(function _installMosqueProximityCheck() {
+    var isPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && !window.AndroidMobile.isAndroidTv());
+    if (!isPhone) return;
+
+    var L_PROX = {
+        title:     { AR: 'يبدو أنك بعيد عن مسجدك الحالي',  FR: 'Vous semblez loin de votre mosquée actuelle', EN: 'You seem far from your current mosque' },
+        mapBtn:    { AR: 'عرض على الخريطة',                 FR: 'Voir sur la carte',                            EN: 'View on map' },
+        stayBtn:   { AR: 'البقاء هنا',                       FR: 'Rester ici',                                   EN: 'Stay here' },
+        neverBtn:  { AR: 'عدم السؤال مجددًا',                FR: 'Ne plus demander',                             EN: "Don't ask again" },
+    };
+    function _pxT(key) {
+        var row = L_PROX[key];
+        if (!row) return key;
+        return row[_ucLang()] || row.EN;
+    }
+
+    var DISTANCE_THRESHOLD_KM = 2;                   // au-delà : "loin de la mosquée actuelle"
+    var SEARCH_RADIUS_KM      = 20;                  // rayon de recherche des mosquées candidates
+    var MAX_CANDIDATES        = 5;
+    var ACCURACY_MAX_M        = 150;                 // lectures GPS moins précises ignorées
+    var CONFIRM_DELAY_MS      = 3000;                // délai entre les 2 lectures de confirmation
+    var SNOOZE_MS             = 8 * 60 * 60 * 1000;  // 8h après "Rester ici"
+    var HIDDEN_THRESHOLD_MS   = 60000;               // ignore les allers-retours rapides (notif, écran verrouillé bref)
+
+    var _panel = null;
+    var _checking = false;
+    var _lastLat = null, _lastLng = null;
+
+    function _getPosition(cb) {
+        if (!navigator.geolocation) { cb(null); return; }
+        navigator.geolocation.getCurrentPosition(
+            function (pos) { cb(pos); },
+            function () { cb(null); },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
+    }
+
+    function _currentMosqueCoords() {
+        var c = MOSQUE_CONFIG && (MOSQUE_CONFIG.MOSQUE_COORDS || MOSQUE_CONFIG.WEATHER_COORDS);
+        if (!c || typeof c.latitude !== 'number' || typeof c.longitude !== 'number') return null;
+        return c;
+    }
+
+    function _localCandidates(lat, lng, excludeId) {
+        var reg = window.MOSQUES_REGISTRY || {};
+        var out = [];
+        Object.keys(reg).forEach(function (id) {
+            var m = reg[id];
+            if (id === excludeId || m._UC_ANONYMOUS || !m.MOSQUE_COORDS) return;
+            var d = _ucHaversineKm(lat, lng, m.MOSQUE_COORDS.latitude, m.MOSQUE_COORDS.longitude);
+            if (d <= SEARCH_RADIUS_KM) out.push({ id: id, name: m.MOSQUE_NAME, distanceKm: d, isRemote: false });
+        });
+        return out;
+    }
+
+    function _remoteCandidates(lat, lng, excludeId, localIds, cb) {
+        var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+                   || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+        var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+                   || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+        var dLat = SEARCH_RADIUS_KM / 111;
+        var dLng = SEARCH_RADIUS_KM / (111 * Math.max(0.1, Math.cos(lat * Math.PI / 180)));
+        var filter = 'and=(latitude.gte.' + (lat - dLat) + ',latitude.lte.' + (lat + dLat) +
+                     ',longitude.gte.' + (lng - dLng) + ',longitude.lte.' + (lng + dLng) + ')';
+        var url = _SB_URL + '/rest/v1/mosques?' + filter + '&select=mosque_id,mosque_name,latitude,longitude';
+        fetch(url, { headers: { apikey: _SB_KEY, Authorization: 'Bearer ' + _SB_KEY } })
+            .then(function (r) { return r.json(); })
+            .then(function (rows) {
+                var out = [];
+                (rows || []).forEach(function (row) {
+                    if (!row || row.mosque_id === excludeId || localIds.indexOf(row.mosque_id) !== -1) return;
+                    if (typeof row.latitude !== 'number' || typeof row.longitude !== 'number') return;
+                    var d = _ucHaversineKm(lat, lng, row.latitude, row.longitude);
+                    if (d <= SEARCH_RADIUS_KM) out.push({ id: row.mosque_id, name: row.mosque_name || row.mosque_id, distanceKm: d, isRemote: true });
+                });
+                cb(out);
+            })
+            .catch(function () { cb([]); });
+    }
+
+    function _formatDistance(km) {
+        return km < 1 ? (Math.round(km * 1000) + ' m') : (km.toFixed(1) + ' km');
+    }
+
+    // ── Panneau (overlay léger appendé à <html>, non bloquant -- pas de fond
+    // noir plein écran, l'utilisateur reste libre d'ignorer/continuer à
+    // consulter les horaires derrière) ──────────────────────────────────────
+    function _buildPanel() {
+        if (document.getElementById('ucMosqueProxOverlay')) { _panel = document.getElementById('ucMosqueProxOverlay'); return; }
+        var overlay = document.createElement('div');
+        overlay.id = 'ucMosqueProxOverlay';
+        overlay.className = 'ucMosqueProxHidden';
+        document.documentElement.appendChild(overlay);
+        _panel = overlay;
+    }
+
+    function _closePanel() {
+        if (_panel) _panel.classList.add('ucMosqueProxHidden');
+    }
+
+    function _renderPanel(candidates) {
+        _buildPanel();
+        var rowsHtml = candidates.map(function (c, i) {
+            return '<div class="ucMosqueProxRow" data-idx="' + i + '">' +
+                       '<span class="ucMosqueProxRowName">' + c.name + '</span>' +
+                       '<span class="ucMosqueProxRowDist">' + _formatDistance(c.distanceKm) + '</span>' +
+                   '</div>';
+        }).join('');
+        _panel.innerHTML =
+            '<div id="ucMosqueProxCard" dir="' + (_ucIsRtl() ? 'rtl' : 'ltr') + '">' +
+                '<div id="ucMosqueProxTitle">&#128205; ' + _pxT('title') + '</div>' +
+                '<div id="ucMosqueProxList">' + rowsHtml + '</div>' +
+                '<div id="ucMosqueProxActions">' +
+                    '<span id="ucMosqueProxMap" class="ucModalBtn ucModalBtn--secondary">' + _pxT('mapBtn') + '</span>' +
+                    '<span id="ucMosqueProxNever" class="ucModalBtn ucModalBtn--secondary">' + _pxT('neverBtn') + '</span>' +
+                    '<span id="ucMosqueProxStay" class="ucModalBtn ucModalBtn--primary">' + _pxT('stayBtn') + '</span>' +
+                '</div>' +
+            '</div>';
+
+        var rows = _panel.querySelectorAll('.ucMosqueProxRow');
+        for (var i = 0; i < rows.length; i++) {
+            rows[i].addEventListener('click', function () {
+                var idx = parseInt(this.getAttribute('data-idx'), 10);
+                var c = candidates[idx];
+                _closePanel();
+                if (c && typeof window._ucSelectMosque === 'function') window._ucSelectMosque(c.id, c.isRemote);
+            });
+        }
+        var mapBtn = document.getElementById('ucMosqueProxMap');
+        if (mapBtn) mapBtn.addEventListener('click', function () {
+            _closePanel();
+            if (typeof window.openMapLocatorModalAt === 'function' && _lastLat != null) {
+                window.openMapLocatorModalAt(_lastLat, _lastLng);
+            }
+        });
+        var stayBtn = document.getElementById('ucMosqueProxStay');
+        if (stayBtn) stayBtn.addEventListener('click', function () {
+            JS_CUSTOM.ucMosqueProximitySnoozeUntil = Date.now() + SNOOZE_MS;
+            saveCustomSettingsFunction();
+            _closePanel();
+        });
+        var neverBtn = document.getElementById('ucMosqueProxNever');
+        if (neverBtn) neverBtn.addEventListener('click', function () {
+            JS_CUSTOM.ucMosqueProximityEnabled = 0;
+            saveCustomSettingsFunction();
+            _closePanel();
+        });
+
+        _panel.classList.remove('ucMosqueProxHidden');
+        _L('MOSQUE_PROX', 'SHOW', { count: candidates.length });
+    }
+
+    function _maybeShowPanel(lat, lng) {
+        _lastLat = lat; _lastLng = lng;
+        var mosqueId = (MOSQUE_CONFIG && MOSQUE_CONFIG.MOSQUE_ID) || '';
+        var local = _localCandidates(lat, lng, mosqueId);
+        var localIds = local.map(function (c) { return c.id; });
+        _remoteCandidates(lat, lng, mosqueId, localIds, function (remote) {
+            var all = local.concat(remote)
+                .filter(function (c) { return c.distanceKm >= 0.1; }) // exclut la mosquée actuelle elle-même (id non concordant possible)
+                .sort(function (a, b) { return a.distanceKm - b.distanceKm; })
+                .slice(0, MAX_CANDIDATES);
+            if (!all.length) return; // rien à proposer dans le rayon : on ne montre rien
+            _renderPanel(all);
+        });
+    }
+
+    function _runCheck() {
+        if (_checking) return;
+        if (JS_CUSTOM.ucMosqueProximityEnabled != 1) return;
+        if (Date.now() < (JS_CUSTOM.ucMosqueProximitySnoozeUntil || 0)) return;
+        var home = _currentMosqueCoords();
+        if (!home) return;
+
+        _checking = true;
+        _getPosition(function (posA) {
+            if (!posA || posA.coords.accuracy > ACCURACY_MAX_M) { _checking = false; return; }
+            var dA = _ucHaversineKm(posA.coords.latitude, posA.coords.longitude, home.latitude, home.longitude);
+            if (dA <= DISTANCE_THRESHOLD_KM) { _checking = false; return; }
+
+            // Confirmation : 2e lecture fraîche après un court délai -- évite
+            // qu'un simple rebond GPS ponctuel déclenche le panneau.
+            setTimeout(function () {
+                _getPosition(function (posB) {
+                    _checking = false;
+                    if (!posB || posB.coords.accuracy > ACCURACY_MAX_M) return;
+                    var dB = _ucHaversineKm(posB.coords.latitude, posB.coords.longitude, home.latitude, home.longitude);
+                    if (dB <= DISTANCE_THRESHOLD_KM) return;
+                    _maybeShowPanel(posB.coords.latitude, posB.coords.longitude);
+                });
+            }, CONFIRM_DELAY_MS);
+        });
+    }
+
+    // ── Déclencheurs : chargement (une fois) + retour d'arrière-plan réel
+    // (pas un simple clignotement d'écran -- même seuil/logique que le
+    // resync de la séquence de prière, cf. plus haut dans ce fichier) ───────
+    var _hiddenAt = null;
+    document.addEventListener('visibilitychange', function () {
+        if (document.hidden) { _hiddenAt = Date.now(); return; }
+        if (_hiddenAt === null) return;
+        var hiddenMs = Date.now() - _hiddenAt;
+        _hiddenAt = null;
+        if (hiddenMs > HIDDEN_THRESHOLD_MS) _runCheck();
+    });
+
+    setTimeout(_runCheck, 8000);
+
+    window._ucRescheduleMosqueProximityCheck = _runCheck;
+
+    _L('CUSTOM', 'INIT', { item: 'mosqueProximityCheck' });
+})();
+// ═══ FIN SUGGESTION MOSQUÉE PROCHE ═══
 
 // ═════════════════════════════════════════════════════════════════════════════
 // AZAN CATALOG — modale de choix du son de l'azan (customSpeakerIcon, Android)
@@ -22396,6 +23297,25 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     var logoEl = document.getElementById('appLogoImage');
     if (!logoEl) return;
 
+    // Traductions AR/FR/EN (auparavant 100% arabe figé + dir="rtl" forcé sur
+    // le tableau quel que soit la langue -- cf. audit langue 25/07/2026).
+    // Pas besoin de rafraîchir sur réouverture : tout changement de langue
+    // déclenche un restartApplicationReload() côté core, cf. remarque
+    // identique dans injectQiblaFeature plus haut.
+    var L_LQB = {
+        settings:   { AR: 'إعدادات الهاتف', FR: 'Réglages du téléphone', EN: 'Phone settings' },
+        mosqueInfo: { AR: 'معلومات المسجد', FR: 'Informations sur la mosquée', EN: 'Mosque information' },
+        speaker:    { AR: 'صوت الأذان', FR: "Son de l'azan", EN: 'Azan sound' },
+        quran:      { AR: 'القرآن الكريم', FR: 'Le Saint Coran', EN: 'The Holy Quran' },
+        locator:    { AR: 'الموقع الحالي', FR: 'Position actuelle', EN: 'Current location' },
+        qibla:      { AR: 'اتجاه القبلة', FR: 'Direction de la Qibla', EN: 'Qibla Direction' }
+    };
+    function _lqbT(key) {
+        var row = L_LQB[key];
+        if (!row) return key;
+        return row[_ucLang()] || row.EN;
+    }
+
     var SVG_GEAR = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor">' +
         '<circle cx="12" cy="12" r="4.5"/>' +
         '<rect x="10.7" y="2" width="2.6" height="6" rx="1"/>' +
@@ -22436,13 +23356,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     overlay.className = 'ucLQBHidden';
     overlay.innerHTML =
         '<div id="ucLogoQuickBar">' +
-            '<table id="ucLQBTable" dir="rtl"><tbody>' +
-                _lqbRow('ucLQBSettings',   'إعدادات الهاتف', SVG_GEAR) +
-                _lqbRow('ucLQBMosqueInfo', 'معلومات المسجد', SVG_MOSQUE) +
-                _lqbRow('ucLQBSpeaker',    'صوت الأذان',     SVG_SPEAKER) +
-                _lqbRow('ucLQBQuran',      'القرآن الكريم',  SVG_QURAN) +
-                _lqbRow('ucLQBLocator',    'الموقع الحالي',  SVG_GPS) +
-                _lqbRow('ucLQBQibla',      'اتجاه القبلة',   SVG_COMPASS) +
+            '<table id="ucLQBTable" dir="' + (_ucIsRtl() ? 'rtl' : 'ltr') + '"><tbody>' +
+                _lqbRow('ucLQBSettings',   _lqbT('settings'),   SVG_GEAR) +
+                _lqbRow('ucLQBMosqueInfo', _lqbT('mosqueInfo'), SVG_MOSQUE) +
+                _lqbRow('ucLQBSpeaker',    _lqbT('speaker'),    SVG_SPEAKER) +
+                _lqbRow('ucLQBQuran',      _lqbT('quran'),      SVG_QURAN) +
+                _lqbRow('ucLQBLocator',    _lqbT('locator'),    SVG_GPS) +
+                _lqbRow('ucLQBQibla',      _lqbT('qibla'),      SVG_COMPASS) +
                 '<tr class="ucLQBCloseRow"><td colspan="2"><span class="ucLQBIcon ucLQBClose" id="ucLQBClose">&#10006;</span></td></tr>' +
             '</tbody></table>' +
         '</div>';

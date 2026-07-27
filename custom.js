@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.88';
+var CUSTOM_APP_VERSION = '11.89';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -11125,28 +11125,54 @@ function forceHijriSyncFunction() {
     // (isAzanCurrentlyPlaying() == false) que la lecture native est bien
     // terminée -- le timer de sécurité 300s reste le filet de secours ultime
     // si ce polling ne se termine jamais (ex. bug natif).
-    var _ucNativePollTimer = null;
-    var _ucNativePollGen   = 0;
+    var _ucNativePollTimer  = null;
+    var _ucNativePollGen    = 0;
+    var _ucNativePollActive = false;   // un sondage tourne déjà pour ce cycle azan
+    var _ucNativeSeenPlaying = false;  // isAzanCurrentlyPlaying() vu à true au moins une fois ce cycle
 
+    // Garde anti-course (constaté en test live, 27/07/2026) : l'appel
+    // IMMÉDIAT (cf. plus bas, "native_poll_immediate") sonde le natif dès
+    // AZAN_TIME -- mais le déclenchement natif (PrayerAlarmReceiver, alarme
+    // AlarmManager séparée) et l'AZAN_TIME JS (tick de clockTickFunction) ne
+    // sont PAS synchronisés : isAzanCurrentlyPlaying() peut légitimement
+    // renvoyer false ne serait-ce que parce que le service natif n'a pas
+    // ENCORE démarré, pas parce que l'azan est terminé. Sans cette garde, le
+    // popup se fermait instantanément, avant même le début du son natif
+    // (confirmé en test : blocked=false juste après le trigger, alors
+    // qu'aucune lecture native n'avait encore commencé). On n'accepte donc
+    // un "false" comme "terminé" qu'après avoir observé au moins un "true"
+    // pendant CE cycle -- le timer de sécurité 300s reste le filet de
+    // secours ultime si le natif ne démarre jamais du tout.
     function _ucWaitNativeThenRelease(reason) {
         if (!_ucHasNative('isAzanCurrentlyPlaying')) {
             _ucReleaseAzanBlock(reason);
             return;
         }
+        if (_ucNativePollActive) return;   // sondage déjà en cours pour ce cycle -- ne pas redémarrer/réinitialiser l'état "vu jouer"
+        _ucNativePollActive = true;
         var gen = ++_ucNativePollGen;
         function _poll() {
             if (gen !== _ucNativePollGen) return;   // cycle azan suivant démarré entretemps
             if (!_ucBlockAzanHide)        return;   // déjà relâché (safety-timer, fermeture manuelle...)
             var stillPlaying = false;
             try { stillPlaying = !!window.AndroidMobile.isAzanCurrentlyPlaying(); } catch (err) {}
-            if (!stillPlaying) {
-                _L('AZAN', 'NATIVE_POLL_DONE', {reason: reason});
-                _ucReleaseAzanBlock(reason);
+            if (stillPlaying) {
+                _ucNativeSeenPlaying = true;
+                _ucNativePollTimer = setTimeout(_poll, 1000);
                 return;
             }
-            _ucNativePollTimer = setTimeout(_poll, 1000);
+            if (!_ucNativeSeenPlaying) {
+                // Pas encore démarré côté natif (ou déjà terminé si l'alarme
+                // native a un train de retard) -- on ne peut pas encore
+                // trancher, on continue de sonder.
+                _ucNativePollTimer = setTimeout(_poll, 1000);
+                return;
+            }
+            _L('AZAN', 'NATIVE_POLL_DONE', {reason: reason});
+            _ucNativePollActive = false;
+            _ucReleaseAzanBlock(reason);
         }
-        _L('AZAN', 'NATIVE_POLL_WAIT', {reason: reason, note: 'js_audio_ended_native_still_playing'});
+        _L('AZAN', 'NATIVE_POLL_WAIT', {reason: reason});
         _poll();
     }
 
@@ -11154,6 +11180,8 @@ function forceHijriSyncFunction() {
         if (_ucAzanSafetyTimer) { clearTimeout(_ucAzanSafetyTimer); _ucAzanSafetyTimer = null; }
         if (_ucNativePollTimer) { clearTimeout(_ucNativePollTimer); _ucNativePollTimer = null; }
         _ucNativePollGen++;
+        _ucNativePollActive  = false;
+        _ucNativeSeenPlaying = false;
         _ucBlockAzanHide = false;
         _ucAzanFbEl      = null;
     });
@@ -11286,6 +11314,8 @@ function forceHijriSyncFunction() {
         if (_ucAzanSafetyTimer) { clearTimeout(_ucAzanSafetyTimer); _ucAzanSafetyTimer = null; }
         if (_ucNativePollTimer) { clearTimeout(_ucNativePollTimer); _ucNativePollTimer = null; }
         _ucNativePollGen++;   // invalide tout polling natif d'un cycle azan précédent
+        _ucNativePollActive  = false;
+        _ucNativeSeenPlaying = false;
 
         _ucAzanFbEl         = audioEl;
         _ucAzanFbIsFajr     = isFajr;
@@ -11298,6 +11328,24 @@ function forceHijriSyncFunction() {
 
         audioEl.addEventListener('ended', _ucAzanReleaseFunc);
         audioEl.addEventListener('error', _ucAzanFallbackOrHold);
+
+        // Repli robuste (retour utilisateur, 27/07/2026) : constaté en
+        // pratique (journal natif) -- le <audio> JS muet (simple minuteur
+        // côté natif, aucun son audible) peut lui-même accuser un retard
+        // important sur son PROPRE 'ended' par rapport à la lecture native
+        // réelle, même appli au premier plan (~100s de retard observés un
+        // jour, popup restée ouverte tout ce temps alors que l'azan était
+        // déjà terminé -- cause probable : le <audio> JS a dû rebufferiser/
+        // recharger sa propre source séparément du lecteur natif). Plutôt que
+        // d'attendre cet événement pour DÉMARRER le sondage natif (cf.
+        // _ucWaitNativeThenRelease), on le démarre désormais IMMÉDIATEMENT
+        // dès que le natif prend la main -- reflète la réalité native sans
+        // dépendre de la fidélité du <audio> JS. Le 'ended' ci-dessus reste
+        // en place comme déclencheur redondant (sans risque : _ucReleaseAzanBlock
+        // et le suivi par génération, cf. plus haut, sont idempotents).
+        if (audioEl.muted && _ucHasNative('isAzanCurrentlyPlaying')) {
+            _ucWaitNativeThenRelease('native_poll_immediate');
+        }
 
         // Safety : fermeture forcée après 300 s au plus
         //   (couvre le cas où tous les fallbacks échouent silencieusement)
@@ -12025,18 +12073,70 @@ function forceHijriSyncFunction() {
 // réel commence.
 (function _installBlackScreenHidesPrayerTable() {
     var _containers = ['prayerTimesContainerHorizontal', 'prayerTimesContainerVertical'];
+    function _restoreTable() {
+        _containers.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.style.visibility = 'visible';
+        });
+    }
     ucOn(UC_EVT.BLACK_SHOW, function () {
         _containers.forEach(function (id) {
             var el = document.getElementById(id);
             if (el) el.style.visibility = 'hidden';
         });
     });
-    ucOn(UC_EVT.AZAN_SHOW, function () {
-        _containers.forEach(function (id) {
-            var el = document.getElementById(id);
-            if (el) el.style.visibility = 'visible';
+    ucOn(UC_EVT.AZAN_SHOW, _restoreTable);
+
+    // Bug rapporté (retour utilisateur, 27/07/2026) : fermeture MANUELLE du
+    // rideau noir (clic dessus -> index.html onclick='deactivateBlackScreen()',
+    // appel DIRECT qui ne passe PAS par onIqamaEndFunction()/la chaîne azkar)
+    // -- le tableau restait masqué jusqu'au PROCHAIN azan réel (des heures
+    // plus tard), laissant l'utilisateur face à une page incomplète au lieu
+    // de la page principale. Non couvert par la restauration ci-dessus (liée
+    // à AZAN_SHOW uniquement, volontairement -- cf. commentaire plus haut sur
+    // le risque de superposition pendant la boucle azkar). Sans danger de
+    // resuperposition ici : à ce stade, soit rien d'autre ne recouvre encore
+    // l'écran (le tableau DOIT être visible), soit l'azkar plein écran suit
+    // sous peu et le recouvre entièrement (aucune superposition possible,
+    // contrairement au problème d'origine qui concernait la barre "mini" --
+    // déjà gérée séparément par _installAzkarMainPageInterlude).
+    var _origDeactivateBlackScreen = window.deactivateBlackScreen;
+    if (typeof _origDeactivateBlackScreen === 'function') {
+        window.deactivateBlackScreen = function () {
+            _origDeactivateBlackScreen.apply(this, arguments);
+            _restoreTable();
+        };
+    }
+})();
+
+// ── DIAGNOSTIC TEMPORAIRE : compteur iqama parfois invisible (bug rapporté,
+//    27/07/2026, mosquée "يوسف") -- après la fin de l'azan, la page du
+//    compteur s'affichait avec le mini tableau des prières mais le compteur
+//    lui-même (fullScreenCounterContainer*/iqamaCounterContainer*) restait
+//    masqué -- corrigé uniquement par un reload manuel. À la lecture du
+//    coeur, le chemin normal semble correct (startIqamaCounterFunction ->
+//    isIqamaCounterActive=true -> showAzanPopup appelle showIqamaCounter()
+//    dans le MÊME tick de clockTickFunction) : aucune cause certaine
+//    identifiable sans reproduire en direct. Cette trace confirmera, au
+//    prochain signalement, si showIqamaCounter() est bien appelée et l'état
+//    réel des conteneurs juste après -- à retirer une fois la vraie cause
+//    identifiée.
+(function _installIqamaCounterVisibilityDiag() {
+    if (typeof window.showIqamaCounter !== 'function') return;
+    var _origShowIqamaCounter = window.showIqamaCounter;
+    window.showIqamaCounter = function () {
+        _origShowIqamaCounter.apply(this, arguments);
+        var fsV = document.getElementById('fullScreenCounterContainerVertical');
+        var fsH = document.getElementById('fullScreenCounterContainerHorizontal');
+        var icV = document.getElementById('iqamaCounterContainerVertical');
+        var icH = document.getElementById('iqamaCounterContainerHorizontal');
+        _L('DIAG', 'SHOW_IQAMA_COUNTER', {
+            isFullScreenCounterMode: (typeof isFullScreenCounterMode !== 'undefined') ? isFullScreenCounterMode : 'undef',
+            isIqamaCounterActive:    (typeof isIqamaCounterActive    !== 'undefined') ? isIqamaCounterActive    : 'undef',
+            fsV: fsV && fsV.className, fsH: fsH && fsH.className,
+            icV: icV && icV.className, icH: icH && icH.className
         });
-    });
+    };
 })();
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -17558,10 +17658,29 @@ function selectQPTakbir() {
     // pas window.MOSQUE_CONFIG.MOSQUE_NAME (figé, valeur du registre statique).
     function _pushRemoteBackup(mosqueId, onDone, nameOverride) {
         var r = _buildBackup();
+        // Bug corrigé (retour utilisateur, 27/07/2026) : MOSQUE_CONFIG.LOCATION_CODE
+        // est la valeur STATIQUE du registre de déploiement (mosquee.js), utilisée
+        // une seule fois pour INITIALISER JS_DATA.ucNowCityCODE au tout premier
+        // lancement (cf. _applyMosqueConfig) -- elle reste figée pour toujours,
+        // même après que l'utilisateur change de ville dans le sélecteur (qui
+        // n'écrit QUE JS_DATA.ucNowCityCODE, jamais MOSQUE_CONFIG). Résultat
+        // constaté : une proposition de nouvelle mosquée envoyée depuis Ksar
+        // Hellal (ville réellement sélectionnée, affichée en bas d'écran) partait
+        // avec location_code='tn.tunis' (valeur par défaut figée de l'appli
+        // générique). JS_DATA.ucNowCityCODE est la SEULE source à jour (cf.
+        // m2body.js : chargement des horaires, affichage bas d'écran, sélecteur).
+        // Second piège (même bug initial de ma part en corrigeant à la main côté
+        // Supabase) : ucNowCityCODE porte parfois un "_" final (artefact des noms
+        // de fichiers wtimes-*.js, ex. "tn.ksar-hellal_"), alors que le registre
+        // des mosquées attend TOUJOURS ce code SANS underscore (cf.
+        // _installMosqueSelector._normCityCode, même règle reprise ici à
+        // l'identique) -- sinon la requête du sélecteur (qui normalise, elle)
+        // ne retrouve jamais la ligne.
+        var _liveCity = ((typeof JS_DATA !== 'undefined' && JS_DATA.ucNowCityCODE) || '').replace(/_+$/, '');
         var row = {
             mosque_id:     mosqueId,
             mosque_name:   nameOverride || r.backup.mosque || '',
-            location_code: (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.LOCATION_CODE) || null,
+            location_code: _liveCity || (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.LOCATION_CODE) || null,
             backup_json:   r.backup
         };
         fetch(_SB_URL + '/rest/v1/mosque_config_backups', {
@@ -17622,7 +17741,13 @@ function selectQPTakbir() {
         }
         if (!confirm(_cfgT('proposeConfirm', { name: name }))) return;
 
-        var locationCode = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.LOCATION_CODE) || 'tn.tunis';
+        // Même correction que _pushRemoteBackup ci-dessous : priorité à la ville
+        // réellement sélectionnée (JS_DATA.ucNowCityCODE), pas à la valeur figée
+        // du registre de déploiement -- et même normalisation (registre des
+        // mosquées toujours sans "_" final, cf. _installMosqueSelector._normCityCode).
+        var locationCode = (((typeof JS_DATA !== 'undefined' && JS_DATA.ucNowCityCODE) || '').replace(/_+$/, ''))
+                         || (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.LOCATION_CODE)
+                         || 'tn.tunis';
         var newId = _ucGenerateMosqueId(name, locationCode);
 
         window._ucToast && window._ucToast(_cfgT('sending'), 'ok');
@@ -21198,6 +21323,56 @@ function _ucPrependTopMenuLink(a) {
 (function _installAzkarMainPageInterlude() {
     var INTERLUDE_MS = 5000;
     var _pending = false;
+    var _pendingTimer = null;
+
+    // Garde-fou renforcé (retour utilisateur, 27/07/2026, suite à un bug
+    // rapporté où le compteur iqama restait invisible après l'azan) : le
+    // garde passif ci-dessous (vérifier txt.style.visibility juste avant de
+    // restaurer) ne couvre QUE le cas où stopAzkarDisplayFunction() a déjà
+    // tourné avant l'échéance des 5s. Or fadeOutAzkarTextFunction() (coeur)
+    // est programmée via un setTimeout brut, non annulable, SANS connaissance
+    // de stopAzkarFlag -- un cycle azkar laissé tourner en tâche de fond
+    // pendant des heures (ex. entre Asr et Maghrib) peut donc déclencher un
+    // DERNIER passage en 'fadeOutClass' (et donc un nouvel interlude) une
+    // fraction de seconde APRÈS que stopAzkarDisplayFunction() (3 min avant
+    // la prière suivante) ait déjà tout arrêté. Le garde passif suffisait
+    // dans ce cas précis (visibility déjà 'hidden'), mais restait fragile :
+    // on invalide maintenant explicitement, au moment même de l'arrêt, tout
+    // interlude en attente -- plus robuste qu'une simple vérification a
+    // posteriori, quelle que soit la source exacte de l'arrêt (limite des 3
+    // minutes avant chaque prière, écran noir, arrêt manuel...).
+    var _origStopAzkarDisplay = window.stopAzkarDisplayFunction;
+    function _cancelPendingInterlude(reason) {
+        if (_pendingTimer) { clearTimeout(_pendingTimer); _pendingTimer = null; }
+        _pending = false;
+        if (reason) _L('AZKAR', 'INTERLUDE_CANCEL', { reason: reason });
+    }
+    if (typeof _origStopAzkarDisplay === 'function') {
+        window.stopAzkarDisplayFunction = function () {
+            _cancelPendingInterlude('stop_azkar_display');
+            return _origStopAzkarDisplay.apply(this, arguments);
+        };
+    }
+    // Bug rapporté (retour utilisateur, 27/07/2026) : le mini tableau se
+    // retrouvait superposé en permanence à la page principale, alors même
+    // que isBigCounterActive valait déjà false (donc cleanupAzkarDisplayFunction
+    // -- coeur -- avait bien tourné et masqué correctement le mini tableau).
+    // Cause : stopAzkarDisplayFunction() ci-dessus n'est PAS le seul chemin de
+    // fin de séquence -- displayNextAzkarFunction() (coeur) appelle aussi
+    // hideAzkarDisplayFunction() DIRECTEMENT dès que currentAzkarIndex atteint
+    // la fin du tableau (fin naturelle de la séquence, pas un arrêt forcé).
+    // Sur la TOUTE DERNIÈRE page, notre interlude peut avoir déjà programmé
+    // sa restauration (5s) AVANT que cette fin naturelle ne survienne : notre
+    // callback de restauration réaffichait alors le mini tableau APRÈS que le
+    // coeur l'ait déjà masqué pour de bon -- plus rien ne le remasquait
+    // jamais ensuite (aucun nouveau cycle azkar à venir avant des heures).
+    var _origHideAzkarDisplay = window.hideAzkarDisplayFunction;
+    if (typeof _origHideAzkarDisplay === 'function') {
+        window.hideAzkarDisplayFunction = function () {
+            _cancelPendingInterlude('hide_azkar_display');
+            return _origHideAzkarDisplay.apply(this, arguments);
+        };
+    }
 
     function _setAzkarContainersClass(cls) {
         var h = document.getElementById('azkarContainerHorizontal');
@@ -21236,13 +21411,15 @@ function _ucPrependTopMenuLink(a) {
                 _pending = true;
                 _setAzkarContainersClass('fullScreenHiddenClass');
                 _hideMiniOverlayForInterlude();
-                setTimeout(function () {
+                _pendingTimer = setTimeout(function () {
+                    _pendingTimer = null;
                     _pending = false;
-                    // Si les azkar ont été arrêtés manuellement pendant la
-                    // pause (stopAzkarDisplayFunction masque la visibilité
-                    // du texte, contrairement à une simple fin de page), on
-                    // ne réaffiche pas le conteneur -- le coeur a déjà fait
-                    // le nettoyage complet (cleanupAzkarDisplayFunction),
+                    // Garde passif (second niveau, cf. _cancelPendingInterlude
+                    // ci-dessus pour le garde principal, direct) : si les
+                    // azkar ont malgré tout été arrêtés sans passer par
+                    // stopAzkarDisplayFunction (chemin non anticipé), on ne
+                    // réaffiche pas le conteneur -- le coeur a déjà fait le
+                    // nettoyage complet (cleanupAzkarDisplayFunction),
                     // inutile/risqué de réafficher la barre compacte ici.
                     var txt = document.getElementById('azkarTextDisplayHorizontal');
                     if (txt && txt.style.visibility === 'hidden') return;

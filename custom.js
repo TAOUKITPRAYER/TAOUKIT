@@ -54,6 +54,18 @@ function _ucHaversineKm(lat1, lng1, lat2, lng2) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// SHA-256 hex d'une chaîne (Web Crypto, disponible en WebView Android/GeckoView
+// modernes). Utilisé pour ne jamais transmettre/stocker le PIN admin en clair
+// dans Supabase (mosques.pin_hash, cf. administration à distance) -- SEUL ce
+// hash est poussé, jamais le PIN lui-même. DOIT rester strictement identique
+// à sha256Hex() côté Edge Function rapid-service (qui, lui, hache le PIN reçu
+// en clair par HTTPS pour le comparer à ce hash stocké -- le PIN en clair ne
+// transite donc que sur cet unique appel HTTPS, jamais persisté nulle part).
+async function _ucSha256Hex(str) {
+    var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+}
+
 // Traductions AR/FR/EN des titres des ~15 boîtes de dialogue de saisie
 // techniques (openInputDialogFunction, core) auparavant 100% arabe figé --
 // cf. audit langue 25/07/2026. Point d'entrée unique pour tout le fichier,
@@ -201,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.83';
+var CUSTOM_APP_VERSION = '11.88';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1359,9 +1371,28 @@ var _ucActiveIqamaSeqEpoch = -1;
             var el = document.getElementById(id);
             return el && el.className === 'visibleTransitionClass';
         });
+        // Angle mort corrige (27/07/2026) : isIqamaCounterActive est force a
+        // false plus bas SANS jamais logger sa valeur AVANT -- si le compteur
+        // tournait deja (fige ou non) a cet instant precis, aucune trace ne
+        // le prouvait. Capture ici, avant tout nettoyage.
+        //
+        // BUG DISTINCT ET PLUS GRAVE, decouvert en testant ce qui precede
+        // (27/07/2026) : isIqamaCounterActive/remainingSeconds sont des `let`
+        // au TOP-LEVEL de m2body.js (script core), PAS des proprietes de
+        // window -- `window.isIqamaCounterActive = false` (l'ecriture plus
+        // bas AVANT ce correctif) cree une propriete window totalement
+        // SEPAREE et INERTE : ca n'arrete jamais reellement le compteur reel
+        // que la boucle de tick du core lit en identifiant nu. Confirme par
+        // test direct : ecrire isIqamaCounterActive (nu) modifie la vraie
+        // variable, mais window.isIqamaCounterActive reste a son ancienne
+        // valeur, totalement decorrelee. Toujours utiliser l'identifiant NU,
+        // jamais window.isIqamaCounterActive / window.remainingSeconds.
+        var _wasCounterActive = (typeof isIqamaCounterActive !== 'undefined') && isIqamaCounterActive;
+        var _remAtResync      = (typeof remainingSeconds !== 'undefined') ? remainingSeconds : null;
         _L('RESYNC', 'STATE_BEFORE', {
             reason: reason || 'visibilitychange',
-            azanBlocked: _wasAzanBlocked, salatNabiVisible: _wasSalatNabiVis, iqamaTextShown: _iqamaTextWasShown
+            azanBlocked: _wasAzanBlocked, salatNabiVisible: _wasSalatNabiVis, iqamaTextShown: _iqamaTextWasShown,
+            counterActive: _wasCounterActive, remainingSeconds: _remAtResync, prayerInterval: (typeof currentPrayerInterval !== 'undefined') ? currentPrayerInterval : null
         });
 
         // 1) Etat de base : masque toutes les surcouches transitoires via leurs
@@ -1391,6 +1422,16 @@ var _ucActiveIqamaSeqEpoch = -1;
         if (typeof window.deactivateBlackScreen === 'function') window.deactivateBlackScreen();
         if (typeof window.hideAzkarDisplayFunction === 'function') window.hideAzkarDisplayFunction();
         if (typeof window.hideSlidesDisplayFunction === 'function') window.hideSlidesDisplayFunction();
+        // Reaffiche le tableau des horaires (cf. _installBlackScreenHidesPrayerTable,
+        // masque a BLACK_SHOW et normalement restaure seulement au prochain
+        // AZAN_SHOW reel) : une reprise active de l'appli doit sortir tout de
+        // suite du mode nocturne azkar/slides (deja stoppes ci-dessus), donc
+        // le tableau doit redevenir visible ici aussi, sans attendre le
+        // prochain azan.
+        ['prayerTimesContainerHorizontal', 'prayerTimesContainerVertical'].forEach(function (id) {
+            var _ptEl = document.getElementById(id);
+            if (_ptEl) _ptEl.style.visibility = 'visible';
+        });
         if (typeof window.hideElementFunction === 'function') {
             window.hideElementFunction('iqamaCounterContainerVertical');
             window.hideElementFunction('iqamaCounterContainerHorizontal');
@@ -1404,7 +1445,10 @@ var _ucActiveIqamaSeqEpoch = -1;
             var el = document.getElementById(id);
             if (el) el.className = 'hiddenClass';
         });
-        window.isIqamaCounterActive = false;
+        // Identifiant NU obligatoire -- cf. commentaire a STATE_BEFORE plus
+        // haut : window.isIqamaCounterActive est une propriete separee et
+        // inerte, sans effet sur le vrai compteur (let top-level, m2body.js).
+        isIqamaCounterActive = false;
         // Doua post-azan (custom.js _installPostAzanDoua) : son propre timer
         // de fermeture (20s) est lui aussi suspendu en arriere-plan — meme
         // logique que les surcouches core ci-dessus.
@@ -2129,10 +2173,41 @@ function _ensureQuranSelectionForAutoStart() {
     if (_qpReciterIdx < 0 || !JS_CUSTOM.ucReciters[_qpReciterIdx]) _qpReciterIdx = fallback.reciterIdx;
     if (_qpSurahNum < 1 || _qpSurahNum > 114) _qpSurahNum = fallback.surahNum;
 
-    _refreshQPReciters();
-    _refreshQPSurahs();
-    _refreshQPNowPlaying();
+    // _refreshQPXxx sont définies bien plus bas dans le fichier, hors de la
+    // portée lexicale de cette fonction -- appel via window.xxx (exposées
+    // juste après leurs définitions respectives), jamais en direct, sous
+    // peine de ReferenceError silencieuse (cf. commentaires à leurs
+    // définitions). Gardes défensives au cas où l'ordre de chargement change.
+    if (typeof window._refreshQPReciters === 'function')   window._refreshQPReciters();
+    if (typeof window._refreshQPSurahs === 'function')     window._refreshQPSurahs();
+    if (typeof window._refreshQPNowPlaying === 'function') window._refreshQPNowPlaying();
     return { reciterIdx: _qpReciterIdx, surahNum: _qpSurahNum };
+}
+
+// Charge le lecteur (audio.src) si ce n'est pas déjà fait -- appelé au boot
+// (différé, cf. _qpEnsureLoadedOnBoot) ET quand l'utilisateur active le
+// serveur/un récitateur APRÈS le chargement de la page (ex: juste après un
+// RESET) : dans ce dernier cas rien ne rechargeait jamais le lecteur avant ce
+// correctif (27/07/2026), le laissant grisé indéfiniment tant que
+// l'utilisateur n'avait pas tapé lui-même un récitateur/une sourate.
+// Guard sur audio.src : ne jamais interrompre une lecture déjà en cours.
+// Guard sur _qpHasPlayableSource() : sur une install fraîche (serveur off,
+// aucun récitateur device) ce garde évite une tentative HTTP vouée à échouer
+// contre C1..C10 -- même raison que _startQuranAutoPlayback (cf. son propre
+// commentaire) ; sans lui, testé le 27/07/2026 : SRC_NOT_SUPPORTED garanti
+// sur chaque boot tant que le serveur Coran est désactivé.
+function _qpAutoLoadIfNeeded() {
+    try {
+        if (typeof window._qpHasPlayableSource === 'function' && !window._qpHasPlayableSource()) return;
+        var qpAudioEl = document.getElementById('quranAudioPlayer');
+        if (qpAudioEl && qpAudioEl.src) return;
+        var sel = _ensureQuranSelectionForAutoStart();
+        if (!sel) return;
+        _qpRestoring = false;
+        if (typeof window._playQP === 'function') window._playQP(false);
+    } catch (e) {
+        _L('AUDIO', 'ERR', { action: 'qp_autoload', reason: (e && e.message) || String(e) });
+    }
 }
 
 // Le takbir (manuel ET auto-play) joue toujours sur un <audio> dédié, distinct
@@ -3976,6 +4051,12 @@ function toggleQuranServerEnabledFunction() {
         _clearQPCache();
         _qpStopProbeLoop();          // stopper la boucle de re-probe si active
         _qpServerState = 'unknown';  // réinitialiser l'état pour le prochain allumage
+    } else {
+        // Vient d'être activé (ex: juste après un RESET) : le lecteur n'a
+        // jamais été chargé au boot (serveur alors désactivé) -- le charger
+        // maintenant sinon il reste grisé tant que l'utilisateur ne tape pas
+        // lui-même un récitateur/une sourate (cf. _qpAutoLoadIfNeeded).
+        _qpAutoLoadIfNeeded();
     }
     refreshQuranServerUI();
 }
@@ -3994,8 +4075,13 @@ function editQuranServerUrlFunction() {
 }
 
 function toggleReciterFunction(i) {
-    JS_CUSTOM.ucReciters[i].enabled = +(!JS_CUSTOM.ucReciters[i].enabled);
+    var wasEnabled = (JS_CUSTOM.ucReciters[i].enabled == 1);
+    JS_CUSTOM.ucReciters[i].enabled = +(!wasEnabled);
     saveCustomSettingsFunction();
+    // Vient d'être activé : mêmes raisons que toggleQuranServerEnabledFunction
+    // -- si le lecteur n'a jamais chargé (ex: RESET, aucun récitateur actif au
+    // boot), le charger maintenant plutôt que de le laisser grisé.
+    if (!wasEnabled) _qpAutoLoadIfNeeded();
     refreshQuranServerUI();
 }
 
@@ -4909,96 +4995,6 @@ function _qpSavePosition() {
     } catch(e) {}
 }
 
-function _qpLoadPosition() {
-    try {
-        const raw = localStorage.getItem(_QP_STORAGE_KEY);
-        if (!raw) return null;
-        const data = JSON.parse(raw);
-        if (typeof data.reciterIdx === 'number' && typeof data.surahNum === 'number') return data;
-    } catch(e) {}
-    return null;
-}
-
-function _qpRestorePosition() {
-    const data = _qpLoadPosition();
-    const savedTime = parseFloat(localStorage.getItem(_QP_STORAGE_TIME_KEY)) || 0;
-
-    if (!data) { _qpRestoring = false; return; }
-    if (data.reciterIdx < 0 || data.surahNum < 1 || data.surahNum > 114) { _qpRestoring = false; return; }
-    if (!JS_CUSTOM.ucReciters[data.reciterIdx]) { _qpRestoring = false; return; }
-
-    _qpReciterIdx = data.reciterIdx;
-    _qpSurahNum   = data.surahNum;
-    _qpRestoring  = true;
-
-    const audio = document.getElementById('quranAudioPlayer');
-    if (!audio) { _qpRestoring = false; return; }
-
-    const seekTo = parseFloat(data.currentTime) || savedTime || 0;
-    const restoreSrc = _buildQPUrl(_qpReciterIdx, _qpSurahNum);  // ← toujours construite à partir des réglages actuels
-
-    /*console.log('[TAWKIT] 🎯 Restore target | reciter', _qpReciterIdx,
-                '| surah', _qpSurahNum,
-                '| seekTo', seekTo,
-                '| restoreSrc', restoreSrc);
-    */
-
-    let restoreCompleted = false;
-
-    function finishRestore() {
-        if (restoreCompleted) return;
-        restoreCompleted = true;
-        _qpRestoring = false;
-        audio.removeEventListener('canplay', onCanPlay);
-        audio.removeEventListener('seeked',  onSeeked);
-        audio.removeEventListener('error',   onError);
-    }
-
-    function onSeeked() {
-        finishRestore();
-    }
-
-    function onCanPlay() {
-        if (restoreCompleted) return;
-        if (seekTo > 0) {
-            try {
-                audio.currentTime = seekTo;
-                if (seekTo === 0) finishRestore();
-            } catch(e) {
-                finishRestore();
-            }
-        } else {
-            finishRestore();
-        }
-    }
-
-    function onError() {
-        const err  = audio.error;
-        const code = err ? err.code : '?';
-        const CODES = { 1: 'ABORTED', 2: 'NETWORK', 3: 'DECODE', 4: 'SRC_NOT_SUPPORTED' };
-        const label = CODES[code] || ('code=' + code);
-        _L('AUDIO','SKIP',{action:'restore',reciter:_qpReciterIdx,surah:_qpSurahNum,reason:label,src:restoreSrc});
-        finishRestore();
-    }
-
-    audio.removeEventListener('canplay', onCanPlay);
-    audio.removeEventListener('seeked',  onSeeked);
-    audio.removeEventListener('error',   onError);
-    audio.addEventListener('canplay', onCanPlay);
-    audio.addEventListener('seeked',  onSeeked);
-    audio.addEventListener('error',   onError);
-
-    audio.src = restoreSrc;
-    audio.load();
-
-    setTimeout(() => {
-        if (!restoreCompleted) {
-            _L('AUDIO','SKIP',{action:'restore',reason:'timeout_5s',reciter:_qpReciterIdx,surah:_qpSurahNum});
-            finishRestore();
-        }
-    }, 5000);
-}
-
 // ── Politique autoplay navigateur ────────────────────────────────────────
 // Le navigateur interdit audio.play() sans geste utilisateur préalable.
 // _audioUnlocked   : passe à true au 1er geste (clic / toucher / touche)
@@ -5571,8 +5567,17 @@ function _qpRestorePosition() {
     // Sauvegarde juste avant fermeture / F5
     window.addEventListener('beforeunload', _qpSavePosition);
 
-    // Restaurer la dernière position au chargement complet
-    window.addEventListener('load', _qpRestorePosition, { once: true });
+    // NB : la restauration de la dernière position au chargement se fait
+    // désormais via _earlyStateRestore (synchrone, tout en haut du fichier)
+    // + _qpAutoLoadIfNeeded (différé, cf. plus bas) -- l'ancien mécanisme basé
+    // sur window.addEventListener('load', _qpRestorePosition) a été retiré
+    // (27/07/2026) : il se déclenchait APRÈS _qpAutoLoadIfNeeded (l'évènement
+    // 'load' attend toutes les ressources) et réécrivait audio.src en repartant
+    // du extension .ogg SANS le repli .ogg→.mp3 (contrairement au vrai handler
+    // 'error' plus haut, volontairement inhibé pendant _qpRestoring via
+    // "erreur pendant restauration → gérée ailleurs") -- ce qui écrasait un
+    // lecteur déjà correctement chargé par un état bloqué en erreur ogg
+    // définitive (lecteur grisé malgré le chargement initial réussi).
 
     // Sonde de connectivité au démarrage (décalée pour laisser le DOM se stabiliser)
     if (JS_CUSTOM.ucQuranServerEnabled == 1 && JS_CUSTOM.ucQPServerProbeEnabled == 1) {
@@ -5857,6 +5862,35 @@ function closeQuranPlayerModal() {
 
 window.openQuranPlayerModal = openQuranPlayerModal;
 window.closeQuranPlayerModal = closeQuranPlayerModal;
+
+// ── Garantit que le lecteur est toujours "chargé" (audio.src défini) dès le
+// démarrage/reload, même si l'utilisateur n'a encore jamais tapé sur un
+// récitateur/une sourate. Sans ce garde-fou,
+// _qpReciterIdx/_qpSurahNum pouvaient apparaître "sélectionnés" dans l'UI
+// (via _ensureQuranSelectionForAutoStart, appelée seulement au moment du
+// déclenchement programmé) sans que audio.src ait jamais été renseigné :
+// le lecteur restait grisé/inerte jusqu'à un clic manuel, et surtout le
+// déclenchement programmé (_startQuranAutoPlayback) échouait silencieusement
+// dans le même état. forcePlay=false : on charge, on ne lance PAS la lecture.
+(function _qpEnsureLoadedOnBoot() {
+    // BUG (trouvé 27/07/2026) : cette IIFE s'exécute immédiatement, à la ligne
+    // même où le script la rencontre -- donc AVANT que l'IIFE anonyme plus bas
+    // (~ligne 5973-7606, qui définit _playQP et l'expose ensuite via
+    // window._playQP = _playQP) n'ait eu la moindre chance de s'exécuter.
+    // Un appel à _playQP ici, même correctement préfixé par window., échouait
+    // donc systématiquement (window._playQP n'existe pas encore à cet instant),
+    // et le catch avalait l'erreur en silence : le lecteur restait grisé après
+    // CHAQUE reload (pas seulement le scénario RESET), jusqu'à ce que
+    // l'utilisateur tape manuellement un récitateur/une sourate. Fix : différer
+    // via setTimeout(0) pour s'exécuter seulement après la fin du script
+    // synchrone (donc après que window._playQP existe), en plus de l'appel via
+    // window. (jamais en direct, portées différentes -- cf. commentaires à la
+    // définition de _playQP). Réutilise _qpAutoLoadIfNeeded (cf. sa définition
+    // pour le guard sur audio.src) -- même logique appelée aussi quand le
+    // serveur/un récitateur est activé après coup (toggleQuranServerEnabledFunction
+    // / toggleReciterFunction).
+    setTimeout(_qpAutoLoadIfNeeded, 0);
+})();
 
 // ── Onglet القراءة (texte du Coran) : bascule + catalogue riwayat ──────────
 // NOTE : ce bloc ne touche jamais à #qpAudioTabBody / l'audio en cours — on
@@ -6933,6 +6967,14 @@ function _refreshQPNowPlaying() {
     el.innerHTML = '&#9904;&nbsp;' + reciterName + '&nbsp;&ndash;&nbsp;' + surahName;
 }
 
+// Exposition explicite : _ensureQuranSelectionForAutoStart (bien plus haut
+// dans le fichier, hors de portée lexicale de ces helpers) en a besoin pour
+// rafraîchir l'UI sans lever de ReferenceError -- cf. window._playQP plus
+// bas pour le même constat sur _playQP/_qpStartEq/_showAutoplayUnlockModal.
+window._refreshQPReciters   = _refreshQPReciters;
+window._refreshQPSurahs     = _refreshQPSurahs;
+window._refreshQPNowPlaying = _refreshQPNowPlaying;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ── GESTION ÉTAT SERVEUR : probe · dot · bannière · lock UI ───────────────
 // ═══════════════════════════════════════════════════════════════════════════
@@ -7290,6 +7332,17 @@ function _playQP(forcePlay) {
     if (p && p.catch) p.catch(function() {});
     return p;
 }
+
+// Exposition explicite : _startQuranAutoPlayback (bien plus haut, hors de
+// portée lexicale de _playQP) en a besoin -- SANS ceci, tout appel à
+// _playQP() depuis _startQuranAutoPlayback levait une ReferenceError et
+// interrompait la fonction en silence, empêchant purement et simplement tout
+// déclenchement PROGRAMMÉ de la lecture du Coran (le bug remonté par
+// l'utilisateur : la sélection apparaissait faite mais rien ne se lancait
+// jamais automatiquement). Ce bug préexistait à toute modification de cette
+// session -- _startQuranAutoPlayback n'avait tout simplement jamais pu
+// atteindre son appel _playQP(true).
+window._playQP = _playQP;
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -8323,6 +8376,9 @@ function _qpStartEq() {
         }
     }
 }
+// Exposition explicite : _startQuranAutoPlayback (hors de portée lexicale) en
+// a besoin -- cf. window._playQP plus haut pour le même constat.
+window._qpStartEq = _qpStartEq;
 
 // Arrête l'animation et remet l'icône livre (appelé sur 'pause' / 'ended')
 function _qpStopEq() {
@@ -8392,6 +8448,9 @@ function _showAutoplayUnlockModal() {
     const el = document.getElementById('autoplayUnlockOverlay');
     if (el) el.classList.remove('aupHidden');
 }
+// Exposition globale : appelee depuis _startQuranAutoPlayback (scope global) --
+// meme constat que window._hideAutoplayUnlockModal juste en dessous.
+window._showAutoplayUnlockModal = _showAutoplayUnlockModal;
 function _hideAutoplayUnlockModal() {
     const el = document.getElementById('autoplayUnlockOverlay');
     if (el) el.classList.add('aupHidden');
@@ -8532,21 +8591,74 @@ function _doAudioUnlock() {
     // Un Date.now() ne doit jamais servir de référence à travers une pause de
     // durée inconnue -- on détecte donc tout passage en arrière-plan depuis le
     // dernier tick et on réamorce la référence au lieu de "corriger" dessus.
+    // RÉCIDIVE (rapport utilisateur, 27/07/2026, mosquée Youssef Ksibet) : le
+    // simple réamorçage ci-dessus évite bien le faux déclenchement immédiat
+    // du bug #26, mais déplace le problème -- si la pause en arrière-plan
+    // englobe déjà l'échéance réelle du compteur (temps caché >= temps qu'il
+    // restait au moment de la mise en veille), le réamorçage laisse le
+    // compteur reprendre un décompte NORMAL depuis sa valeur figée : il finit
+    // par atteindre 0 des heures plus tard et rejoue ALORS toute la séquence
+    // de fin d'iqama (texte + rideau noir, startIqamaSequenceFunction) hors
+    // de tout contexte réel. Constaté : séquence complète rejouée à 00h34
+    // pour un compteur figé depuis avant minuit. On mémorise donc aussi le
+    // temps restant AU MOMENT de la mise en veille (_remAtHide) : si le temps
+    // passé caché le dépasse déjà, le compteur est irrémédiablement périmé et
+    // on l'annule ENTIÈREMENT (comme les autres surcouches périmées dans
+    // _ucResyncPrayerSequence) plutôt que de le laisser reprendre et se
+    // déclencher en retard.
+    var _hiddenAtMs = -1;
+    var _remAtHide  = -1;
     var _wasHiddenSinceLastTick = false;
     document.addEventListener('visibilitychange', function () {
-        if (document.hidden) _wasHiddenSinceLastTick = true;
+        if (document.hidden) {
+            _wasHiddenSinceLastTick = true;
+            _hiddenAtMs = Date.now();
+            _remAtHide  = (typeof remainingSeconds !== 'undefined') ? remainingSeconds : -1;
+        }
     });
+
+    function _cancelStaleCounter(hiddenSec) {
+        _L('CTR', 'CANCEL_STALE', { hiddenSec: Math.round(hiddenSec), remAtHide: _remAtHide });
+        // Identifiant NU obligatoire -- window.isIqamaCounterActive est une
+        // propriete separee et inerte (cf. commentaire dans
+        // _ucResyncPrayerSequence), sans aucun effet sur le vrai compteur.
+        isIqamaCounterActive = false;
+        if (typeof window.hideElementFunction === 'function') {
+            window.hideElementFunction('iqamaCounterContainerVertical');
+            window.hideElementFunction('iqamaCounterContainerHorizontal');
+        }
+        ['iqamaPopupVertical', 'iqamaPopupHorizontal'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.className = 'hiddenClass';
+        });
+        if (typeof window.resetPrayerRowsStyleFunction === 'function') window.resetPrayerRowsStyleFunction();
+        _startTime = -1;
+        _startRem  = -1;
+    }
 
     ucOn(UC_EVT.COUNTDOWN_TICK, function(e) {
         var rem = e.remainingSeconds;
 
         // Premier tick, ou reprise après une mise en arrière-plan : la
         // référence précédente ne dit plus rien de fiable -- on réamorce
-        // sans appliquer de correction sur ce tick.
+        // sans appliquer de correction sur ce tick, SAUF si l'échéance est
+        // déjà passée pendant la pause (cf. commentaire ci-dessus).
         if (_startTime === -1 || _wasHiddenSinceLastTick) {
+            if (_hiddenAtMs !== -1 && _remAtHide >= 0) {
+                var hiddenSec = (Date.now() - _hiddenAtMs) / 1000;
+                if (hiddenSec >= _remAtHide) {
+                    _wasHiddenSinceLastTick = false;
+                    _hiddenAtMs = -1;
+                    _remAtHide  = -1;
+                    _cancelStaleCounter(hiddenSec);
+                    return;
+                }
+            }
             _startTime = Date.now();
             _startRem  = rem;
             _wasHiddenSinceLastTick = false;
+            _hiddenAtMs = -1;
+            _remAtHide  = -1;
             return;
         }
 
@@ -8571,6 +8683,8 @@ function _doAudioUnlock() {
         _startTime = -1;
         _startRem  = -1;
         _wasHiddenSinceLastTick = false;
+        _hiddenAtMs = -1;
+        _remAtHide  = -1;
     });
 
 })();
@@ -10995,8 +11109,51 @@ function forceHijriSyncFunction() {
     // État du fallback courant
     var _ucAzanFbEl         = null;   // élément <audio> en cours de tentative
     var _ucAzanFbIsFajr     = false;  // true si prière Fajr
+
+    // ── Poll natif avant fermeture réelle ───────────────────────────────────
+    // Sur appli native, le son AUDIBLE vient TOUJOURS de AzanPlaybackService
+    // (MediaPlayer natif, cf. plus haut) qui joue en dur un fichier bundlé
+    // (spec/audio/audio_azan.ogg / audio_fajr.ogg) -- alors que ce <audio> JS
+    // muted peut pointer vers une AUTRE source (serveur HTTP mosquée si
+    // ucAzanFromServer==1, ou fichier choisi dans le catalogue d'azan
+    // personnalisé, cf. _acApplyAzanToPlayer) dont la durée n'a aucune raison
+    // de correspondre à celle du fichier natif. Résultat observé en usage
+    // réel (boîtier) : l'événement 'ended' de ce <audio> JS arrive AVANT que
+    // le son natif (le seul réellement audible) ne soit terminé -> la page
+    // azan se ferme trop tôt alors que l'azan continue de sonner.
+    // Fix : ne relâcher le verrou qu'une fois AzanPlaybackService confirme
+    // (isAzanCurrentlyPlaying() == false) que la lecture native est bien
+    // terminée -- le timer de sécurité 300s reste le filet de secours ultime
+    // si ce polling ne se termine jamais (ex. bug natif).
+    var _ucNativePollTimer = null;
+    var _ucNativePollGen   = 0;
+
+    function _ucWaitNativeThenRelease(reason) {
+        if (!_ucHasNative('isAzanCurrentlyPlaying')) {
+            _ucReleaseAzanBlock(reason);
+            return;
+        }
+        var gen = ++_ucNativePollGen;
+        function _poll() {
+            if (gen !== _ucNativePollGen) return;   // cycle azan suivant démarré entretemps
+            if (!_ucBlockAzanHide)        return;   // déjà relâché (safety-timer, fermeture manuelle...)
+            var stillPlaying = false;
+            try { stillPlaying = !!window.AndroidMobile.isAzanCurrentlyPlaying(); } catch (err) {}
+            if (!stillPlaying) {
+                _L('AZAN', 'NATIVE_POLL_DONE', {reason: reason});
+                _ucReleaseAzanBlock(reason);
+                return;
+            }
+            _ucNativePollTimer = setTimeout(_poll, 1000);
+        }
+        _L('AZAN', 'NATIVE_POLL_WAIT', {reason: reason, note: 'js_audio_ended_native_still_playing'});
+        _poll();
+    }
+
     _ucRegisterCleanup(function() {
         if (_ucAzanSafetyTimer) { clearTimeout(_ucAzanSafetyTimer); _ucAzanSafetyTimer = null; }
+        if (_ucNativePollTimer) { clearTimeout(_ucNativePollTimer); _ucNativePollTimer = null; }
+        _ucNativePollGen++;
         _ucBlockAzanHide = false;
         _ucAzanFbEl      = null;
     });
@@ -11127,12 +11284,17 @@ function forceHijriSyncFunction() {
             _ucLastAzanAudioEl.removeEventListener('error', _ucAzanFallbackOrHold);
         }
         if (_ucAzanSafetyTimer) { clearTimeout(_ucAzanSafetyTimer); _ucAzanSafetyTimer = null; }
+        if (_ucNativePollTimer) { clearTimeout(_ucNativePollTimer); _ucNativePollTimer = null; }
+        _ucNativePollGen++;   // invalide tout polling natif d'un cycle azan précédent
 
         _ucAzanFbEl         = audioEl;
         _ucAzanFbIsFajr     = isFajr;
         _ucLastAzanAudioEl  = audioEl;
         _ucBlockAzanHide    = true;
-        _ucAzanReleaseFunc  = _ucReleaseAzanBlock;
+        // 'ended' de ce <audio> JS (muted côté natif) ne ferme plus la popup
+        // directement : il ne fait que déclencher l'attente de la fin RÉELLE
+        // côté natif (cf. _ucWaitNativeThenRelease ci-dessus).
+        _ucAzanReleaseFunc  = function() { _ucWaitNativeThenRelease('audio_ended'); };
 
         audioEl.addEventListener('ended', _ucAzanReleaseFunc);
         audioEl.addEventListener('error', _ucAzanFallbackOrHold);
@@ -11425,6 +11587,83 @@ function forceHijriSyncFunction() {
         }
     })();
 
+})();
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── MARQUEE CSS FLUIDE : anime le bandeau défilant (page principale ET
+//    ticker azan, m2body.js/custom.js réutilisent les mêmes fonctions
+//    globales) via une animation CSS @keyframes plutôt que le
+//    requestAnimationFrame + réécriture de style.transform du core.
+//
+//    Constat (retour utilisateur, boîtier TV) : léger saccadé visible malgré
+//    le translate3d+rAF déjà en place côté core. Cause : même avec un calcul
+//    de vitesse correct (delta-temps, cf. m2body.js animateMarquee), cette
+//    animation reste pilotée PAR LE THREAD JS PRINCIPAL -- chaque frame doit
+//    repasser par un callback JS qui réécrit .style.transform. Le moindre
+//    à-coup de ce thread (tick d'horloge chaque seconde, mise à jour d'un
+//    autre overlay, etc.) retarde le prochain rAF -> le pas de position
+//    suivant est plus grand que la normale -> saccade visible, même si la
+//    vitesse MOYENNE reste juste.
+//    Une animation CSS @keyframes est calculée par le thread de composition,
+//    totalement indépendant du thread JS une fois démarrée : aucune saccade
+//    tant que le JS ne bloque pas le rendu lui-même (repaint complet, rare).
+//    Remplace entièrement initMarqueePosition/startMarqueeAnimation/
+//    stopMarqueeAnimation (identifiants globaux du core, cf. Golden Rule —
+//    on ne modifie jamais m2body.js) ; animateMarquee (rAF) n'a alors plus
+//    aucun appelant, laissée intacte mais inerte.
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installSmoothMarqueeCss() {
+    var _styleEl = document.createElement('style');
+    _styleEl.textContent =
+        '@keyframes ucMarqueeSlide {' +
+        '  from { transform: translate3d(var(--uc-mq-start, 0px), 0, 0); }' +
+        '  to   { transform: translate3d(var(--uc-mq-end, 0px), 0, 0); }' +
+        '}';
+    document.head.appendChild(_styleEl);
+
+    window.initMarqueePosition = function(el) {
+        if (!el) return;
+        var parentContainer = el.parentElement;
+        if (!parentContainer) return;
+
+        el.style.display    = 'inline-block';
+        el.style.whiteSpace = 'nowrap';
+        el.style.overflow   = 'visible';
+        el.style.willChange = 'transform';
+        parentContainer.style.overflow = 'hidden';
+
+        // Variables globales du core (let, portée script partagée) réutilisées
+        // telles quelles par le reste de l'appli -- cf. _showAzanTicker qui lit
+        // directement marqueeElement.
+        marqueeElement = el;
+        marqueeWidth   = el.offsetWidth;
+        containerWidth = parentContainer.offsetWidth;
+
+        var startPx = (marqueeDirection === 'left') ? containerWidth : -marqueeWidth;
+        var endPx   = (marqueeDirection === 'left') ? -marqueeWidth  : containerWidth;
+
+        el.style.animation = 'none';   // reset avant repose des variables (evite un saut si deja anime)
+        el.style.setProperty('--uc-mq-start', startPx + 'px');
+        el.style.setProperty('--uc-mq-end',   endPx   + 'px');
+        el.style.transform = 'translate3d(' + startPx + 'px, 0, 0)';   // position de depart avant meme le demarrage
+    };
+
+    window.startMarqueeAnimation = function() {
+        if (!marqueeElement) return;
+        var distance = containerWidth + marqueeWidth;
+        var speed    = JS_DATA.ucMovingMessagesSpeed || 55;   // px/s, cf. settings-defaults.js (40-70)
+        var duration = distance / speed;
+        if (!isFinite(duration) || duration <= 0) duration = 15;
+        marqueeElement.style.animation = 'ucMarqueeSlide ' + duration.toFixed(2) + 's linear infinite';
+    };
+
+    window.stopMarqueeAnimation = function() {
+        if (marqueeElement) marqueeElement.style.animation = 'none';
+    };
+
+    _L('SYS', 'PATCH', {fn: 'initMarqueePosition/startMarqueeAnimation/stopMarqueeAnimation',
+        for: 'smooth_css_marquee'});
 })();
 
 
@@ -11765,8 +12004,40 @@ function forceHijriSyncFunction() {
     _watchClass('azkarContainerHorizontal', 'fullScreenVisibleClass', 'azkar_hr');
     _watchClass('azkarContainerVertical',   'fullScreenVisibleClass', 'azkar_vr');
 
-   
+
 }());
+
+// ── Masquer le tableau des horaires dès l'apparition du rideau noir
+// (BLACK_SHOW), et le garder masqué jusqu'au PROCHAIN vrai azan (AZAN_SHOW)
+// -- PAS jusqu'à BLACK_HIDE. #blackScreenHorizontal/Vertical (style0.css) a
+// une transition CSS de 5s (balayage façon rideau) : sans hook sur BLACK_SHOW,
+// le tableau restait visible EN DESSOUS pendant tout le balayage. Mais
+// restaurer sur BLACK_HIDE était incorrect : après Isha (et plus généralement
+// après n'importe quelle prière), le rideau se lève rapidement puis
+// displayNextAzkarFunction()/decideNextAzkarOrSlideFunction() (m2body.js)
+// enchaînent les azkar/slides EN BOUCLE INDÉFINIE (toute la nuit jusqu'au
+// prochain azan), avec une pause de 7s entre chaque cycle complet où l'écran
+// principal redevient visible -- BLACK_HIDE étant déjà passé, le tableau
+// réapparaissait alors, superposé, à chacune de ces pauses (signalé par
+// l'utilisateur : visible "durant la période d'affichage des azkar... quand
+// l'écran principal est visible"). Le tableau doit donc rester masqué tout du
+// long de cette période post-salat, jusqu'à ce qu'un nouveau cycle de prière
+// réel commence.
+(function _installBlackScreenHidesPrayerTable() {
+    var _containers = ['prayerTimesContainerHorizontal', 'prayerTimesContainerVertical'];
+    ucOn(UC_EVT.BLACK_SHOW, function () {
+        _containers.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.style.visibility = 'hidden';
+        });
+    });
+    ucOn(UC_EVT.AZAN_SHOW, function () {
+        _containers.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.style.visibility = 'visible';
+        });
+    });
+})();
 
 /* ═══════════════════════════════════════════════════════════════════════════
    SÉQUENCE HADITH AVANT IQAMA
@@ -13231,6 +13502,7 @@ function selectQPTakbir() {
     var _remoteCache    = [];   // dernier résultat _ucFetchRemoteListByCity pour _selCityCode
     var _cityItemsCache = [];   // items {code,name,latin,ar} du dernier _renderCityList, pour le filtre de recherche
     var _citySearchInput = null;
+    var _citiesLoading   = false;   // true pendant le chargement async de _loadCities() -- cf. _applyCityFilter
 
     // ── Couche de traduction VISUELLE uniquement (n'altère jamais les codes/
     // IDs sous-jacents ni data/<CC>/<cc>.js, qui restent en écriture latine
@@ -13357,15 +13629,28 @@ function selectQPTakbir() {
         try { return localStorage.getItem('UC_MOSQUE_ID') || ''; } catch(e) { return ''; }
     }
 
+    // Certaines villes existent en double dans data/TN/*.js (ex. "tn.monastir"
+    // ET "tn.monastir_", même affichage "Monastir   منستير" une fois rendu,
+    // cf. _renderCityList/_CITY_NAME_AR) — un pur artefact de la source de
+    // données de calcul des horaires, indépendant de LOCATION_CODE utilisé
+    // par le registre des mosquées (toujours sans underscore). Sans cette
+    // normalisation, choisir la variante "_" affichait une liste vide alors
+    // que des mosquées existent bel et bien pour cette ville.
+    function _normCityCode(code) {
+        return String(code || '').replace(/_+$/, '');
+    }
+
     // ── Recharge la liste distante pour _selCityCode, puis rafraîchit ──────
+    // Rendu en 2 temps : d'abord les entrées locales (registre embarqué,
+    // toujours disponibles instantanément hors-ligne), puis complétées par
+    // les entrées distantes une fois la requête Supabase résolue — évite que
+    // l'attente réseau (parfois longue/en échec) laisse la liste vide durant
+    // plusieurs secondes alors que des mosquées locales existent déjà.
     function _refreshForCity(filter) {
-        if (_list) _list.innerHTML = '<div class="ucMosqueEmpty">…</div>';
-        if (typeof window._ucFetchRemoteListByCity !== 'function') {
-            _remoteCache = [];
-            _renderList(filter);
-            return;
-        }
-        window._ucFetchRemoteListByCity(_selCityCode, function(rows) {
+        _remoteCache = [];
+        _renderList(filter);
+        if (typeof window._ucFetchRemoteListByCity !== 'function') return;
+        window._ucFetchRemoteListByCity(_normCityCode(_selCityCode), function(rows) {
             _remoteCache = rows;
             _renderList(filter);
         });
@@ -13386,10 +13671,11 @@ function selectQPTakbir() {
         // 2) Entrées locales embarquées (registre APK) situées dans la ville choisie —
         //    continuent de fonctionner hors-ligne, aucune régression pour les
         //    mosquées déjà déployées avant le passage au répertoire distant.
+        var normSelCity = _normCityCode(_selCityCode);
         Object.keys(reg).forEach(function(id) {
             if (id === 'anonymous.generic') return;
             var e = reg[id];
-            if (e.LOCATION_CODE === _selCityCode) {
+            if (_normCityCode(e.LOCATION_CODE) === normSelCity) {
                 items.push({ id: id, name: e.MOSQUE_NAME, label: e.LABEL, remote: false });
             }
         });
@@ -13689,6 +13975,7 @@ function selectQPTakbir() {
         _selCountryName = countryName;
         _refreshLocButtons();
         if (_citySearchInput) _citySearchInput.value = '';
+        _citiesLoading = true;
         var list = document.getElementById('ucAnonCityList');
         if (list) list.innerHTML = '<div class="ucMosqueEmpty">…</div>';
         var url = 'data/' + countryCode + '/' + countryCode.toLowerCase() + '.js?ev=' + Date.now();
@@ -13700,9 +13987,11 @@ function selectQPTakbir() {
             // le vrai sélecteur de ville core, cf. loadCountryCitiesFunction) —
             // avant qu'un autre chargement ne puisse l'écraser entre-temps.
             var cities = (typeof JS_CITIES_DATA !== 'undefined' && JS_CITIES_DATA) ? JS_CITIES_DATA.slice() : [];
+            _citiesLoading = false;
             _renderCityList(cities);
         };
         s.onerror = function() {
+            _citiesLoading = false;
             if (list) list.innerHTML = '<div class="ucMosqueEmpty">خطأ | Erreur</div>';
         };
         document.body.appendChild(s);
@@ -13740,6 +14029,15 @@ function selectQPTakbir() {
     function _applyCityFilter(filter) {
         var list = document.getElementById('ucAnonCityList');
         if (!list) return;
+        // Tant que _loadCities() n'a pas fini (script data/<CC>/<cc>.js encore en
+        // vol), _cityItemsCache est vide : sans ce garde, taper une recherche
+        // pendant ce court instant remplaçait le "…" de chargement par "Aucun
+        // résultat" (faux négatif trompeur — la ville existe bien, elle n'est
+        // juste pas encore arrivée). _renderCityList() ré-appelle déjà ce filtre
+        // avec la valeur de recherche courante une fois le chargement terminé
+        // (cf. sa dernière ligne), donc rien à refaire ici une fois _citiesLoading
+        // repassé à false : la frappe de l'utilisateur n'est jamais perdue.
+        if (_citiesLoading) return;
         var q = (filter || '').toLowerCase().trim();
         var items = q ? _cityItemsCache.filter(function(it) {
             return it.latin.indexOf(q) !== -1 || it.ar.indexOf(q) !== -1;
@@ -18657,6 +18955,36 @@ function _ucDefaultAdminPin() {
     function _setPin(pin) {
         JS_CUSTOM[PIN_KEY] = pin;
         if (typeof saveCustomSettingsFunction === 'function') saveCustomSettingsFunction();
+        _pushPinHash(pin);
+    }
+
+    // Pousse le hash (jamais le PIN en clair) vers mosques.pin_hash --
+    // condition nécessaire pour que l'administration à distance (téléphone,
+    // cf. _installRemoteMosqueAdmin) puisse valider ce PIN côté serveur
+    // (rapid-service, mode remote_config_update). Best-effort, silencieux :
+    // un échec réseau ici ne doit jamais bloquer/alarmer sur un simple
+    // changement de PIN local, qui reste effectif immédiatement sur cet
+    // appareil quoi qu'il arrive.
+    function _pushPinHash(pin) {
+        var mid = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '';
+        if (!mid) return;
+        var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+                   || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+        var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+                   || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+        _ucSha256Hex(pin).then(function (hash) {
+            fetch(_SB_URL + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid), {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type':  'application/json',
+                    'apikey':         _SB_KEY,
+                    'Authorization': 'Bearer ' + _SB_KEY,
+                    'Prefer':         'return=minimal',
+                },
+                body: JSON.stringify({ pin_hash: hash }),
+            }).catch(function () {});
+            _L('CFG', 'PIN_HASH_PUSHED', { mosque_id: mid });
+        }).catch(function () {});
     }
 
     // ── Boutons apres eidAdha ─────────────────────────────────────────────
@@ -19079,10 +19407,42 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
                 fitr_time:   (d.ucTimeOfEidFITR          || '').trim(),
                 adha_enabled: d.ucActivateEidADHA        || 0,
                 adha_time:   (d.ucTimeOfEidADHA          || '').trim()
-            }
+            },
+            // Réglages Coran (JS_CUSTOM, pas JS_DATA -- cf. administration à
+            // distance, _installRemoteMosqueAdmin plus bas). Un seul récitateur
+            // représenté (le premier actif de JS_CUSTOM.ucReciters) : la liste
+            // complète des récitateurs n'est pas un réglage "mosquée" au sens
+            // de cette table, seul celui effectivement utilisé l'est.
+            quran_settings: _buildQuranSettingsPayload()
         };
     }
     window._buildAdminPayload = _buildAdminPayload;   // accessible depuis console
+
+    // NB : pas de champ "enabled" par prière -- depuis le relookage en
+    // tableau (_buildQuranAutoStartTableHtml, _isAutoStartEnabledForPrayer),
+    // une prière est active dès que son délai (minutes) est > 0, il n'existe
+    // plus de case "actif" séparée dans le comportement réel de l'app (les
+    // clés ucStartQuranBeforeAzanXxxEnabled restent dans JS_CUSTOM_DEFAULTS à
+    // titre historique/diagnostic, mais ne pilotent plus rien). "days" est le
+    // masque 7 caractères (dimanche→samedi, '1'=actif) déjà utilisé par cette
+    // même grille locale -- repris ici à l'identique pour l'administration à
+    // distance, cf. discussion 26/07/2026.
+    function _buildQuranSettingsPayload() {
+        var c = JS_CUSTOM;
+        var _reciters = Array.isArray(c.ucReciters) ? c.ucReciters : [];
+        var _active   = _reciters.filter(function(r) { return r.enabled == 1; });
+        return {
+            enabled: c.ucStartQuranBeforeAzan || 0,
+            prayers: {
+                FAJR: { delay: c.ucStartQuranBeforeAzanFajr || 0, days: c.ucStartQuranBeforeAzanFajrDays || '1111111' },
+                DOHR: { delay: c.ucStartQuranBeforeAzanDohr || 0, days: c.ucStartQuranBeforeAzanDohrDays || '1111111' },
+                ASSR: { delay: c.ucStartQuranBeforeAzanAsr  || 0, days: c.ucStartQuranBeforeAzanAsrDays  || '1111111' },
+                MGRB: { delay: c.ucStartQuranBeforeAzanMgrb || 0, days: c.ucStartQuranBeforeAzanMgrbDays || '1111111' },
+                ISHA: { delay: c.ucStartQuranBeforeAzanIsha || 0, days: c.ucStartQuranBeforeAzanIshaDays || '1111111' }
+            },
+            reciterDir: _active.length ? _active[0].dir : ''
+        };
+    }
 
     // ── Overlay preview ───────────────────────────────────────────────────
     var ov = document.createElement('div');
@@ -19771,6 +20131,35 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             JS_DATA.ucActivateEidADHA = row.eid.adha_enabled || 0;
             JS_DATA.ucTimeOfEidADHA   = row.eid.adha_time    || '';
         }
+        // Réglages Coran (JS_CUSTOM, pas JS_DATA -- cf. _buildQuranSettingsPayload
+        // plus haut pour le sens inverse, administration à distance).
+        if (row.quran_settings) {
+            var qs = row.quran_settings;
+            JS_CUSTOM.ucStartQuranBeforeAzan = qs.enabled || 0;
+            if (qs.prayers) {
+                // Pas de clé "Enabled" ici : une prière Coran est active dès
+                // que son délai (secondes) est > 0 -- cf. commentaire de
+                // _buildQuranSettingsPayload plus haut, même convention que
+                // la grille locale _buildQuranAutoStartTableHtml.
+                var _qMap = {
+                    FAJR: ['ucStartQuranBeforeAzanFajr', 'ucStartQuranBeforeAzanFajrDays'],
+                    DOHR: ['ucStartQuranBeforeAzanDohr', 'ucStartQuranBeforeAzanDohrDays'],
+                    ASSR: ['ucStartQuranBeforeAzanAsr',  'ucStartQuranBeforeAzanAsrDays'],
+                    MGRB: ['ucStartQuranBeforeAzanMgrb', 'ucStartQuranBeforeAzanMgrbDays'],
+                    ISHA: ['ucStartQuranBeforeAzanIsha', 'ucStartQuranBeforeAzanIshaDays']
+                };
+                Object.keys(_qMap).forEach(function(k) {
+                    var p = qs.prayers[k];
+                    if (!p) return;
+                    JS_CUSTOM[_qMap[k][0]] = p.delay || 0;
+                    JS_CUSTOM[_qMap[k][1]] = p.days   || '1111111';
+                });
+            }
+            if (qs.reciterDir && Array.isArray(JS_CUSTOM.ucReciters)) {
+                JS_CUSTOM.ucReciters.forEach(function(r) { r.enabled = (r.dir === qs.reciterDir) ? 1 : 0; });
+            }
+            if (typeof saveCustomSettingsFunction === 'function') saveCustomSettingsFunction();
+        }
         try { localStorage.setItem('JS_DATA', JSON.stringify(JS_DATA)); } catch(e) {}
         if (typeof calculateAndDisplayTimesFunction === 'function')
             calculateAndDisplayTimesFunction();
@@ -19821,7 +20210,94 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         window._ucSyncFromSupabase(mid, true);
     });
 
+    // ── Actions à distance (onglet "Actions" de _installRemoteMosqueAdmin) ──
+    // Dispatché par MainActivity.kt (dispatchRemoteAction) à la réception du
+    // push silencieux OneSignal type="remote_action" -- aucune écriture
+    // Supabase associée (contrairement à ucConfigSync), ce sont des commandes
+    // ponctuelles "fais ça maintenant", pas des changements de configuration.
+    window.addEventListener('ucRemoteAction', function (e) {
+        var action = (e.detail && e.detail.action) || '';
+        var target = (e.detail && e.detail.target) || '';
+        _L('REMOTE_ACTION', 'FIRE', { action: action, target: target });
+
+        if (action === 'quran_toggle') {
+            var qAudio = document.getElementById('quranAudioPlayer');
+            if (qAudio) {
+                if (qAudio.paused) qAudio.play().catch(function () {}); else qAudio.pause();
+            }
+            return;
+        }
+        if (action === 'azan_preview') {
+            if (typeof window._acPreviewCurrentlySelected === 'function') window._acPreviewCurrentlySelected();
+            return;
+        }
+        if (action === 'light_on' || action === 'light_off') {
+            var isOn = (action === 'light_on');
+            var URL_KEY = {
+                ampliExt: isOn ? 'ucLightAmpliExtOnUrl' : 'ucLightAmpliExtOffUrl',
+                ampliInt: isOn ? 'ucLightAmpliIntOnUrl' : 'ucLightAmpliIntOffUrl',
+                minaret:  isOn ? 'ucLightMinaretOnUrl'  : 'ucLightMinaretOffUrl',
+                mihrab:   isOn ? 'ucLightMihrabOnUrl'   : 'ucLightMihrabOffUrl'
+            }[target];
+            var url = URL_KEY && (JS_CUSTOM[URL_KEY] || '').trim();
+            if (url) _ucHttpCall(url, 'remote_' + target + '_' + action);
+            return;
+        }
+    });
+
     _L('CUSTOM', 'INIT', { item: 'configSync' });
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POLLING DE SECOURS POUR L'ADMINISTRATION À DISTANCE (filet de sécurité)
+// ─────────────────────────────────────────────────────────────────────────────
+// Le chemin rapide est le push OneSignal silencieux (cf. MainActivity.kt
+// addForegroundLifecycleListener + rapid-service mode remote_config_update),
+// mais un push peut échouer/être retardé (Doze, réseau) -- ce polling léger
+// (toutes les ~18s, une seule colonne updated_at lue à chaque fois) rattrape
+// systématiquement tout changement sous ~20s au pire, même en son absence.
+// Tourne sur tout appareil ayant une mosquée sélectionnée (pas seulement les
+// box) : l'auto-limitation vient de webView.pauseTimers() (custom.js ne
+// s'exécute que quand l'app est réellement au premier plan) -- même
+// mécanisme, aucun cas particulier nécessaire pour distinguer téléphone/box.
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installRemoteConfigPolling() {
+    var POLL_MS = 18000;
+    var _lastKnownUpdatedAt = null;
+    var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+               || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+    var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+               || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+
+    function _poll() {
+        var mid = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '';
+        if (!mid) return;
+        fetch(_SB_URL + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid) + '&select=updated_at',
+              { headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY } })
+        .then(function(r) { return r.json(); })
+        .then(function(rows) {
+            var row = rows && rows[0];
+            if (!row || !row.updated_at) return;
+            if (_lastKnownUpdatedAt === null) {
+                // Amorçage silencieux : mémorise la valeur courante sans rien
+                // déclencher -- évite un reload parasite juste après le
+                // chargement (on ne sait pas encore si ça a "changé" depuis).
+                _lastKnownUpdatedAt = row.updated_at;
+                return;
+            }
+            if (row.updated_at !== _lastKnownUpdatedAt) {
+                _lastKnownUpdatedAt = row.updated_at;
+                _L('SYNC', 'POLL_CHANGE_DETECTED', { mosque_id: mid, updated_at: row.updated_at });
+                if (typeof window._ucSyncFromSupabase === 'function') window._ucSyncFromSupabase(mid, true);
+            }
+        })
+        .catch(function() {}); // silencieux -- prochain cycle réessaiera
+    }
+
+    setTimeout(_poll, 5000);
+    setInterval(_poll, POLL_MS);
+
+    _L('CUSTOM', 'INIT', { item: 'remoteConfigPolling' });
 })();
 
 (function _installAdminBtnTooltips() {
@@ -20730,6 +21206,27 @@ function _ucPrependTopMenuLink(a) {
         if (v) v.className = cls;
     }
 
+    // Bug rapporté (retour utilisateur, boîtier) : pendant cette pause, la
+    // page principale réapparaît bien (l'azkar plein écran est masqué), mais
+    // le tableau STANDARD des prières manquait -- remplacé par la barre
+    // compacte "mini" (délais d'iqama + prières sur une ligne). Cause : le
+    // coeur (m2body.js, prepareAzkarDisplayFunction) affiche cette barre
+    // compacte UNE SEULE FOIS au tout début de la séquence azkar (elle reste
+    // ensuite invisible tout du long, cachée SOUS le conteneur azkar plein
+    // écran -- personne ne remarque qu'elle est restée active). Notre
+    // interlude masque le conteneur azkar SANS le savoir, ce qui révèle cette
+    // barre compacte au lieu du vrai tableau standard qu'elle recouvre.
+    // Fix : basculer nous-mêmes cette barre (mêmes fonctions coeur que
+    // prepareAzkarDisplayFunction/cleanupAzkarDisplayFunction) en miroir de
+    // notre propre bascule du conteneur azkar -- idempotent, sans dépendre
+    // d'aucun état interne du coeur.
+    function _hideMiniOverlayForInterlude() {
+        if (typeof window.hidePrayerTimesOverlayFunction === 'function') window.hidePrayerTimesOverlayFunction();
+    }
+    function _restoreMiniOverlayAfterInterlude() {
+        if (typeof window.showPrayerTimesOverlayFunction === 'function') window.showPrayerTimesOverlayFunction(false);
+    }
+
     function _attach(el) {
         if (!el) return;
         var _prevClass = el.className;
@@ -20738,15 +21235,19 @@ function _ucPrependTopMenuLink(a) {
             if (cur === 'fadeOutClass' && _prevClass !== 'fadeOutClass' && !_pending) {
                 _pending = true;
                 _setAzkarContainersClass('fullScreenHiddenClass');
+                _hideMiniOverlayForInterlude();
                 setTimeout(function () {
                     _pending = false;
                     // Si les azkar ont été arrêtés manuellement pendant la
                     // pause (stopAzkarDisplayFunction masque la visibilité
                     // du texte, contrairement à une simple fin de page), on
-                    // ne réaffiche pas le conteneur.
+                    // ne réaffiche pas le conteneur -- le coeur a déjà fait
+                    // le nettoyage complet (cleanupAzkarDisplayFunction),
+                    // inutile/risqué de réafficher la barre compacte ici.
                     var txt = document.getElementById('azkarTextDisplayHorizontal');
                     if (txt && txt.style.visibility === 'hidden') return;
                     _setAzkarContainersClass('fullScreenVisibleClass');
+                    _restoreMiniOverlayAfterInterlude();
                 }, INTERLUDE_MS);
             }
             _prevClass = cur;
@@ -22602,10 +23103,26 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _L('AUDIO', 'FIRE', { action: 'restore_default_azan', group: groupKey, src: el.src });
     }
 
+    // Miroir natif (SharedPreferences, cf. MobileJsBridge.syncAzanCatalogSelection)
+    // du choix de muezzin -- necessaire pour qu'AzanPlaybackService (lecture
+    // reelle, meme appli fermee/arriere-plan, cf. plus haut dans ce fichier)
+    // joue VRAIMENT le muezzin choisi au lieu de toujours retomber sur le son
+    // par defaut de l'appli. Sans cet appel, la selection ne changeait que le
+    // <audio> JS (muet des que le natif prend la main) -- jamais le son
+    // reellement audible.
+    function _acSyncSelectionToNative() {
+        if (!_ucHasNative('syncAzanCatalogSelection')) return;
+        window.AndroidMobile.syncAzanCatalogSelection(
+            JS_CUSTOM.ucAzanFajrSelected || '',
+            JS_CUSTOM.ucAzanGeneralSelected || ''
+        );
+    }
+
     // Réapplique les choix mémorisés après le délai de la sonde serveur (3 s,
     // cf. _redirectAzanAudio plus haut) pour être certain d'avoir le dernier mot sur .src.
     function _acReapplySelections() {
         _acLoadCatalog().then(function () {
+            _acSyncSelectionToNative();
             if (JS_CUSTOM.ucAzanFajrSelected) {
                 var f = _acFindItem(JS_CUSTOM.ucAzanFajrSelected);
                 if (f) _acApplyAzanToPlayer('fajr', f);
@@ -22657,6 +23174,31 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _acStopPreviewUI();
     }
 
+    function _acFindItemById(id) {
+        var groups = (_acCatalog && _acCatalog.groups) || [];
+        for (var i = 0; i < groups.length; i++) {
+            var items = groups[i].items || [];
+            for (var j = 0; j < items.length; j++) {
+                if (items[j].id === id) return items[j];
+            }
+        }
+        return null;
+    }
+
+    // Action "إدارة عن بعد" (cf. _installRemoteMosqueAdmin, onglet Actions) :
+    // rejoue l'aperçu du son d'azan ACTUELLEMENT configuré (ucAzanGeneralSelected),
+    // exactement comme si l'admin avait tapé sur acPlayBtn dans ce catalogue --
+    // ne déclenche PAS le vrai cycle "heure d'azan" (popup, rideau noir, service
+    // natif) : juste un aperçu audio pour vérifier que le son/l'ampli fonctionnent.
+    window._acPreviewCurrentlySelected = function () {
+        function _doPreview() {
+            var id = JS_CUSTOM.ucAzanGeneralSelected;
+            var item = id && _acFindItemById(id);
+            if (item) _acTogglePreview(item, null);
+        }
+        if (_acCatalog) { _doPreview(); } else { _acLoadCatalog().then(_doPreview); }
+    };
+
     // ── 4) Téléchargement natif (Kotlin/HttpURLConnection, pas de CORS) ───
     var _acDownloading   = {};   // id -> true pendant qu'un téléchargement natif est en cours
     var _acPendingSelect = {};   // id -> groupKey en attente d'être sélectionné une fois le téléchargement réglé
@@ -22695,6 +23237,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         // chemin normal.
         _acDownloadTimeouts[item.id] = setTimeout(function () {
             _L('AZANCAT', 'SKIP', { action: 'download_timeout', id: item.id });
+            if (window._ucToast) window._ucToast('خطأ التحميل | Échec du téléchargement (délai dépassé)', 'error');
             _settle(false);
         }, _AC_DOWNLOAD_TIMEOUT_MS);
 
@@ -22716,6 +23259,14 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                     _settle(true);
                 } else if (st.status === 'error') {
                     _L('AZANCAT', 'SKIP', { action: 'download_error', id: item.id, error: st.message });
+                    // Avant correctif (27/07/2026) : _settle(false) se contentait de
+                    // faire disparaitre le spinner sans jamais informer l'utilisateur
+                    // -- indiscernable visuellement d'un telechargement qui n'a
+                    // jamais ete lance. Constate en conditions reelles : horloge
+                    // systeme desynchronisee (auto_time desactive) -> certificat
+                    // TLS rejete -> echec silencieux a chaque tentative, interprete
+                    // a tort comme "le telechargement n'a pas survecu au redemarrage".
+                    if (window._ucToast) window._ucToast('خطأ التحميل | Échec du téléchargement' + (st.message ? ' — ' + st.message : ''), 'error');
                     _settle(false);
                 }
             }, 500);
@@ -22734,6 +23285,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             })
             .catch(function (e) {
                 _L('AZANCAT', 'SKIP', { action: 'download_error', id: item.id, error: e.message });
+                if (window._ucToast) window._ucToast('خطأ التحميل | Échec du téléchargement' + (e.message ? ' — ' + e.message : ''), 'error');
                 _settle(false);
             });
     }
@@ -22744,6 +23296,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         JS_CUSTOM[key] = item.id;
         saveCustomSettingsFunction();
         _acApplyAzanToPlayer(groupKey, item);
+        _acSyncSelectionToNative();
         _acRenderAll();
         _L('AZANCAT', 'FIRE', { action: 'select', group: groupKey, id: item.id });
     }
@@ -22759,6 +23312,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         JS_CUSTOM[key] = '';
         saveCustomSettingsFunction();
         _acRestoreDefaultAzan(groupKey);
+        _acSyncSelectionToNative();
         _acRenderAll();
         _L('AZANCAT', 'FIRE', { action: 'deselect', group: groupKey });
     }
@@ -23308,7 +23862,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         speaker:    { AR: 'صوت الأذان', FR: "Son de l'azan", EN: 'Azan sound' },
         quran:      { AR: 'القرآن الكريم', FR: 'Le Saint Coran', EN: 'The Holy Quran' },
         locator:    { AR: 'الموقع الحالي', FR: 'Position actuelle', EN: 'Current location' },
-        qibla:      { AR: 'اتجاه القبلة', FR: 'Direction de la Qibla', EN: 'Qibla Direction' }
+        qibla:      { AR: 'اتجاه القبلة', FR: 'Direction de la Qibla', EN: 'Qibla Direction' },
+        remoteAdmin:{ AR: 'إدارة المسجد عن بعد', FR: 'Administrer la mosquée à distance', EN: 'Administer mosque remotely' }
     };
     function _lqbT(key) {
         var row = L_LQB[key];
@@ -23337,6 +23892,16 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         '<path d="M12 2C8.14 2 5 5.14 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.86-3.14-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg>';
     var SVG_COMPASS = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor">' +
         '<path d="M12,2C6.5,2,2,6.5,2,12s4.5,10,10,10s10-4.5,10-10S17.5,2,12,2z M14.2,14.2L6,18l3.8-8.2L18,6L14.2,14.2z"/></svg>';
+    var SVG_REMOTE = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor">' +
+        '<path d="M12,8a4,4,0,1,0,4,4A4,4,0,0,0,12,8Zm0,6a2,2,0,1,1,2-2A2,2,0,0,1,12,14Z"/>' +
+        '<path d="M12,2A10,10,0,0,0,2,12a1,1,0,0,0,2,0,8,8,0,1,1,16,0,1,1,0,0,0,2,0A10,10,0,0,0,12,2Z"/>' +
+        '<path d="M12,6a6,6,0,0,0-6,6,1,1,0,0,0,2,0,4,4,0,1,1,8,0,1,1,0,0,0,2,0A6,6,0,0,0,12,6Z"/></svg>';
+
+    // Téléphone uniquement -- administrer une box à distance depuis la box
+    // elle-même n'a pas de sens (le panneau "Notifier" existant fait déjà ça
+    // localement, sans PIN réseau ni latence).
+    var _isPhoneLQB = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && !window.AndroidMobile.isAndroidTv());
 
     // Tableau 2 colonnes (label + icône) x 6 lignes — chaque ligne entière est
     // cliquable (id posé sur le <tr>, cf. wiring plus bas, inchangé : mêmes
@@ -23344,8 +23909,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     // la 1ère colonne (label) s'affiche à DROITE, l'icône à GAUCHE, conforme
     // à la lecture arabe. Ligne de fermeture (✕) sur toute la largeur,
     // centrée, en dernière ligne.
-    function _lqbRow(id, label, svg) {
-        return '<tr class="ucLQBRow" id="' + id + '">' +
+    function _lqbRow(id, label, svg, extraClass) {
+        return '<tr class="ucLQBRow' + (extraClass ? ' ' + extraClass : '') + '" id="' + id + '">' +
             '<td class="ucLQBLabel">' + label + '</td>' +
             '<td class="ucLQBIconCell"><span class="ucLQBIconInner">' + svg + '</span></td>' +
             '</tr>';
@@ -23363,6 +23928,15 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 _lqbRow('ucLQBQuran',      _lqbT('quran'),      SVG_QURAN) +
                 _lqbRow('ucLQBLocator',    _lqbT('locator'),    SVG_GPS) +
                 _lqbRow('ucLQBQibla',      _lqbT('qibla'),      SVG_COMPASS) +
+                // Masquée par défaut (ucLQBRowHidden) : ne doit apparaître
+                // qu'après déverrouillage admin (window._ucAdminUnlocked,
+                // cf. _installAdminBtnLockGate) -- un utilisateur lambda ne
+                // doit même pas savoir que cette fonctionnalité existe, cf.
+                // discussion 26/07/2026. Visibilité recalculée à chaque
+                // ouverture de la barre (openLogoQuickBar ci-dessous), pas
+                // seulement à la construction (le déverrouillage peut
+                // survenir n'importe quand après coup).
+                (_isPhoneLQB ? _lqbRow('ucLQBRemoteAdmin', _lqbT('remoteAdmin'), SVG_REMOTE, 'ucLQBRowHidden') : '') +
                 '<tr class="ucLQBCloseRow"><td colspan="2"><span class="ucLQBIcon ucLQBClose" id="ucLQBClose">&#10006;</span></td></tr>' +
             '</tbody></table>' +
         '</div>';
@@ -23395,6 +23969,10 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     })();
 
     function openLogoQuickBar() {
+        if (_isPhoneLQB) {
+            var _raRow = document.getElementById('ucLQBRemoteAdmin');
+            if (_raRow) _raRow.classList.toggle('ucLQBRowHidden', !window._ucAdminUnlocked);
+        }
         overlay.classList.remove('ucLQBHidden');
         if (typeof window._pushBack === 'function') window._pushBack();
         _L('LOGOBAR', 'FIRE', { action: 'open' });
@@ -23443,6 +24021,14 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             if (typeof window.openQiblaModal === 'function') window.openQiblaModal();
         });
     });
+    if (_isPhoneLQB) {
+        var _lqbRAdmin = document.getElementById('ucLQBRemoteAdmin');
+        if (_lqbRAdmin) _lqbRAdmin.addEventListener('click', function() {
+            _openTarget(function() {
+                if (typeof window._ucOpenRemoteMosqueAdmin === 'function') window._ucOpenRemoteMosqueAdmin();
+            });
+        });
+    }
     document.getElementById('ucLQBClose').addEventListener('click', function(e) {
         e.stopPropagation();
         closeLogoQuickBar();
@@ -23456,6 +24042,500 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     window.closeLogoQuickBar = closeLogoQuickBar;
 
     _L('CUSTOM', 'INIT', { item: 'logoQuickBar' });
+})();
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ADMINISTRATION DE LA MOSQUÉE À DISTANCE (téléphone du responsable, PIN requis)
+// ─────────────────────────────────────────────────────────────────────────────
+// Contrepartie phone-side du mode "remote_config_update" de l'Edge Function
+// rapid-service (cf. commentaires en tête de ce fichier côté serveur) : permet
+// à l'admin de modifier horaires/Coran de SA mosquée (celle actuellement
+// sélectionnée sur ce téléphone, cf. sélecteur de mosquée existant) et de
+// déclencher un rechargement, sans être physiquement devant la box.
+//
+// Sécurité : le PIN n'est JAMAIS validé ici -- juste envoyé en clair par
+// HTTPS à l'Edge Function, qui le hache et le compare à mosques.pin_hash
+// (jamais lu par ce fichier). Nécessite qu'un PIN ait déjà été défini au
+// moins une fois via le bouton "Code PIN" existant (qui pousse désormais son
+// hash vers Supabase, cf. _installAdminNotifyPanel plus haut) -- tant que ce
+// n'est pas fait, pin_hash reste NULL côté serveur et toute tentative est
+// rejetée (403), quel que soit le PIN saisi ici.
+//
+// Propagation vers la box : push OneSignal silencieux + polling de secours
+// (cf. _installConfigSync/_installRemoteConfigPolling plus haut) -- ce
+// fichier n'a rien de plus à faire une fois l'appel HTTP envoyé.
+// ═════════════════════════════════════════════════════════════════════════════
+(function _installRemoteMosqueAdmin() {
+    var isPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && !window.AndroidMobile.isAndroidTv());
+    if (!isPhone) return;
+
+    var L_RA = {
+        title:            { AR: 'إدارة المسجد عن بعد',                         FR: 'Administrer la mosquée à distance',                     EN: 'Administer mosque remotely' },
+        tabActions:       { AR: 'إجراءات',                                     FR: 'Actions',                                                EN: 'Actions' },
+        tabSettings:      { AR: 'ضبط الإعدادات',                               FR: 'Paramétrage',                                            EN: 'Settings' },
+        actQuranTitle:    { AR: 'تشغيل القرآن المُبرمَج',                       FR: 'Lecture Coran programmée',                               EN: 'Scheduled Quran playback' },
+        actQuranToggle:   { AR: 'تشغيل / إيقاف مؤقت',                          FR: 'Lecture / Pause',                                        EN: 'Play / Pause' },
+        actAzanTitle:     { AR: 'صوت الأذان',                                  FR: 'Son de l’azan',                                          EN: 'Azan sound' },
+        actAzanPreview:   { AR: 'تشغيل معاينة الأذان الحالي',                  FR: 'Jouer un aperçu de l’azan configuré',                    EN: 'Play a preview of the configured azan' },
+        actLightsTitle:   { AR: 'الإضاءة',                                     FR: 'Éclairage',                                              EN: 'Lighting' },
+        lightAmpliExt:    { AR: 'مكبّر الأذان',                                FR: 'Ampli extérieur (azan)',                                 EN: 'Outdoor speaker (azan)' },
+        lightAmpliInt:    { AR: 'مكبّر الإمام',                                FR: 'Ampli intérieur (imam)',                                 EN: 'Indoor speaker (imam)' },
+        lightMinaret:     { AR: 'المئذنة',                                     FR: 'Minaret',                                                EN: 'Minaret' },
+        lightMihrab:      { AR: 'المحراب',                                     FR: 'Mihrab',                                                 EN: 'Mihrab' },
+        lightOn:          { AR: 'تشغيل',                                       FR: 'Allumer',                                                EN: 'Turn on' },
+        lightOff:         { AR: 'إطفاء',                                       FR: 'Éteindre',                                               EN: 'Turn off' },
+        actionSentOk:     { AR: 'تم الإرسال',                                  FR: 'Envoyé',                                                 EN: 'Sent' },
+        reloadBtn:        { AR: 'إعادة تحميل الشاشة فقط',                       FR: 'Recharger la box uniquement',                            EN: 'Reload the box only' },
+        timesTitle:       { AR: 'أوقات الأذان والإقامة',                        FR: 'Horaires azan / iqama',                                  EN: 'Azan / iqama times' },
+        azanCol:          { AR: 'الأذان (د)',                                   FR: 'Azan (min)',                                             EN: 'Azan (min)' },
+        iqamaCol:         { AR: 'الإقامة (د)',                                  FR: 'Iqama (min)',                                            EN: 'Iqama (min)' },
+        jumuaLabel:       { AR: 'وقت الجمعة',                                    FR: 'Heure Jumua',                                            EN: 'Jumua time' },
+        quranTitle:       { AR: 'القرآن الكريم',                                FR: 'Coran',                                                  EN: 'Quran' },
+        quranEnable:      { AR: 'تفعيل تشغيل القرآن قبل الأذان',                FR: "Activer la lecture du Coran avant l'azan",               EN: 'Enable Quran playback before azan' },
+        quranDelayCol:    { AR: 'المدة (د)',                                    FR: 'Délai (min)',                                            EN: 'Delay (min)' },
+        reciterLabel:     { AR: 'القارئ',                                       FR: 'Récitateur',                                             EN: 'Reciter' },
+        pinLabel:         { AR: 'رمز PIN',                                      FR: 'Code PIN',                                               EN: 'PIN code' },
+        pinHint:          { AR: 'يجب أن يكون رمز PIN قد عُرّف من قبل على الشاشة (زر "رمز PIN")', FR: 'Un code PIN doit déjà avoir été défini sur la box (bouton "Code PIN")', EN: 'A PIN must already have been set on the box (the "PIN code" button)' },
+        sendBtn:          { AR: 'إرسال',                                        FR: 'Envoyer',                                                EN: 'Send' },
+        cancelBtn:        { AR: 'إلغاء',                                        FR: 'Annuler',                                                EN: 'Cancel' },
+        sending:          { AR: 'جارٍ الإرسال...',                              FR: 'Envoi en cours...',                                      EN: 'Sending...' },
+        sentOk:           { AR: 'تم الإرسال، ستتحدث الشاشة خلال ثوانٍ',         FR: 'Envoyé — la box se mettra à jour dans les secondes qui suivent', EN: 'Sent — the box will update within seconds' },
+        errNetwork:       { AR: 'خطأ في الشبكة',                                FR: 'Erreur réseau',                                          EN: 'Network error' },
+        errNotConfigured: { AR: 'الإدارة عن بعد غير مفعلة لهذا المسجد -- عرّف رمز PIN أولاً على الشاشة', FR: "Administration à distance non configurée -- définissez d'abord un code PIN sur la box", EN: 'Remote admin not configured -- set a PIN on the box first' },
+        errInvalidPin:    { AR: 'رمز PIN غير صحيح',                             FR: 'Code PIN incorrect',                                     EN: 'Invalid PIN' },
+        errGeneric:       { AR: 'حدث خطأ',                                      FR: "Une erreur est survenue",                                EN: 'An error occurred' }
+    };
+    function _raT(key) {
+        var row = L_RA[key];
+        if (!row) return key;
+        return row[_ucLang()] || row.EN;
+    }
+
+    var PRAYERS = ['FAJR', 'DOHR', 'ASSR', 'MGRB', 'ISHA'];
+    function _azanKey(p) { return p === 'MGRB' ? 'maghrib' : p.toLowerCase(); }
+
+    var _modal = null;
+
+    function _buildModal() {
+        if (document.getElementById('ucRemoteAdminOverlay')) { _modal = document.getElementById('ucRemoteAdminOverlay'); return; }
+
+        var timesRows = PRAYERS.map(function (p) {
+            var name = (L_QURAN_PRAYER_NAMES[p] && L_QURAN_PRAYER_NAMES[p][_ucLang()]) || p;
+            return '<tr><td class="ucRAPrayerName">' + name + '</td>' +
+                       '<td><input type="number" class="ucRANumInput" id="ucRAAzan_' + p + '" min="-30" max="30" step="1"></td>' +
+                       '<td><input type="number" class="ucRANumInput" id="ucRAIqama_' + p + '" min="0" max="120" step="1"></td></tr>';
+        }).join('');
+
+        var LIGHTS = [
+            { target: 'ampliExt', label: _raT('lightAmpliExt') },
+            { target: 'ampliInt', label: _raT('lightAmpliInt') },
+            { target: 'minaret',  label: _raT('lightMinaret') },
+            { target: 'mihrab',   label: _raT('lightMihrab') }
+        ];
+        var lightRows = LIGHTS.map(function (l) {
+            return '<div class="ucRARow ucRALightRow">' +
+                       '<span class="ucRARowLabel">' + l.label + '</span>' +
+                       '<span class="ucModalBtn ucModalBtn--primary ucRALightBtn" data-ra-light-on="' + l.target + '">' + _raT('lightOn') + '</span>' +
+                       '<span class="ucModalBtn ucModalBtn--secondary ucRALightBtn" data-ra-light-off="' + l.target + '">' + _raT('lightOff') + '</span>' +
+                   '</div>';
+        }).join('');
+
+        var overlay = document.createElement('div');
+        overlay.id = 'ucRemoteAdminOverlay';
+        overlay.className = 'ucRemoteAdminHidden';
+        overlay.innerHTML =
+            '<div id="ucRemoteAdminModal" dir="' + (_ucIsRtl() ? 'rtl' : 'ltr') + '">' +
+                '<div id="ucRemoteAdminHeader">' +
+                    '<span id="ucRemoteAdminTitle">&#128225; ' + _raT('title') + '</span>' +
+                    '<span id="ucRemoteAdminClose">&#10006;</span>' +
+                '</div>' +
+                '<div id="ucRemoteAdminMosqueName"></div>' +
+                '<div id="ucRATabs">' +
+                    '<span class="ucRATabBtn ucRATabBtnActive" data-tab="actions">' + _raT('tabActions') + '</span>' +
+                    '<span class="ucRATabBtn" data-tab="settings">' + _raT('tabSettings') + '</span>' +
+                '</div>' +
+                '<div id="ucRemoteAdminBody">' +
+                    '<div class="ucRAPane ucRAPaneActive" data-pane="actions">' +
+                        '<div class="ucRASectionTitle">' + _raT('actQuranTitle') + '</div>' +
+                        '<div class="ucRARow"><span class="ucRARowLabel">' + _raT('actQuranToggle') + '</span>' +
+                            '<span id="ucRAQuranToggleBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actQuranToggle') + '</span></div>' +
+                        '<div class="ucRASectionTitle">' + _raT('actAzanTitle') + '</div>' +
+                        '<div class="ucRARow"><span class="ucRARowLabel">' + _raT('actAzanPreview') + '</span>' +
+                            '<span id="ucRAAzanPreviewBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('lightOn') + '</span></div>' +
+                        '<div class="ucRASectionTitle">' + _raT('actLightsTitle') + '</div>' +
+                        lightRows +
+                        '<div class="ucRASectionTitle">' + _raT('reloadBtn') + '</div>' +
+                        '<div class="ucRAActionsTop"><span id="ucRAReloadBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('reloadBtn') + '</span></div>' +
+                        '<div class="ucRASectionTitle">' + _raT('pinLabel') + '</div>' +
+                        '<input type="password" id="ucRAActionsPin" class="ucRATextInput" maxlength="8" inputmode="numeric" autocomplete="off">' +
+                        '<div id="ucRAPinHint">' + _raT('pinHint') + '</div>' +
+                        '<div id="ucRAActionsStatus"></div>' +
+                    '</div>' +
+                    '<div class="ucRAPane" data-pane="settings">' +
+                        '<div class="ucRASectionTitle">' + _raT('timesTitle') + '</div>' +
+                        '<table class="ucRATable"><thead><tr><th></th><th>' + _raT('azanCol') + '</th><th>' + _raT('iqamaCol') + '</th></tr></thead><tbody>' +
+                            timesRows +
+                        '</tbody></table>' +
+                        '<div class="ucRARow ucRARowJumua"><span class="ucRARowLabel">' + _raT('jumuaLabel') + '</span><input type="text" id="ucRAJumua" class="ucRAJumuaInput" placeholder="AUTO"></div>' +
+                        '<div class="ucRASectionTitle">' + _raT('quranTitle') + '</div>' +
+                        '<div class="ucRARow">' +
+                            '<label class="ucSettingsToggleWrap"><input type="checkbox" id="ucRAQuranEnabled"><span class="ucSettingsToggleSlider"></span></label>' +
+                            '<span class="ucRARowLabel">' + _raT('quranEnable') + '</span>' +
+                        '</div>' +
+                        '<div id="ucRAQuranTableWrap"></div>' +
+                        '<div class="ucRARow"><span class="ucRARowLabel">' + _raT('reciterLabel') + '</span><select id="ucRAReciter" class="ucRATextInput"></select></div>' +
+                        '<div class="ucRASectionTitle">' + _raT('pinLabel') + '</div>' +
+                        '<input type="password" id="ucRAPin" class="ucRATextInput" maxlength="8" inputmode="numeric" autocomplete="off">' +
+                        '<div id="ucRAPinHint">' + _raT('pinHint') + '</div>' +
+                        '<div id="ucRAStatus"></div>' +
+                        '<div class="ucRAActionsBottom">' +
+                            '<span id="ucRACancelBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('cancelBtn') + '</span>' +
+                            '<span id="ucRASendBtn" class="ucModalBtn ucModalBtn--primary">' + _raT('sendBtn') + '</span>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+        document.documentElement.appendChild(overlay);
+        _modal = overlay;
+
+        document.getElementById('ucRemoteAdminClose').addEventListener('click', _close);
+        overlay.addEventListener('click', function (e) { if (e.target === overlay) _close(); });
+        document.getElementById('ucRACancelBtn').addEventListener('click', _close);
+        document.getElementById('ucRAReloadBtn').addEventListener('click', function () { _submit(true); });
+        document.getElementById('ucRASendBtn').addEventListener('click', function () { _submit(false); });
+        // Délégation unique : la grille Coran est réécrite en entier à chaque
+        // _renderQuranTable() (cellules jour togglées), pas besoin de
+        // réattacher un listener par cellule à chaque rendu.
+        document.getElementById('ucRAQuranTableWrap').addEventListener('click', _onQuranTableClick);
+
+        // ── Onglets ──────────────────────────────────────────────────────
+        var _tabBtns = overlay.querySelectorAll('.ucRATabBtn');
+        for (var i = 0; i < _tabBtns.length; i++) {
+            _tabBtns[i].addEventListener('click', function () { _switchTab(this.getAttribute('data-tab')); });
+        }
+
+        // ── Actions (onglet 1) ──────────────────────────────────────────
+        document.getElementById('ucRAQuranToggleBtn').addEventListener('click', function () {
+            _sendRemoteAction('quran_toggle', null);
+        });
+        document.getElementById('ucRAAzanPreviewBtn').addEventListener('click', function () {
+            _sendRemoteAction('azan_preview', null);
+        });
+        var _lightBtns = overlay.querySelectorAll('.ucRALightBtn');
+        for (var j = 0; j < _lightBtns.length; j++) {
+            _lightBtns[j].addEventListener('click', function () {
+                var onTarget  = this.getAttribute('data-ra-light-on');
+                var offTarget = this.getAttribute('data-ra-light-off');
+                if (onTarget)  _sendRemoteAction('light_on',  onTarget);
+                if (offTarget) _sendRemoteAction('light_off', offTarget);
+            });
+        }
+    }
+
+    function _switchTab(tab) {
+        if (!_modal) return;
+        var btns  = _modal.querySelectorAll('.ucRATabBtn');
+        var panes = _modal.querySelectorAll('.ucRAPane');
+        for (var i = 0; i < btns.length; i++) btns[i].classList.toggle('ucRATabBtnActive', btns[i].getAttribute('data-tab') === tab);
+        for (var j = 0; j < panes.length; j++) panes[j].classList.toggle('ucRAPaneActive', panes[j].getAttribute('data-pane') === tab);
+    }
+
+    // ── Grille Coran : reproduction EXACTE de la grille locale existante
+    // (_buildQuranAutoStartTableHtml, mêmes classes CSS .ucQATable/.ucQATDelayCell/
+    // .ucQATDayCell) -- cellule délai = texte cliquable ouvrant le même style
+    // de prompt natif que l'édition locale, cellule jour = "✕" cliquable, PAS
+    // de <input>/<checkbox> (rendu jugé trop lourd, cf. discussion 26/07/2026).
+    // Opère sur un brouillon local (_quranDraft), jamais sur JS_CUSTOM
+    // directement : les valeurs ne partent que si l'admin appuie "Envoyer".
+    var _quranDraft = {};
+
+    function _renderQuranTable() {
+        var wrap = document.getElementById('ucRAQuranTableWrap');
+        if (!wrap) return;
+        var dayNames = L_QURAN_DAY_NAMES[_ucLang()] || L_QURAN_DAY_NAMES.EN;
+
+        var html = '<table class="ucQATable" dir="' + (_ucIsRtl() ? 'rtl' : 'ltr') + '">';
+        html += '<tr><th class="ucQATCorner"></th>';
+        PRAYERS.forEach(function (p) {
+            var name = (L_QURAN_PRAYER_NAMES[p] && L_QURAN_PRAYER_NAMES[p][_ucLang()]) || p;
+            html += '<th>' + name + '</th>';
+        });
+        html += '</tr>';
+
+        html += '<tr class="ucQATDelayRow"><th class="ucQATRowLabel">' + _raT('quranDelayCol') + '</th>';
+        PRAYERS.forEach(function (p) {
+            var minutes = (_quranDraft[p] && _quranDraft[p].delayMin) || 0;
+            html += '<td class="ucQATDelayCell" data-ra-delay="' + p + '">' + minutes + '</td>';
+        });
+        html += '</tr>';
+
+        for (var d = 0; d < 7; d++) {
+            html += '<tr><th class="ucQATRowLabel">' + dayNames[d] + '</th>';
+            PRAYERS.forEach(function (p) {
+                var draft = _quranDraft[p] || { delayMin: 0, days: '1111111' };
+                var prayerActive = draft.delayMin > 0;
+                var dayActive = String(draft.days || '1111111').charAt(d) === '1';
+                var cls = 'ucQATDayCell' + (!prayerActive ? ' ucQATDayCellDisabled' : '');
+                html += '<td class="' + cls + '" data-ra-day="' + p + '" data-ra-idx="' + d + '">' +
+                    (dayActive ? '&#10005;' : '') + '</td>';
+            });
+            html += '</tr>';
+        }
+        html += '</table>';
+        wrap.innerHTML = html;
+    }
+
+    function _onQuranTableClick(e) {
+        var delayCell = e.target.closest('[data-ra-delay]');
+        if (delayCell) { window.editRAQuranDelayFunction(delayCell.getAttribute('data-ra-delay')); return; }
+        var dayCell = e.target.closest('[data-ra-day]');
+        if (!dayCell || dayCell.classList.contains('ucQATDayCellDisabled')) return;
+        var p   = dayCell.getAttribute('data-ra-day');
+        var idx = parseInt(dayCell.getAttribute('data-ra-idx'), 10);
+        if (!_quranDraft[p]) _quranDraft[p] = { delayMin: 0, days: '1111111' };
+        var chars = String(_quranDraft[p].days || '1111111').split('');
+        while (chars.length < 7) chars.push('1');
+        chars[idx] = (chars[idx] === '1') ? '0' : '1';
+        _quranDraft[p].days = chars.join('');
+        _renderQuranTable();
+    }
+
+    // Exposée globalement : openInputDialogFunction (core) rappelle son
+    // callback par eval(nom_de_fonction()), qui doit donc être résoluble en
+    // global -- même contrainte que editStartQuranBeforeAzanDelayFunction
+    // (non-IIFE, plus haut dans ce fichier), dont cette fonction reproduit
+    // fidèlement le comportement mais en écrivant dans _quranDraft au lieu de
+    // JS_CUSTOM (brouillon local à cette modale, pas d'effet tant que "Envoyer"
+    // n'a pas été pressé).
+    var _raQuranEditKey = 'FAJR';
+    window.editRAQuranDelayFunction = function (prayerKey) {
+        if (!isInputDialogOpen) {
+            _raQuranEditKey = prayerKey || _raQuranEditKey || 'FAJR';
+            var name = (L_QURAN_PRAYER_NAMES[_raQuranEditKey] && L_QURAN_PRAYER_NAMES[_raQuranEditKey][_ucLang()]) || _raQuranEditKey;
+            var titleFn = L_QURAN_EDIT_DIALOG[_ucLang()] || L_QURAN_EDIT_DIALOG.EN;
+            var current = (_quranDraft[_raQuranEditKey] && _quranDraft[_raQuranEditKey].delayMin) || 0;
+            inputDialogValue  = '';
+            isInputDialogOpen = false;
+            openInputDialogFunction(titleFn(name), current, 'editRAQuranDelayFunction()', true);
+            return;
+        }
+        var minutes = parseInt(inputDialogValue, 10);
+        if (isNaN(minutes) || minutes < 0) minutes = 0;
+        if (minutes > 30) minutes = 30;
+        if (!_quranDraft[_raQuranEditKey]) _quranDraft[_raQuranEditKey] = { delayMin: 0, days: '1111111' };
+        _quranDraft[_raQuranEditKey].delayMin = minutes;
+        _renderQuranTable();
+    };
+
+    function _close() {
+        if (_modal) _modal.classList.add('ucRemoteAdminHidden');
+        if (typeof window._popBack === 'function') window._popBack();
+    }
+
+    function _setStatus(msg, type) {
+        var el = document.getElementById('ucRAStatus');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.className = type ? ('ucRAStatus-' + type) : '';
+    }
+
+    function _setActionsStatus(msg, type) {
+        var el = document.getElementById('ucRAActionsStatus');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.className = type ? ('ucRAStatus-' + type) : '';
+    }
+
+    // Envoie une commande ponctuelle (onglet Actions) -- même endpoint/PIN que
+    // _submit(), mais mode "remote_action" : aucune écriture dans mosques,
+    // juste un push silencieux que la box exécute immédiatement (cf. listener
+    // 'ucRemoteAction', custom.js plus haut, et rapid-service côté serveur).
+    function _sendRemoteAction(action, target) {
+        var mid   = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '';
+        var pinEl = document.getElementById('ucRAActionsPin');
+        var pin   = pinEl ? pinEl.value.trim() : '';
+        if (!mid) { _setActionsStatus(_raT('errGeneric'), 'err'); return; }
+        if (!/^\d{4,8}$/.test(pin)) { _setActionsStatus(_raT('errInvalidPin'), 'err'); return; }
+
+        _setActionsStatus(_raT('sending'), 'ok');
+        var body = { type: 'remote_action', mosque_id: mid, pin: pin, action: action };
+        if (target) body.target = target;
+
+        fetch('https://tjmjmlzwzebocfdmifrg.supabase.co/functions/v1/rapid-service', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4' },
+            body: JSON.stringify(body)
+        })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+        .then(function (res) {
+            if (res.ok) {
+                _setActionsStatus(_raT('actionSentOk'), 'ok');
+            } else if (res.status === 401) {
+                _setActionsStatus(_raT('errInvalidPin'), 'err');
+            } else if (res.status === 403) {
+                _setActionsStatus(_raT('errNotConfigured'), 'err');
+            } else {
+                _setActionsStatus((res.body && res.body.error) || _raT('errGeneric'), 'err');
+            }
+        })
+        .catch(function () { _setActionsStatus(_raT('errNetwork'), 'err'); });
+    }
+
+    function _fillReciters(selectedDir) {
+        var sel = document.getElementById('ucRAReciter');
+        if (!sel) return;
+        sel.innerHTML = '';
+        var reciters = Array.isArray(JS_CUSTOM.ucReciters) ? JS_CUSTOM.ucReciters : [];
+        reciters.forEach(function (r) {
+            var opt = document.createElement('option');
+            opt.value = r.dir;
+            opt.textContent = r.name;
+            if (r.dir === selectedDir) opt.selected = true;
+            sel.appendChild(opt);
+        });
+    }
+
+    // Pré-remplit le formulaire avec les valeurs LOCALES actuelles (celles de
+    // CET appareil, via _buildAdminPayload déjà existant) -- l'admin n'a plus
+    // qu'à modifier ce qui doit changer, pas tout ressaisir depuis zéro.
+    function _prefill() {
+        var payload = (typeof window._buildAdminPayload === 'function') ? window._buildAdminPayload() : null;
+        var nameEl = document.getElementById('ucRemoteAdminMosqueName');
+        if (nameEl) nameEl.textContent = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_NAME) || '';
+        if (!payload) return;
+
+        PRAYERS.forEach(function (p) {
+            var k = _azanKey(p);
+            var azanEl  = document.getElementById('ucRAAzan_' + p);
+            var iqamaEl = document.getElementById('ucRAIqama_' + p);
+            if (azanEl)  azanEl.value  = (payload.azan_offsets && payload.azan_offsets[k]) || 0;
+            if (iqamaEl) iqamaEl.value = (payload.iqama_delay  && payload.iqama_delay[k])  || 0;
+        });
+        var jumuaEl = document.getElementById('ucRAJumua');
+        if (jumuaEl) jumuaEl.value = (payload.jumua && payload.jumua.time) || 'AUTO';
+
+        var qs = payload.quran_settings || {};
+        var qEnEl = document.getElementById('ucRAQuranEnabled');
+        if (qEnEl) qEnEl.checked = (qs.enabled == 1);
+        _quranDraft = {};
+        PRAYERS.forEach(function (p) {
+            var pr = (qs.prayers && qs.prayers[p]) || {};
+            // Stocké en secondes (cf. ucStartQuranBeforeAzanXxx, core) mais
+            // affiché/édité en minutes ici -- plus lisible pour un humain
+            // (900s == 15 min). Reconverti en secondes dans _collectConfig().
+            _quranDraft[p] = { delayMin: Math.round((pr.delay || 0) / 60), days: String(pr.days || '1111111') };
+        });
+        _renderQuranTable();
+        _fillReciters(qs.reciterDir || '');
+    }
+
+    function _collectConfig() {
+        var azan_offsets = {}, iqama_delay = {}, quranPrayers = {};
+        PRAYERS.forEach(function (p) {
+            var k       = _azanKey(p);
+            var azanEl  = document.getElementById('ucRAAzan_' + p);
+            var iqamaEl = document.getElementById('ucRAIqama_' + p);
+            azan_offsets[k] = azanEl  ? (parseInt(azanEl.value, 10)  || 0) : 0;
+            iqama_delay[k]  = iqamaEl ? (parseInt(iqamaEl.value, 10) || 0) : 0;
+
+            var draft = _quranDraft[p] || { delayMin: 0, days: '1111111' };
+            quranPrayers[p] = {
+                // Brouillon saisi en minutes -> reconverti en secondes pour
+                // le stockage (cf. ucStartQuranBeforeAzanXxx, core + _prefill ci-dessus).
+                delay: (draft.delayMin || 0) * 60,
+                days:  draft.days || '1111111'
+            };
+        });
+        var jumuaEl   = document.getElementById('ucRAJumua');
+        var reciterEl = document.getElementById('ucRAReciter');
+        var qEnEl     = document.getElementById('ucRAQuranEnabled');
+        return {
+            azan_offsets: azan_offsets,
+            iqama_delay:  iqama_delay,
+            jumua: { time: (jumuaEl && jumuaEl.value.trim()) || 'AUTO', show_on_hr_screen: 0 },
+            quran_settings: {
+                enabled:    (qEnEl && qEnEl.checked) ? 1 : 0,
+                prayers:    quranPrayers,
+                reciterDir: reciterEl ? reciterEl.value : ''
+            }
+        };
+    }
+
+    function _submit(reloadOnly) {
+        // Le bouton "recharger" vit désormais dans l'onglet Actions (son
+        // propre champ PIN/statut) ; "Envoyer" reste dans l'onglet Paramétrage.
+        var pinElId    = reloadOnly ? 'ucRAActionsPin'    : 'ucRAPin';
+        var setStatus  = reloadOnly ? _setActionsStatus   : _setStatus;
+        var mid   = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '';
+        var pinEl = document.getElementById(pinElId);
+        var pin   = pinEl ? pinEl.value.trim() : '';
+        if (!mid) { setStatus(_raT('errGeneric'), 'err'); return; }
+        if (!/^\d{4,8}$/.test(pin)) { setStatus(_raT('errInvalidPin'), 'err'); return; }
+
+        setStatus(_raT('sending'), 'ok');
+        var reloadBtn = document.getElementById('ucRAReloadBtn');
+        var sendBtn   = document.getElementById('ucRASendBtn');
+        if (reloadBtn) reloadBtn.style.pointerEvents = 'none';
+        if (sendBtn)   sendBtn.style.pointerEvents   = 'none';
+
+        fetch('https://tjmjmlzwzebocfdmifrg.supabase.co/functions/v1/rapid-service', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4' },
+            body: JSON.stringify({
+                type: 'remote_config_update',
+                mosque_id: mid,
+                pin: pin,
+                config: reloadOnly ? {} : _collectConfig()
+            })
+        })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+        .then(function (res) {
+            if (reloadBtn) reloadBtn.style.pointerEvents = '';
+            if (sendBtn)   sendBtn.style.pointerEvents   = '';
+            if (res.ok) {
+                setStatus(_raT('sentOk'), 'ok');
+                if (pinEl) pinEl.value = '';
+                // Le téléphone qui vient d'envoyer la modif doit refléter le
+                // même changement que la box, pas rester sur son ancien état
+                // local -- incohérent sinon (cf. discussion 26/07/2026). On
+                // tire immédiatement la ligne fraîchement écrite plutôt que
+                // d'attendre le push silencieux/polling (qui ciblent surtout
+                // la box) : _ucSyncFromSupabase applique et recharge la page,
+                // ce qui ferme cette modale au passage.
+                if (typeof window._ucSyncFromSupabase === 'function') {
+                    window._ucSyncFromSupabase(mid, true);
+                }
+            } else if (res.status === 401) {
+                setStatus(_raT('errInvalidPin'), 'err');
+            } else if (res.status === 403) {
+                setStatus(_raT('errNotConfigured'), 'err');
+            } else {
+                setStatus((res.body && res.body.error) || _raT('errGeneric'), 'err');
+            }
+        })
+        .catch(function () {
+            if (reloadBtn) reloadBtn.style.pointerEvents = '';
+            if (sendBtn)   sendBtn.style.pointerEvents   = '';
+            setStatus(_raT('errNetwork'), 'err');
+        });
+    }
+
+    window._ucOpenRemoteMosqueAdmin = function () {
+        _buildModal();
+        _setStatus('', '');
+        _setActionsStatus('', '');
+        var pinEl = document.getElementById('ucRAPin');
+        if (pinEl) pinEl.value = '';
+        var actionsPinEl = document.getElementById('ucRAActionsPin');
+        if (actionsPinEl) actionsPinEl.value = '';
+        _switchTab('actions');
+        _prefill();
+        _modal.classList.remove('ucRemoteAdminHidden');
+        if (typeof window._pushBack === 'function') window._pushBack();
+    };
+
+    _L('CUSTOM', 'INIT', { item: 'remoteMosqueAdmin' });
 })();
 
 // ═════════════════════════════════════════════════════════════════════════════

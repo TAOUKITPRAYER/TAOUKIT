@@ -71,7 +71,10 @@
 /* Overlay plein-écran (appended to <html>, immune à la rotation du body) */
 #quranPlayerOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 10000;
     display: flex;
     align-items: center;
@@ -94,6 +97,7 @@
 
 /* Boîte modale */
 #quranPlayerModal {
+    width: 94vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(700px, 94vw);
     max-height: 88vh;
     background: #2b2720;
@@ -104,6 +108,7 @@
     flex-direction: column;
     overflow: hidden;
     direction: rtl;
+    font-size: 11px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(11px, 1.55vmin, 15px);
     /* Cf. #quranPlayerOverlay ci-dessus : même contournement de couche GPU
        dédiée pour la boîte elle-même. */
@@ -462,7 +467,10 @@
 /* ── MODALE DÉBLOCAGE AUTOPLAY ──────────────────────────────────────────── */
 #autoplayUnlockOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 10001;          /* au-dessus du lecteur Coran (10000) */
     display: flex;
     align-items: center;
@@ -475,22 +483,27 @@
     background: #2b2720;
     border: 1px solid #6a5530;
     border-radius: 14px;
+    padding: 20px 24px; /* fallback (no min()/clamp() on old WebView) */
     padding: clamp(20px, 4vmin, 36px) clamp(24px, 6vmin, 52px);
     text-align: center;
     direction: rtl;
     box-shadow: 0 12px 44px rgba(0, 0, 0, 0.90);
+    max-width: 86vw; /* fallback (no min()/clamp() on old WebView) */
     max-width: min(400px, 86vw);
     display: flex;
     flex-direction: column;
     align-items: center;
+    gap: 12px; /* fallback (no min()/clamp() on old WebView) */
     gap: clamp(12px, 2.5vmin, 22px);
 }
 #autoplayUnlockIcon {
+    font-size: 32px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(32px, 7vmin, 54px);
     line-height: 1;
 }
 #autoplayUnlockText {
     color: #d4aa50;
+    font-size: 13px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(13px, 2.4vmin, 20px);
     line-height: 1.75;
 }
@@ -499,7 +512,9 @@
     color: #1a1208;
     border: none;
     border-radius: 8px;
+    padding: 9px 28px; /* fallback (no min()/clamp() on old WebView) */
     padding: clamp(9px, 1.6vmin, 13px) clamp(28px, 6vmin, 48px);
+    font-size: 14px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(14px, 2.2vmin, 18px);
     font-weight: bold;
     cursor: pointer;
@@ -1049,9 +1064,11 @@
 /*    Original : 190 % × 8 vw ≈ 15.2 vw (conçu plein écran)             */
 /*    Pas de débordement : les noms les plus longs font ~54 vw à 15 vw   */
 #azanPopupPrayerNameHorizontal {
+    font-size: 1.5rem !important; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(1.5rem, 15vw, 15vw) !important;
 }
 #azanPopupPrayerNameVertical {
+    font-size: 1.5rem !important; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(1.5rem, 15vh, 15vh) !important;
 }
 
@@ -1350,7 +1367,10 @@
    ────────────────────────────────────────────────────────────────────────── */
 #jomoaAdabOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     background: radial-gradient(ellipse at center, #0d2212 0%, #020d04 55%, #000 100%);
     z-index: 9000;
     display: flex;
@@ -1374,6 +1394,7 @@
 /* Ligne 1 — «قال النبي ﷺ :» */
 #jomoaAdabOverlay .joa-l1 {
     color: #d4a843;
+    font-size: 20px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(20px, 4.8vw, 8.5vh);
     letter-spacing: 0.06em;
     text-shadow: 0 0 22px rgba(212, 168, 67, 0.45);
@@ -1393,6 +1414,7 @@
 /* Ligne 2 — hadith principal */
 #jomoaAdabOverlay .joa-l2 {
     color: #f5edda;
+    font-size: 18px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(18px, 3.8vw, 6.8vh);
     line-height: 1.7;
     text-align: center;
@@ -1403,6 +1425,7 @@
 /* Ligne 3 — référence hadith 1 */
 #jomoaAdabOverlay .joa-l3 {
     color: #6db84e;
+    font-size: 15px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(15px, 3.2vw, 5.6vh);
     text-align: center;
     text-shadow: 0 0 12px rgba(80, 170, 60, 0.35);
@@ -1412,6 +1435,7 @@
 /* Ligne 4 — hadith secondaire + référence */
 #jomoaAdabOverlay .joa-l4 {
     color: #ede4cc;
+    font-size: 16px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(16px, 3.4vw, 6vh);
     line-height: 1.6;
     text-align: center;
@@ -1433,6 +1457,7 @@
    dernier mot clignotant hors écran). clamp(min, vw, vh-max) même convention
    que #jomoaAdabOverlay .joa-l3/.joa-l4 plus haut dans ce fichier. */
 #iqamaPopupVertical {
+    font-size: 20px !important; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(20px, 7vw, 8.5vh) !important;
     display: flex !important;
     align-items: center !important;
@@ -1495,7 +1520,9 @@
     left: 2% !important;
     top: 11.5% !important;
     border-radius: 4px !important;
+    width: 120px !important; /* fallback (no min()/clamp() on old WebView) */
     width: clamp(120px, 13vmin, 170px) !important;
+    height: 120px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(120px, 13vmin, 170px) !important;
     object-fit: contain !important;
     image-rendering: crisp-edges;
@@ -1507,7 +1534,9 @@
 }
 /* ── Android (GeckoView) : QR vertical réduit pour éviter le débordement ─── */
 .uc-android #qrFlagImageVertical {
+    width: 75px !important; /* fallback (no min()/clamp() on old WebView) */
     width:  clamp(75px, 9vmin, 105px) !important;
+    height: 75px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(75px, 9vmin, 105px) !important;
 }
 #qrFlagImageHorizontal {
@@ -1517,7 +1546,9 @@
     top: auto !important;
     bottom: 0.8% !important;
     border-radius: 4px !important;
+    width: 90px !important; /* fallback (no min()/clamp() on old WebView) */
     width: clamp(90px, 10vmin, 130px) !important;
+    height: 90px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(90px, 10vmin, 130px) !important;
     object-fit: contain !important;
     image-rendering: crisp-edges;
@@ -1529,7 +1560,9 @@
 }
 /* ── Android : QR horizontal réduit également ──────────────────────────── */
 .uc-android #qrFlagImageHorizontal {
+    width: 65px !important; /* fallback (no min()/clamp() on old WebView) */
     width:  clamp(65px, 8vmin, 95px) !important;
+    height: 65px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(65px, 8vmin, 95px) !important;
 }
 
@@ -1576,7 +1609,10 @@
 #ucMosqueSelectorModal {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 99999;
     background: rgba(0, 0, 0, 0.93);
     align-items: center;
@@ -1591,6 +1627,7 @@
     background: #111827;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 14px;
+    width: 92vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(520px, 92vw);
     max-height: 80vh;
     display: flex;
@@ -1711,7 +1748,10 @@
 .ucSimpleListModal {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 10000000;
     background: rgba(0, 0, 0, 0.93);
     align-items: center;
@@ -1724,6 +1764,7 @@
     background: #111827;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 14px;
+    width: 90vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(420px, 90vw);
     max-height: 70vh;
     display: flex;
@@ -1807,7 +1848,7 @@
     direction: rtl;
     opacity: 0.92;
     margin: 1.5% auto;
-    font-size: 5vw;
+    font-size: 2vw;
 }
 #ucSelectMosqueButton:hover,
 #ucEditMosqueNameButton:hover,
@@ -1825,7 +1866,10 @@
 #ucMosqueNotifModal {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 99999;
     background: rgba(0, 0, 0, 0.93);
     align-items: center;
@@ -1838,6 +1882,7 @@
     background: #111827;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 14px;
+    width: 92vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(520px, 92vw);
     max-height: 80vh;
     display: flex;
@@ -1971,7 +2016,9 @@
     left: calc(2% + clamp(120px, 13vmin, 170px) + 5px) !important;
     top: 11.5% !important;
     border-radius: 4px !important;
+    width: 120px !important; /* fallback (no min()/clamp() on old WebView) */
     width: clamp(120px, 13vmin, 170px) !important;
+    height: 120px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(120px, 13vmin, 170px) !important;
     object-fit: contain !important;
     image-rendering: crisp-edges;
@@ -1983,7 +2030,9 @@
     visibility: hidden;
 }
 .uc-android #qrFlagImage64Vertical {
+    width: 75px !important; /* fallback (no min()/clamp() on old WebView) */
     width:  clamp(75px, 9vmin, 105px) !important;
+    height: 75px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(75px, 9vmin, 105px) !important;
     left: calc(2% + clamp(75px, 9vmin, 105px) + 5px) !important;
 }
@@ -1997,7 +2046,9 @@
     left: auto !important;
     top: auto !important;
     border-radius: 4px !important;
+    width: 90px !important; /* fallback (no min()/clamp() on old WebView) */
     width: clamp(90px, 10vmin, 130px) !important;
+    height: 90px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(90px, 10vmin, 130px) !important;
     object-fit: contain !important;
     image-rendering: crisp-edges;
@@ -2009,7 +2060,9 @@
     visibility: hidden;
 }
 .uc-android #qrFlagImage64Horizontal {
+    width: 65px !important; /* fallback (no min()/clamp() on old WebView) */
     width:  clamp(65px, 8vmin, 95px) !important;
+    height: 65px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(65px, 8vmin, 95px) !important;
     right: calc(1.6% + clamp(65px, 8vmin, 95px) + 5px) !important;
 }
@@ -2267,7 +2320,10 @@
     #mainHorizontalContainer[data-layout-mode="5"] #horizontalBackgroundLayer::after {
         content: '';
         position: absolute;
-        inset: 0;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
         background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 40%, rgba(5, 10, 8, 0.55) 100%);
         pointer-events: none;
     }
@@ -2359,7 +2415,10 @@
 /* Overlay plein-écran (appended to <html>, immune à la rotation du body) */
 #quranPlayerOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 10000;
     display: flex;
     align-items: center;
@@ -2382,6 +2441,7 @@
 
 /* Boîte modale */
 #quranPlayerModal {
+    width: 94vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(700px, 94vw);
     max-height: 88vh;
     background: #2b2720;
@@ -2392,6 +2452,7 @@
     flex-direction: column;
     overflow: hidden;
     direction: rtl;
+    font-size: 11px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(11px, 1.55vmin, 15px);
     /* Cf. #quranPlayerOverlay ci-dessus : même contournement de couche GPU
        dédiée pour la boîte elle-même. */
@@ -2750,7 +2811,10 @@
 /* ── MODALE DÉBLOCAGE AUTOPLAY ──────────────────────────────────────────── */
 #autoplayUnlockOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 10001;          /* au-dessus du lecteur Coran (10000) */
     display: flex;
     align-items: center;
@@ -2763,22 +2827,27 @@
     background: #2b2720;
     border: 1px solid #6a5530;
     border-radius: 14px;
+    padding: 20px 24px; /* fallback (no min()/clamp() on old WebView) */
     padding: clamp(20px, 4vmin, 36px) clamp(24px, 6vmin, 52px);
     text-align: center;
     direction: rtl;
     box-shadow: 0 12px 44px rgba(0, 0, 0, 0.90);
+    max-width: 86vw; /* fallback (no min()/clamp() on old WebView) */
     max-width: min(400px, 86vw);
     display: flex;
     flex-direction: column;
     align-items: center;
+    gap: 12px; /* fallback (no min()/clamp() on old WebView) */
     gap: clamp(12px, 2.5vmin, 22px);
 }
 #autoplayUnlockIcon {
+    font-size: 32px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(32px, 7vmin, 54px);
     line-height: 1;
 }
 #autoplayUnlockText {
     color: #d4aa50;
+    font-size: 13px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(13px, 2.4vmin, 20px);
     line-height: 1.75;
 }
@@ -2787,7 +2856,9 @@
     color: #1a1208;
     border: none;
     border-radius: 8px;
+    padding: 9px 28px; /* fallback (no min()/clamp() on old WebView) */
     padding: clamp(9px, 1.6vmin, 13px) clamp(28px, 6vmin, 48px);
+    font-size: 14px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(14px, 2.2vmin, 18px);
     font-weight: bold;
     cursor: pointer;
@@ -3255,9 +3326,11 @@
 /*    Original : 190 % × 8 vw ≈ 15.2 vw (conçu plein écran)             */
 /*    Pas de débordement : les noms les plus longs font ~54 vw à 15 vw   */
 #azanPopupPrayerNameHorizontal {
+    font-size: 1.5rem !important; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(1.5rem, 15vw, 15vw) !important;
 }
 #azanPopupPrayerNameVertical {
+    font-size: 1.5rem !important; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(1.5rem, 15vh, 15vh) !important;
 }
 
@@ -3559,7 +3632,10 @@
    ────────────────────────────────────────────────────────────────────────── */
 #jomoaAdabOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     background: radial-gradient(ellipse at center, #0d2212 0%, #020d04 55%, #000 100%);
     z-index: 9000;
     display: flex;
@@ -3583,6 +3659,7 @@
 /* Ligne 1 — «قال النبي ﷺ :» */
 #jomoaAdabOverlay .joa-l1 {
     color: #d4a843;
+    font-size: 20px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(20px, 4.8vw, 8.5vh);
     letter-spacing: 0.06em;
     text-shadow: 0 0 22px rgba(212, 168, 67, 0.45);
@@ -3602,6 +3679,7 @@
 /* Ligne 2 — hadith principal */
 #jomoaAdabOverlay .joa-l2 {
     color: #f5edda;
+    font-size: 18px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(18px, 3.8vw, 6.8vh);
     line-height: 1.7;
     text-align: center;
@@ -3612,6 +3690,7 @@
 /* Ligne 3 — référence hadith 1 */
 #jomoaAdabOverlay .joa-l3 {
     color: #6db84e;
+    font-size: 15px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(15px, 3.2vw, 5.6vh);
     text-align: center;
     text-shadow: 0 0 12px rgba(80, 170, 60, 0.35);
@@ -3621,6 +3700,7 @@
 /* Ligne 4 — hadith secondaire + référence */
 #jomoaAdabOverlay .joa-l4 {
     color: #ede4cc;
+    font-size: 16px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(16px, 3.4vw, 6vh);
     line-height: 1.6;
     text-align: center;
@@ -3642,6 +3722,7 @@
    dernier mot clignotant hors écran). clamp(min, vw, vh-max) même convention
    que #jomoaAdabOverlay .joa-l3/.joa-l4 plus haut dans ce fichier. */
 #iqamaPopupVertical {
+    font-size: 20px !important; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(20px, 7vw, 8.5vh) !important;
     display: flex !important;
     align-items: center !important;
@@ -3704,7 +3785,9 @@
     left: 2% !important;
     top: 11.5% !important;
     border-radius: 4px !important;
+    width: 120px !important; /* fallback (no min()/clamp() on old WebView) */
     width: clamp(120px, 13vmin, 170px) !important;
+    height: 120px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(120px, 13vmin, 170px) !important;
     object-fit: contain !important;
     image-rendering: crisp-edges;
@@ -3716,7 +3799,9 @@
 }
 /* ── Android (GeckoView) : QR vertical réduit pour éviter le débordement ─── */
 .uc-android #qrFlagImageVertical {
+    width: 75px !important; /* fallback (no min()/clamp() on old WebView) */
     width:  clamp(75px, 9vmin, 105px) !important;
+    height: 75px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(75px, 9vmin, 105px) !important;
 }
 #qrFlagImageHorizontal {
@@ -3726,7 +3811,9 @@
     top: auto !important;
     bottom: 0.8% !important;
     border-radius: 4px !important;
+    width: 90px !important; /* fallback (no min()/clamp() on old WebView) */
     width: clamp(90px, 10vmin, 130px) !important;
+    height: 90px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(90px, 10vmin, 130px) !important;
     object-fit: contain !important;
     image-rendering: crisp-edges;
@@ -3738,7 +3825,9 @@
 }
 /* ── Android : QR horizontal réduit également ──────────────────────────── */
 .uc-android #qrFlagImageHorizontal {
+    width: 65px !important; /* fallback (no min()/clamp() on old WebView) */
     width:  clamp(65px, 8vmin, 95px) !important;
+    height: 65px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(65px, 8vmin, 95px) !important;
 }
 
@@ -3785,7 +3874,10 @@
 #ucMosqueSelectorModal {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 99999;
     background: rgba(0, 0, 0, 0.93);
     align-items: center;
@@ -3800,6 +3892,7 @@
     background: #111827;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 14px;
+    width: 92vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(520px, 92vw);
     max-height: 80vh;
     display: flex;
@@ -3920,7 +4013,10 @@
 .ucSimpleListModal {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 10000000;
     background: rgba(0, 0, 0, 0.93);
     align-items: center;
@@ -3933,6 +4029,7 @@
     background: #111827;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 14px;
+    width: 90vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(420px, 90vw);
     max-height: 70vh;
     display: flex;
@@ -4016,7 +4113,7 @@
     direction: rtl;
     opacity: 0.92;
     margin: 1.5% auto;
-    font-size: 5vw;
+    font-size: 2vw;
 }
 #ucSelectMosqueButton:hover,
 #ucEditMosqueNameButton:hover,
@@ -4034,7 +4131,10 @@
 #ucMosqueNotifModal {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 99999;
     background: rgba(0, 0, 0, 0.93);
     align-items: center;
@@ -4047,6 +4147,7 @@
     background: #111827;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 14px;
+    width: 92vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(520px, 92vw);
     max-height: 80vh;
     display: flex;
@@ -4180,7 +4281,9 @@
     left: calc(2% + clamp(120px, 13vmin, 170px) + 5px) !important;
     top: 11.5% !important;
     border-radius: 4px !important;
+    width: 120px !important; /* fallback (no min()/clamp() on old WebView) */
     width: clamp(120px, 13vmin, 170px) !important;
+    height: 120px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(120px, 13vmin, 170px) !important;
     object-fit: contain !important;
     image-rendering: crisp-edges;
@@ -4192,7 +4295,9 @@
     visibility: hidden;
 }
 .uc-android #qrFlagImage64Vertical {
+    width: 75px !important; /* fallback (no min()/clamp() on old WebView) */
     width:  clamp(75px, 9vmin, 105px) !important;
+    height: 75px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(75px, 9vmin, 105px) !important;
     left: calc(2% + clamp(75px, 9vmin, 105px) + 5px) !important;
 }
@@ -4206,7 +4311,9 @@
     left: auto !important;
     top: auto !important;
     border-radius: 4px !important;
+    width: 90px !important; /* fallback (no min()/clamp() on old WebView) */
     width: clamp(90px, 10vmin, 130px) !important;
+    height: 90px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(90px, 10vmin, 130px) !important;
     object-fit: contain !important;
     image-rendering: crisp-edges;
@@ -4218,7 +4325,9 @@
     visibility: hidden;
 }
 .uc-android #qrFlagImage64Horizontal {
+    width: 65px !important; /* fallback (no min()/clamp() on old WebView) */
     width:  clamp(65px, 8vmin, 95px) !important;
+    height: 65px !important; /* fallback (no min()/clamp() on old WebView) */
     height: clamp(65px, 8vmin, 95px) !important;
     right: calc(1.6% + clamp(65px, 8vmin, 95px) + 5px) !important;
 }
@@ -4320,7 +4429,10 @@
 #ucBoxControlOverlay {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     background: rgba(0,0,0,0.72);
     z-index: 19999;
     align-items: center;
@@ -4734,7 +4846,10 @@
 #ucMosqueInfoModal {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 99999;
     /* Uniformisation avec #quranPlayerModal (anthracite/or) au lieu du noir
        quasi-plein précédent — cf. demande d'harmonisation visuelle globale. */
@@ -4847,7 +4962,10 @@
 #ucSettingsModal {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 99999;
     background: #2b2720;
     flex-direction: column;
@@ -5120,7 +5238,10 @@
 #ucMosqueProfileEditOverlay {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 9999999;
     background: rgba(0, 0, 0, 0.82);
     align-items: center;
@@ -5651,7 +5772,10 @@
 }
 .ucSettingsToggleWrap input[type="checkbox"] {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     margin: 0;
     opacity: 0;
     cursor: pointer;
@@ -5659,7 +5783,10 @@
 }
 .ucSettingsToggleSlider {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     border-radius: 13px;
     background: rgba(255, 255, 255, 0.18);
     transition: background 0.2s;
@@ -5753,7 +5880,10 @@
 #ucTourClickCatcher {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 999990;
     background: transparent;
 }
@@ -5892,7 +6022,10 @@
 /* Overlay plein-écran (appended to <html>, immune à la rotation du body) */
 #mapLocatorOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 999999999;
     display: flex;
     align-items: center;
@@ -5903,7 +6036,9 @@
 
 /* Boîte modale */
 #mapLocatorModal {
+    width: 94vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(560px, 94vw);
+    height: 86vh; /* fallback (no min()/clamp() on old WebView) */
     height: min(640px, 86vh);
     background: #2b2720;
     border: 1px solid #6a5530;
@@ -5916,6 +6051,7 @@
     /* Meme echelle que #qrCodeModal (deja confortable) : l'ancien
        clamp(11px, 1.55vmin, 15px) plafonnait quasi toujours a son minimum
        de 11px sur un ecran de telephone (1.55vmin y depasse rarement 7-8px). */
+    font-size: 14px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(14px, 2.2vmin, 20px);
 }
 
@@ -5985,7 +6121,10 @@
 }
 #mapLocatorStateMsg {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     display: none;
     align-items: center;
     justify-content: center;
@@ -6065,7 +6204,10 @@
 /* Overlay plein-écran (appended to <html>, même technique que #mapLocatorOverlay) */
 #qiblaOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 999999999;
     display: flex;
     align-items: center;
@@ -6076,7 +6218,9 @@
 
 /* Boîte modale */
 #qiblaModal {
+    width: 94vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(560px, 94vw);
+    height: 88vh; /* fallback (no min()/clamp() on old WebView) */
     height: min(660px, 88vh);
     background: #2b2720;
     border: 1px solid #6a5530;
@@ -6089,6 +6233,7 @@
     /* Meme echelle que #qrCodeModal (deja confortable) : l'ancien
        clamp(11px, 1.55vmin, 15px) plafonnait quasi toujours a son minimum
        de 11px sur un ecran de telephone (1.55vmin y depasse rarement 7-8px). */
+    font-size: 14px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(14px, 2.2vmin, 20px);
 }
 
@@ -6154,7 +6299,10 @@
 }
 #qiblaStateMsg {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 5;
     display: none;
     align-items: center;
@@ -6191,7 +6339,9 @@
 }
 #qbCompassWrap {
     position: relative;
+    width: 58vmin; /* fallback (no min()/clamp() on old WebView) */
     width: min(58vmin, 300px);
+    height: 58vmin; /* fallback (no min()/clamp() on old WebView) */
     height: min(58vmin, 300px);
     flex-shrink: 0;
     margin: 4% 0;
@@ -6208,7 +6358,10 @@
 }
 #qbDial {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     border-radius: 50%;
     transform: rotate(0deg);   /* défini en JS : rotate(-headingDeg) */
     transition: transform .12s linear;
@@ -6217,6 +6370,7 @@
     position: absolute;
     color: #cbb888;
     font-weight: bold;
+    font-size: 11px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(11px, 2.6vmin, 16px);
 }
 .qbTickN { top: 5%; left: 50%; transform: translate(-50%, 0); color: #e8dcc0; }
@@ -6225,7 +6379,10 @@
 .qbTickO { top: 50%; left: 5%; transform: translate(0, -50%); }
 #qbKaabaWrap {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     transform: rotate(0deg);   /* défini en JS une seule fois : rotate(bearingDeg) */
 }
 /* Aiguille façon boussole classique : traverse tout le diamètre du cadran, moitié
@@ -6261,6 +6418,7 @@
     left: 50%;
     top: 6%;
     transform: translate(-50%, -50%);
+    font-size: 16px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(16px, 4.4vmin, 26px);
     filter: drop-shadow(0 0 4px rgba(212, 170, 80, .7));
     z-index: 3;
@@ -6286,6 +6444,7 @@
     display: none;
     flex-direction: column;
     align-items: center;
+    width: 58vmin; /* fallback (no min()/clamp() on old WebView) */
     width: min(58vmin, 300px);
     margin: 4% 0;
     padding: 6% 7%;
@@ -6297,6 +6456,7 @@
 }
 #qbNoSensorBanner.qbShow { display: flex; }
 #qbNoSensorIcon {
+    font-size: 24px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(24px, 6vmin, 34px);
     color: #e05050;
     margin-bottom: 6px;
@@ -6376,7 +6536,10 @@
 /* Assistant de calibration "figure 8" — superposé à l'onglet Boussole */
 #qbCalibrateOverlay {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 8;
     display: none;
     flex-direction: column;
@@ -6389,6 +6552,7 @@
 }
 #qbCalibrateOverlay.qbShow { display: flex; }
 #qbFig8Svg {
+    width: 62vmin; /* fallback (no min()/clamp() on old WebView) */
     width: min(62vmin, 260px);
     height: auto;
     margin-bottom: 14px;
@@ -6429,7 +6593,10 @@
 }
 #qiblaMapArrowSvg {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     width: 100%;
     height: 100%;
     pointer-events: none;
@@ -6761,7 +6928,10 @@
    Ouvert/fermé via _qrOpenFahras()/_qrCloseFahras() dans custom.js. ──────── */
 #qrFahrasPanel, #qrTajInfoPanel {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 30;
     display: flex;
     flex-direction: column;
@@ -7257,6 +7427,7 @@
     #mapLocatorModal,
     #qiblaModal,
     #quranPlayerModal {
+        font-size: 14px; /* fallback (no min()/clamp() on old WebView) */
         font-size: clamp(14px, 2.2vmin, 20px);
     }
     .qbTick         { font-size: clamp(13px, 3.1vmin, 19px); }
@@ -7273,7 +7444,10 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 #azanCatalogOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 999999999;
     display: flex;
     align-items: center;
@@ -7283,7 +7457,9 @@
 #azanCatalogOverlay.acHidden { display: none; }
 
 #azanCatalogModal {
+    width: 94vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(560px, 94vw);
+    height: 90vh; /* fallback (no min()/clamp() on old WebView) */
     height: min(680px, 90vh);
     background: #2b2720;
     border: 1px solid #6a5530;
@@ -7293,6 +7469,7 @@
     flex-direction: column;
     overflow: hidden;
     direction: rtl;
+    font-size: 14px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(14px, 2.2vmin, 20px);
 }
 
@@ -7334,7 +7511,10 @@
 }
 #azanCatalogStateMsg {
     position: absolute;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 5;
     display: none;
     align-items: center;
@@ -7473,7 +7653,7 @@ input[type='checkbox']:checked::after {
 .acItemRow.acSelected .acItemRadio::after {
     content: '';
     position: absolute;
-    inset: 0.16em;
+    top: 0.16em; right: 0.16em; bottom: 0.16em; left: 0.16em;
     border-radius: 50%;
     background: #d4aa50;
 }
@@ -7865,7 +8045,10 @@ input[type='checkbox']:checked::after {
    ═══════════════════════════════════════════════════════════════════════════ */
 #qrCodeOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 999999999;
     display: flex;
     align-items: center;
@@ -7875,6 +8058,7 @@ input[type='checkbox']:checked::after {
 #qrCodeOverlay.qcHidden { display: none; }
 
 #qrCodeModal {
+    width: 90vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(420px, 90vw);
     background: #2b2720;
     border: 1px solid #6a5530;
@@ -7884,6 +8068,7 @@ input[type='checkbox']:checked::after {
     flex-direction: column;
     overflow: hidden;
     direction: rtl;
+    font-size: 14px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(14px, 2.2vmin, 20px);
 }
 #qrCodeHeader {
@@ -7922,7 +8107,9 @@ input[type='checkbox']:checked::after {
     padding: 26px 22px 22px;
 }
 #qrCodeImageBig {
+    width: 66vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(66vw, 320px);
+    height: 66vw; /* fallback (no min()/clamp() on old WebView) */
     height: min(66vw, 320px);
     background: #fff;
     border-radius: 8px;
@@ -7954,7 +8141,10 @@ input[type='checkbox']:checked::after {
 #ucAnonMosqueWarnModal {
     display: none;
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 9999999;
     background: rgba(0, 0, 0, 0.93);
     align-items: center;
@@ -7967,6 +8157,7 @@ input[type='checkbox']:checked::after {
     background: #111827;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 14px;
+    width: 92vw; /* fallback (no min()/clamp() on old WebView) */
     width: min(480px, 92vw);
     max-height: 80vh;
     display: flex;
@@ -8352,6 +8543,7 @@ input[type='checkbox']:checked::after {
        au-dessus du logo, pas de chevauchement possible dans ce thème). */
     #appLogoImage,
     #jomoaCounterVertical {
+        width: 28%; /* fallback (no min()/clamp() on old WebView) */
         width: min(28%, 12.923vh);
         left: calc(50% - min(14%, 6.4615vh));
     }
@@ -8676,7 +8868,10 @@ input[type='checkbox']:checked::after {
    ═══════════════════════════════════════════════════════════════════════════ */
 #ucLogoQuickBarOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 999999999;
     display: flex;
     align-items: center;
@@ -8707,6 +8902,7 @@ input[type='checkbox']:checked::after {
     transition: background .15s;
 }
 .ucLQBRow:active { background: rgba(255, 255, 255, 0.08); }
+.ucLQBRow.ucLQBRowHidden { display: none; }
 .ucLQBRow td {
     padding: 2.6vmin 1.6vmin;
     border-bottom: 1px solid rgba(255, 255, 255, 0.09);
@@ -8944,7 +9140,10 @@ input[type='checkbox']:checked::after {
    horaires derrière. Carte ancrée en bas de l'écran, façon bottom-sheet. */
 #ucMosqueProxOverlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     z-index: 999999998;
     display: flex;
     align-items: flex-end;
@@ -8955,6 +9154,7 @@ input[type='checkbox']:checked::after {
 #ucMosqueProxOverlay.ucMosqueProxHidden { display: none; }
 
 #ucMosqueProxCard {
+    width: 100%; /* fallback (no min()/clamp() on old WebView) */
     width: min(480px, 100%);
     background: #2b2720;
     border: 1px solid #6a5530;
@@ -8962,6 +9162,7 @@ input[type='checkbox']:checked::after {
     box-shadow: 0 12px 44px rgba(0, 0, 0, 0.88);
     padding: 16px;
     pointer-events: auto;
+    font-size: 13px; /* fallback (no min()/clamp() on old WebView) */
     font-size: clamp(13px, 2vmin, 17px);
 }
 
@@ -9015,6 +9216,195 @@ input[type='checkbox']:checked::after {
     gap: 8px;
 }
 #ucMosqueProxActions .ucModalBtn {
+    min-width: 0;
+    padding: 7px 14px;
+    font-size: 0.88em;
+}
+
+/* ── Administration de la mosquée à distance (_installRemoteMosqueAdmin) ── */
+#ucRemoteAdminOverlay {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 999999999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.60);
+}
+#ucRemoteAdminOverlay.ucRemoteAdminHidden { display: none; }
+
+#ucRemoteAdminModal {
+    width: 94vw; /* fallback (no min()/clamp() on old WebView) */
+    width: min(560px, 94vw);
+    max-height: 90vh;
+    background: #2b2720;
+    border: 1px solid #6a5530;
+    border-radius: 14px;
+    box-shadow: 0 12px 44px rgba(0, 0, 0, 0.88);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    font-size: 13px; /* fallback (no min()/clamp() on old WebView) */
+    font-size: clamp(13px, 2vmin, 17px);
+}
+
+#ucRemoteAdminHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(240, 208, 128, 0.25);
+    flex-shrink: 0;
+}
+#ucRemoteAdminTitle { color: #f0d080; font-weight: 600; }
+#ucRemoteAdminClose { color: rgba(255, 255, 255, 0.7); cursor: pointer; font-size: 1.2em; }
+#ucRemoteAdminClose:active { opacity: 0.6; }
+
+#ucRemoteAdminBody {
+    padding: 14px 16px 18px;
+    overflow-y: auto;
+    /* flex:1 + min-height:0 -- nécessaire pour qu'un enfant flex en colonne
+       accepte de se réduire sous sa taille de contenu et laisse overflow-y:auto
+       s'engager réellement (sinon il grandit sans limite et #ucRemoteAdminModal,
+       en overflow:hidden, le rogne juste sans jamais afficher de scrollbar). */
+    flex: 1;
+    min-height: 0;
+}
+
+#ucRemoteAdminMosqueName {
+    color: #fff;
+    font-weight: 600;
+    text-align: center;
+    padding: 10px 16px 0;
+    flex-shrink: 0;
+}
+
+.ucRAActionsTop { display: flex; justify-content: center; margin-bottom: 14px; }
+
+.ucRASectionTitle {
+    color: #f0d080;
+    font-weight: 600;
+    margin: 16px 0 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(240, 208, 128, 0.2);
+}
+
+.ucRATable { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+.ucRATable th {
+    color: rgba(223, 205, 177, 0.75);
+    font-weight: 500;
+    font-size: 0.85em;
+    padding: 4px 6px;
+    text-align: center;
+}
+.ucRATable td { padding: 4px 6px; text-align: center; }
+.ucRAPrayerName { color: #fff; text-align: start !important; }
+
+.ucRANumInput, .ucRATextInput {
+    width: 100%;
+    max-width: 90px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: #fff;
+    padding: 5px 6px;
+    text-align: center;
+    font-size: 1em;
+    box-sizing: border-box;
+}
+.ucRATextInput { max-width: none; text-align: start; }
+select.ucRATextInput { text-align: start; }
+
+.ucRARow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+}
+.ucRARowLabel { color: #fff; flex: 1; }
+.ucRARow .ucRATextInput { flex: 1; width: auto; }
+
+/* Ligne Jumua : label + saisie HH:mm sur une seule ligne, champ juste assez
+   large pour "HH:mm" (pas flex:1 comme les autres lignes texte). */
+.ucRARowJumua { flex-wrap: nowrap; }
+.ucRARowJumua .ucRARowLabel { flex: 0 0 auto; white-space: nowrap; }
+.ucRAJumuaInput {
+    flex: 0 0 auto;
+    width: 5.5em;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: #fff;
+    padding: 5px 6px;
+    text-align: center;
+    font-size: 1em;
+    box-sizing: border-box;
+}
+
+/* Grille Coran : réutilise directement .ucQATable/.ucQATDelayCell/.ucQATDayCell
+   (mêmes classes que la grille locale _buildQuranAutoStartTableHtml, cf.
+   _renderQuranTable dans _installRemoteMosqueAdmin) -- aucun style dédié
+   nécessaire ici, l'identité visuelle est garantie par le partage des classes. */
+#ucRAQuranTableWrap { margin-bottom: 8px; }
+
+#ucRAPinHint {
+    color: rgba(223, 205, 177, 0.6);
+    font-size: 0.8em;
+    margin-top: 6px;
+}
+
+#ucRAPin, #ucRAActionsPin { width: 100%; box-sizing: border-box; margin-top: 6px; }
+
+#ucRAStatus, #ucRAActionsStatus {
+    min-height: 1.4em;
+    margin: 10px 0;
+    font-size: 0.92em;
+    text-align: center;
+}
+#ucRAStatus.ucRAStatus-ok,        #ucRAActionsStatus.ucRAStatus-ok  { color: #7ed17e; }
+#ucRAStatus.ucRAStatus-err,       #ucRAActionsStatus.ucRAStatus-err { color: #ff6b6b; }
+
+.ucRAActionsBottom {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 6px;
+}
+
+/* ── Onglets Actions / Paramétrage (_installRemoteMosqueAdmin) ──────────
+   Même palette que #ucSettingsModalTabs (or #d4aa50 actif). */
+#ucRATabs {
+    display: flex;
+    padding: 0 16px;
+    background: #1e1a12;
+    border-bottom: 1px solid #4a3a1a;
+    flex-shrink: 0;
+}
+.ucRATabBtn {
+    flex: 1;
+    text-align: center;
+    padding: 12px 8px;
+    color: #cbb98a;
+    font-size: 0.95em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.2s;
+    user-select: none;
+}
+.ucRATabBtn:hover { color: #e0c58f; }
+.ucRATabBtnActive {
+    color: #d4aa50;
+    background: #2b2720;
+    box-shadow: inset 0 -2px 0 #d4aa50;
+}
+
+.ucRAPane { display: none; }
+.ucRAPaneActive { display: block; }
+
+.ucRALightRow .ucModalBtn.ucRALightBtn {
     min-width: 0;
     padding: 7px 14px;
     font-size: 0.88em;

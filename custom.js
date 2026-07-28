@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.94';
+var CUSTOM_APP_VERSION = '11.95';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -8759,6 +8759,42 @@ function _doAudioUnlock() {
         _remAtHide  = -1;
     });
 
+})();
+
+// ── GARDE-FOU : la barre mini des horaires ne doit JAMAIS rester visible
+// sans qu'un état actif ne le justifie ────────────────────────────────────
+// BUG RÉCURRENT (28/07/2026, trois manifestations DIFFÉRENTES le même jour :
+// pendant l'interlude azkar, après le nettoyage d'un compteur plein écran,
+// et maintenant après un vrai cycle azan/iqama Isha réel) : la barre mini
+// (miniPrayerTimesHorizontal/Vertical, affichée par le coeur via
+// showPrayerTimesOverlayFunction lors de l'entrée en mode plein écran ou en
+// azkar) se retrouve régulièrement laissée visible, superposée au tableau
+// standard, alors que RIEN ne la justifie -- chaque chemin de code qui
+// l'affiche doit explicitement la recacher au bon moment précis, et chaque
+// nouveau scénario (azkar, compteur, cycle réel complet) en oublie un
+// différent. Plutôt que de continuer à corriger au cas par cas -- ça revient
+// systématiquement sous une forme différente -- ce garde-fou impose
+// l'invariant directement, en balayage périodique léger : si la barre mini
+// est visible mais qu'aucun état actif (compteur plein écran, azkar,
+// compteur compact) ne la justifie, on la masque, peu importe la cause
+// exacte de l'incohérence.
+(function _installMiniOverlayInvariantGuard() {
+    var CHECK_MS = 4000;
+    function _sweep() {
+        var justified = (typeof isFullScreenCounterMode !== 'undefined' && isFullScreenCounterMode) ||
+                         (typeof isBigCounterActive !== 'undefined' && isBigCounterActive) ||
+                         (typeof isIqamaCounterActive !== 'undefined' && isIqamaCounterActive);
+        if (justified) return;
+        ['miniPrayerTimesHorizontal', 'miniPrayerTimesVertical'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el && el.className !== 'hiddenClass' && typeof window.hideElementFunction === 'function') {
+                _L('CTR', 'MINI_OVERLAY_STUCK_CORRECTED', { id: id, prevClass: el.className });
+                window.hideElementFunction(id);
+            }
+        });
+    }
+    setInterval(_sweep, CHECK_MS);
+    _L('CUSTOM', 'INIT', { item: 'miniOverlayInvariantGuard' });
 })();
 
 

@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.89';
+var CUSTOM_APP_VERSION = '11.90';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -3073,6 +3073,12 @@ var _qpReciterIdx  = -1;
 var _qpSurahNum    = 0;
 var _qpAutoAdvance = false;
 var _qpUserAborted = false;
+// Intention réelle de lecture au moment du dernier _playQP() (reflète son
+// propre calcul de shouldPlay) -- cf. commentaire dans le handler 'error'
+// (injectQuranPlayerModal) qui l'utilise pour ne PAS jouer le Coran lors
+// d'un simple chargement silencieux (_qpAutoLoadIfNeeded au boot, forcePlay
+// = false) qui échoue sur .ogg et retente en .mp3.
+var _qpShouldBePlaying = false;
 var _qpSrcChanging    = false;
 var _qpRestoring      = false;
 var _pendingAutoStart = false;
@@ -5505,8 +5511,23 @@ function _qpSavePosition() {
                 reciter:_qpReciterIdx, surah:_qpSurahNum, from:'ogg', to:'mp3'});
             _qpAudio.src = _buildQPUrl(_qpReciterIdx, _qpSurahNum);
             _qpAudio.load();
-            var _fbPlay = _qpAudio.play();
-            if (_fbPlay && _fbPlay.catch) _fbPlay.catch(function() {});
+            // BUG réel (trouvé 28/07/2026, rapport mosquée "يوسف" -- Coran
+            // audible entre Dohr et Asr, hors de toute plage programmée) :
+            // ce .play() était INCONDITIONNEL, quelle que soit l'intention
+            // réelle au moment de l'appel initial. _qpAutoLoadIfNeeded()
+            // (exécuté automatiquement à CHAQUE (re)chargement de page, y
+            // compris un simple reload de récupération) appelle _playQP(false)
+            // -- volontairement "charger sans jouer" (cf. son propre
+            // commentaire) -- mais si le .ogg par défaut échoue à charger
+            // (constaté : 404/SRC_NOT_SUPPORTED), ce handler 'error' reprenait
+            // la main et lançait quand même la lecture .mp3, sans aucun lien
+            // avec un quelconque horaire de prière ni un vrai geste
+            // utilisateur. Se cale maintenant sur _qpShouldBePlaying, calculé
+            // par _playQP() lui-même au moment de l'appel d'origine.
+            if (_qpShouldBePlaying) {
+                var _fbPlay = _qpAudio.play();
+                if (_fbPlay && _fbPlay.catch) _fbPlay.catch(function() {});
+            }
             return;
         }
 
@@ -7317,6 +7338,7 @@ function _playQP(forcePlay) {
     if (!audio) return null;
     forcePlay = !!forcePlay;
     const shouldPlay = forcePlay || !audio.paused || _qpAutoAdvance;
+    _qpShouldBePlaying = shouldPlay;
     _qpAutoAdvance = false;
     _qpTryExt = 'ogg';   // nouvelle lecture → on retente .ogg en premier
     // Sauvegarder AVANT de changer le src (currentTime encore valide sur l'ancienne sourate)
@@ -12109,18 +12131,81 @@ function forceHijriSyncFunction() {
     }
 })();
 
-// ── DIAGNOSTIC TEMPORAIRE : compteur iqama parfois invisible (bug rapporté,
-//    27/07/2026, mosquée "يوسف") -- après la fin de l'azan, la page du
-//    compteur s'affichait avec le mini tableau des prières mais le compteur
-//    lui-même (fullScreenCounterContainer*/iqamaCounterContainer*) restait
-//    masqué -- corrigé uniquement par un reload manuel. À la lecture du
-//    coeur, le chemin normal semble correct (startIqamaCounterFunction ->
-//    isIqamaCounterActive=true -> showAzanPopup appelle showIqamaCounter()
-//    dans le MÊME tick de clockTickFunction) : aucune cause certaine
-//    identifiable sans reproduire en direct. Cette trace confirmera, au
-//    prochain signalement, si showIqamaCounter() est bien appelée et l'état
-//    réel des conteneurs juste après -- à retirer une fois la vraie cause
-//    identifiée.
+// ── FIX : compteur iqama parfois invisible après la fin de l'azan (bug
+//    rapporté 27/07/2026 mosquée "يوسف", récidive 28/07/2026 boîtier Z6).
+//
+//    Cause réelle, identifiée en lisant ensemble _ucResyncPrayerSequence
+//    (_installResyncOnResume, plus haut dans ce fichier) et le cœur
+//    (m2body.js checkAndRestoreIqamaCounter, ~L8233) :
+//
+//    1) showAzanPopup() (m2body.js) affiche normalement le compteur de façon
+//       SYNCHRONE, sous le popup azan, dans le même tick que
+//       startIqamaCounterFunction() -- ce chemin est fiable, pas de course.
+//    2) _ucResyncPrayerSequence (déclenché par tout retour au premier plan
+//       après >=5s en arrière-plan -- visibilitychange OU onResume natif,
+//       cf. MainActivity.maybeTriggerJsResync) force INCONDITIONNELLEMENT
+//       isIqamaCounterActive=false et masque les conteneurs du compteur,
+//       PUIS appelle checkAndRestoreIqamaCounter() pour tout remettre en
+//       place si une fenêtre d'iqama est réellement en cours.
+//    3) BUG CŒUR : chaque cas de checkAndRestoreIqamaCounter() compare avec
+//       ">" strict (jamais ">="). Si ce resync se déclenche pendant la
+//       MÊME minute d'horloge que le début de l'azan (fenêtre d'environ 60s
+//       -- largement atteignable : l'azan natif joue 1 à 4+ minutes, et
+//       n'importe quel blip onPause/onResume du boîtier TV pendant ce
+//       laps -- évènement CEC, launcher qui reprend brièvement la main,
+//       pression mémoire -- suffit à déclencher le resync), AUCUN cas ne
+//       correspond : rien ne rappelle startIqamaCounterFunction()/
+//       showIqamaCounter(). Le compteur reste effacé pour tout le reste du
+//       cycle -- y compris à la fermeture du popup azan, qui n'a alors plus
+//       rien à révéler en dessous. Explique le caractère intermittent
+//       (dépend d'un timing précis) sans exiger un reload -- corrigé ici en
+//       comblant nous-mêmes ce seul angle mort (égalité exacte), avec les
+//       mêmes paramètres que le cœur utilise pour chaque prière.
+(function _installIqamaCounterExactMinuteRestoreFix() {
+    if (typeof window.checkAndRestoreIqamaCounter !== 'function') return;
+    var _origCheckRestore = window.checkAndRestoreIqamaCounter;
+    window.checkAndRestoreIqamaCounter = function () {
+        _origCheckRestore.apply(this, arguments);
+        // Déjà restauré normalement par le cœur (un des cas ">" a matché) : rien à faire.
+        if (typeof isIqamaCounterActive !== 'undefined' && isIqamaCounterActive) return;
+        if (typeof currentTimeInMinutes === 'undefined') return;
+        var _restoredPrayer = null;
+        if (currentTimeInMinutes === fajrTimeInMinutes && JS_DATA.ucIqamaFAJR > 0) {
+            startIqamaCounterFunction(JS_DATA.ucIqamaFAJR, JS_DATA.ucPrayDurationFAJR, JS_DATA.ucIqamaFAJR);
+            positionHighlightBar(prayerRowFajrVerticalElement, prayerCellFajrHorizontalElement);
+            _restoredPrayer = 'FAJR';
+        } else if (currentTimeInMinutes === shuruqTimeInMinutes && JS_DATA.ucIqamaSHRQ > 0) {
+            startIqamaCounterFunction(JS_DATA.ucIqamaSHRQ, 0, JS_DATA.ucIqamaSHRQ);
+            positionHighlightBar(prayerRowShrqVerticalElement, prayerCellShrqHorizontalElement);
+            _restoredPrayer = 'SHRQ';
+        } else if (currentTimeInMinutes === dohrTimeInMinutes && JS_DATA.ucIqamaDOHR > 0) {
+            startIqamaCounterFunction(JS_DATA.ucIqamaDOHR, JS_DATA.ucIqamaDOHR, JS_DATA.ucIqamaDOHR);
+            positionHighlightBar(prayerRowDohrVerticalElement, prayerCellDohrHorizontalElement);
+            _restoredPrayer = 'DOHR';
+        } else if (currentTimeInMinutes === asrTimeInMinutes && JS_DATA.ucIqamaASSR > 0) {
+            startIqamaCounterFunction(JS_DATA.ucIqamaASSR, JS_DATA.ucIqamaASSR, JS_DATA.ucIqamaASSR);
+            positionHighlightBar(prayerRowAsrVerticalElement, prayerCellAsrHorizontalElement);
+            _restoredPrayer = 'ASSR';
+        } else if (currentTimeInMinutes === maghribTimeInMinutes && JS_DATA.ucIqamaMGRB > 0) {
+            startIqamaCounterFunction(JS_DATA.ucIqamaMGRB, JS_DATA.ucIqamaMGRB, JS_DATA.ucIqamaMGRB);
+            positionHighlightBar(prayerRowMgrbVerticalElement, prayerCellMgrbHorizontalElement);
+            _restoredPrayer = 'MGRB';
+        } else if (currentTimeInMinutes === ishaTimeInMinutes && JS_DATA.ucIqamaISHA > 0) {
+            startIqamaCounterFunction(JS_DATA.ucIqamaISHA, JS_DATA.ucPrayDurationISHA, JS_DATA.ucIqamaISHA);
+            positionHighlightBar(prayerRowIshaVerticalElement, prayerCellIshaHorizontalElement);
+            _restoredPrayer = 'ISHA';
+        }
+        if (_restoredPrayer) {
+            showIqamaCounter();
+            _L('RESYNC', 'COUNTER_EXACT_MINUTE_RESTORE', { prayer: _restoredPrayer, currentTimeInMinutes: currentTimeInMinutes });
+        }
+    };
+})();
+
+// ── DIAGNOSTIC : trace l'état des conteneurs à chaque appel de
+//    showIqamaCounter() -- conservé après le fix ci-dessus pour confirmer en
+//    conditions réelles qu'aucun autre chemin ne reproduit encore le
+//    symptôme (bug rapporté 27/07/2026, 28/07/2026).
 (function _installIqamaCounterVisibilityDiag() {
     if (typeof window.showIqamaCounter !== 'function') return;
     var _origShowIqamaCounter = window.showIqamaCounter;
@@ -21374,11 +21459,24 @@ function _ucPrependTopMenuLink(a) {
         };
     }
 
+    // BUG (constaté en test réel, 28/07/2026, boîtier X88 Pro 20) : réutiliser
+    // fullScreenVisibleClass/fullScreenHiddenClass telles quelles ici déclenche
+    // leur transition CSS d'origine (2.5s, style0.css) -- conçue pour l'entrée
+    // initiale unique dans les azkar, pas pour une bascule répétée toutes les
+    // ~20s pendant toute la boucle. Sur ces 2.5s, le tableau standard + la
+    // barre mini (rendus visibles par ce même fix d'interlude pour révéler la
+    // page principale, cf. _hideMiniOverlayForInterlude/_restoreMiniOverlay-
+    // AfterInterlude plus bas) transparaissent en fondu derrière le texte
+    // azkar qui rentre -- rendu fantôme/superposé à CHAQUE cycle, capturé par
+    // capture d'écran. ucAzkarFastFade (custom.css) réduit cette transition à
+    // 0.3s uniquement pour ces bascules d'interlude, sans toucher à l'entrée
+    // initiale (showAzkarDisplayFunction, coeur, ne passe pas par cette
+    // fonction) qui garde son fondu d'origine.
     function _setAzkarContainersClass(cls) {
         var h = document.getElementById('azkarContainerHorizontal');
         var v = document.getElementById('azkarContainerVertical');
-        if (h) h.className = cls;
-        if (v) v.className = cls;
+        if (h) h.className = cls + ' ucAzkarFastFade';
+        if (v) v.className = cls + ' ucAzkarFastFade';
     }
 
     // Bug rapporté (retour utilisateur, boîtier) : pendant cette pause, la

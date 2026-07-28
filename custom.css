@@ -9409,3 +9409,22 @@ select.ucRATextInput { text-align: start; }
     padding: 7px 14px;
     font-size: 0.88em;
 }
+
+/* Transition rapide pour les bascules d'interlude azkar (cf. custom.js
+   _installAzkarMainPageInterlude, _setAzkarContainersClass). La transition
+   d'origine (.fullScreenVisibleClass/.fullScreenHiddenClass, style0.css,
+   2.5s) est pensee pour l'entree initiale unique dans les azkar -- pas pour
+   une bascule repetee toutes les ~20s pendant toute la boucle de la nuit.
+   Sur ces 2.5s, le tableau standard + la barre mini (tous deux rendus
+   visibles par le fix d'interlude pour reveler la page principale) restent
+   visibles en dessous et transparaissent en fondu derriere le texte azkar
+   qui rentre -- rendu fantome/superpose constate en test reel (28/07/2026,
+   boitier X88 Pro 20) a chaque cycle, pas seulement au tout debut.
+   Specificite (deux classes) suffisante pour l'emporter sur la regle core
+   (une seule classe), sans !important. */
+.fullScreenVisibleClass.ucAzkarFastFade {
+    transition: opacity 0.3s linear;
+}
+.fullScreenHiddenClass.ucAzkarFastFade {
+    transition: visibility 0s ease-in 0.3s, opacity 0.3s ease-in;
+}

@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.92';
+var CUSTOM_APP_VERSION = '11.93';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1433,8 +1433,24 @@ var _ucActiveIqamaSeqEpoch = -1;
             if (_ptEl) _ptEl.style.visibility = 'visible';
         });
         if (typeof window.hideElementFunction === 'function') {
+            // BUG MAJEUR (retour utilisateur, 28/07/2026, téléphone -- compte
+            // à rebours figé sur une valeur type "00:40" après un retour en
+            // premier plan, y compris largement après l'heure réelle) : ce
+            // masquage ne couvrait QUE le compteur compact
+            // (iqamaCounterContainer*), jamais le compteur PLEIN ÉCRAN
+            // (fullScreenCounterContainer*, actif dès que
+            // JS_DATA.ucFullScreenCounter=1 -- constaté actif même sur
+            // téléphone en mode portrait, pas réservé aux boîtiers TV). Sur
+            // tout appareil en mode plein écran, ce nettoyage ne faisait donc
+            // RIEN de visible : exactement le symptôme signalé, et la raison
+            // pour laquelle chaque tentative de correction précédente
+            // (bug #26, récidive 27/07) semblait résolue en test puis
+            // revenait -- elle ne touchait jamais l'élément réellement
+            // affiché chez cet utilisateur.
             window.hideElementFunction('iqamaCounterContainerVertical');
             window.hideElementFunction('iqamaCounterContainerHorizontal');
+            window.hideElementFunction('fullScreenCounterContainerVertical');
+            window.hideElementFunction('fullScreenCounterContainerHorizontal');
         }
         // Popup texte iqama (verset/hadith) : masque directement via la MEME
         // classe que hideElementFunction() (m2body.js) plutot que via
@@ -8646,8 +8662,15 @@ function _doAudioUnlock() {
         // _ucResyncPrayerSequence), sans aucun effet sur le vrai compteur.
         isIqamaCounterActive = false;
         if (typeof window.hideElementFunction === 'function') {
+            // Même angle mort que _ucResyncPrayerSequence (cf. son commentaire) :
+            // ne couvrait que le compteur compact, jamais le plein écran
+            // (fullScreenCounterContainer*, actif y compris sur téléphone en
+            // portrait dès que JS_DATA.ucFullScreenCounter=1) -- élément
+            // réellement affiché lors du signalement (28/07/2026).
             window.hideElementFunction('iqamaCounterContainerVertical');
             window.hideElementFunction('iqamaCounterContainerHorizontal');
+            window.hideElementFunction('fullScreenCounterContainerVertical');
+            window.hideElementFunction('fullScreenCounterContainerHorizontal');
         }
         ['iqamaPopupVertical', 'iqamaPopupHorizontal'].forEach(function (id) {
             var el = document.getElementById(id);

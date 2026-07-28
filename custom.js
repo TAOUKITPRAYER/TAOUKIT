@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.95';
+var CUSTOM_APP_VERSION = '11.96';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1469,6 +1469,12 @@ var _ucActiveIqamaSeqEpoch = -1;
                 window.hideElementFunction('fullScreenCounterContainerHorizontal');
             }
         }
+        // cf. _fixAyaPositionInCounter (plus bas dans le fichier) : sans ce
+        // reset explicite, le verset sous l'horloge peut rester invisible en
+        // permanence apres ce resync si l'app etait backgroundee pendant un
+        // countdown (son propre flag interne ne se remet jamais a jour ici,
+        // faute d'UC_EVT.IQAMA_TIME/AZAN_TIME emis par ce nettoyage direct).
+        if (typeof window._ucResetAyaPositionGuard === 'function') window._ucResetAyaPositionGuard();
         // Popup texte iqama (verset/hadith) : masque directement via la MEME
         // classe que hideElementFunction() (m2body.js) plutot que via
         // window.hideElementFunction() -- cet appel passerait par l'extension
@@ -8699,6 +8705,10 @@ function _doAudioUnlock() {
                 window.hideElementFunction('fullScreenCounterContainerHorizontal');
             }
         }
+        // cf. _ucResyncPrayerSequence (meme correctif, meme raison) et
+        // _fixAyaPositionInCounter : ce nettoyage direct ne passe pas non plus
+        // par UC_EVT.IQAMA_TIME/AZAN_TIME.
+        if (typeof window._ucResetAyaPositionGuard === 'function') window._ucResetAyaPositionGuard();
         ['iqamaPopupVertical', 'iqamaPopupHorizontal'].forEach(function (id) {
             var el = document.getElementById(id);
             if (el) el.className = 'hiddenClass';
@@ -9840,6 +9850,22 @@ window.SIMUL = (function() {
     });
 
     ucOn(UC_EVT.AZAN_TIME, function() { _counterActive = false; });
+
+    // Expose pour _ucResyncPrayerSequence (tout en haut du fichier) : le
+    // resync apres un retour en premier plan appelle les fonctions coeur
+    // DIRECTEMENT (jamais via UC_EVT.IQAMA_TIME/AZAN_TIME), donc _counterActive
+    // peut rester bloque a true indefiniment si l'app etait backgroundee
+    // PENDANT un countdown -- le MutationObserver continue alors de forcer
+    // visibility:hidden sur le verset pour toujours, meme apres que le
+    // compteur reel soit termine depuis longtemps (seul un reload manuel
+    // reinitialisait ce flag jusqu'ici, cf. retour utilisateur 29/07/2026 :
+    // page coherente au retour au premier plan sauf le verset, absent jusqu'au
+    // reload).
+    window._ucResetAyaPositionGuard = function() {
+        _counterActive = false;
+        _restore(_getH());
+        _restore(_getV());
+    };
 
 })();
 

@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.90';
+var CUSTOM_APP_VERSION = '11.91';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -21496,8 +21496,36 @@ function _ucPrependTopMenuLink(a) {
     function _hideMiniOverlayForInterlude() {
         if (typeof window.hidePrayerTimesOverlayFunction === 'function') window.hidePrayerTimesOverlayFunction();
     }
+    // BUG (constaté en conditions réelles, 28/07/2026, boîtier X88 Pro 20,
+    // vrai cycle Maghreb) : showPrayerTimesOverlayFunction() (coeur) ne
+    // montre PAS la barre mini immédiatement -- elle programme en interne
+    // un setTimeout(..., 1000). Si la restauration d'interlude tombe sur la
+    // TOUTE DERNIÈRE page azkar, ce "show" retardé (~1s plus tard) tombe
+    // quasiment au même instant que le "hide" de la fin naturelle de la
+    // séquence (displayNextAzkarFunction détecte le tableau épuisé et
+    // appelle hideAzkarDisplayFunction() -> cleanupAzkarDisplayFunction()
+    // -> hidePrayerTimesOverlayFunction(), ~1s après le début de cette
+    // restauration, cf. _cancelPendingInterlude plus haut). Selon l'ordre
+    // exact de la file de timers du moteur JS (deux échéances à ~1s
+    // d'écart, non déterministe à la milliseconde près), le "show" retardé
+    // peut s'exécuter APRÈS le "hide" -- la barre mini reste alors visible
+    // en PERMANENCE, superposée au tableau standard, jusqu'au prochain
+    // cycle azkar (des heures plus tard). Intermittent par nature (dépend
+    // du timing exact), ce qui explique qu'il n'apparaissait pas à chaque
+    // test. Fix : reprendre ici la partie visuelle de
+    // showPrayerTimesOverlayFunction(false) SANS son délai interne --
+    // s'exécute alors strictement AVANT le hide éventuel de la fin
+    // naturelle (qui survient ~1s plus tard), plus de course possible.
     function _restoreMiniOverlayAfterInterlude() {
-        if (typeof window.showPrayerTimesOverlayFunction === 'function') window.showPrayerTimesOverlayFunction(false);
+        if (isHorizontalOrientation) {
+            if (typeof hadithDisplayHorizontalElement !== 'undefined') hadithDisplayHorizontalElement.style.zIndex = 1000;
+            if (typeof marqueeContainerHorizontalElement !== 'undefined') marqueeContainerHorizontalElement.style.zIndex = 1000;
+            if (typeof window.showElementWithTransitionFunction === 'function') window.showElementWithTransitionFunction('miniPrayerTimesHorizontal');
+        } else {
+            if (typeof hadithDisplayVerticalElement !== 'undefined') hadithDisplayVerticalElement.style.zIndex = 1000;
+            if (typeof marqueeContainerVerticalElement !== 'undefined') marqueeContainerVerticalElement.style.zIndex = 1000;
+            if (typeof window.showElementWithTransitionFunction === 'function') window.showElementWithTransitionFunction('miniPrayerTimesVertical');
+        }
     }
 
     function _attach(el) {

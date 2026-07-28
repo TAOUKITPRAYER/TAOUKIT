@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.93';
+var CUSTOM_APP_VERSION = '11.94';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1449,8 +1449,25 @@ var _ucActiveIqamaSeqEpoch = -1;
             // affiché chez cet utilisateur.
             window.hideElementFunction('iqamaCounterContainerVertical');
             window.hideElementFunction('iqamaCounterContainerHorizontal');
-            window.hideElementFunction('fullScreenCounterContainerVertical');
-            window.hideElementFunction('fullScreenCounterContainerHorizontal');
+            // RÉGRESSION introduite par le fix ci-dessus (même jour) : masquer
+            // fullScreenCounterContainer* directement via hideElementFunction()
+            // ne fait QUE ça -- contrairement à closeFullScreenCounterFunction()
+            // (coeur), ça ne remet PAS --izBigCNTR (variable CSS) à 1. Or le
+            // tableau STANDARD des prières (#prayerTimesContainerVertical/
+            // Horizontal, style1/2.css) a "opacity: var(--izBigCNTR)" --
+            // laissée à 0 (mise par showIqamaCounter() à l'activation du mode
+            // plein écran), le tableau standard reste alors invisible en
+            // PERMANENCE (page vide, seule l'horloge reste visible), constaté
+            // en test réel juste après le fix précédent. closeFullScreenCounterFunction()
+            // fait cette remise à 1 (+ reset isFullScreenCounterMode + repositionne
+            // aya/message) -- c'est la fonction coeur complète à appeler, pas
+            // un hide partiel réinventé.
+            if (typeof window.closeFullScreenCounterFunction === 'function') {
+                window.closeFullScreenCounterFunction();
+            } else {
+                window.hideElementFunction('fullScreenCounterContainerVertical');
+                window.hideElementFunction('fullScreenCounterContainerHorizontal');
+            }
         }
         // Popup texte iqama (verset/hadith) : masque directement via la MEME
         // classe que hideElementFunction() (m2body.js) plutot que via
@@ -8669,8 +8686,18 @@ function _doAudioUnlock() {
             // réellement affiché lors du signalement (28/07/2026).
             window.hideElementFunction('iqamaCounterContainerVertical');
             window.hideElementFunction('iqamaCounterContainerHorizontal');
-            window.hideElementFunction('fullScreenCounterContainerVertical');
-            window.hideElementFunction('fullScreenCounterContainerHorizontal');
+            // RÉGRESSION du fix ci-dessus (même jour, cf. commentaire identique
+            // dans _ucResyncPrayerSequence) : un hide direct ne remet pas
+            // --izBigCNTR à 1, laissant le tableau STANDARD des prières
+            // (opacity: var(--izBigCNTR), style1/2.css) invisible en
+            // permanence. closeFullScreenCounterFunction() (coeur) fait le
+            // nettoyage complet -- à utiliser, pas un hide partiel réinventé.
+            if (typeof window.closeFullScreenCounterFunction === 'function') {
+                window.closeFullScreenCounterFunction();
+            } else {
+                window.hideElementFunction('fullScreenCounterContainerVertical');
+                window.hideElementFunction('fullScreenCounterContainerHorizontal');
+            }
         }
         ['iqamaPopupVertical', 'iqamaPopupHorizontal'].forEach(function (id) {
             var el = document.getElementById(id);

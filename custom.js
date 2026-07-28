@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.91';
+var CUSTOM_APP_VERSION = '11.92';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -21463,15 +21463,13 @@ function _ucPrependTopMenuLink(a) {
     // fullScreenVisibleClass/fullScreenHiddenClass telles quelles ici déclenche
     // leur transition CSS d'origine (2.5s, style0.css) -- conçue pour l'entrée
     // initiale unique dans les azkar, pas pour une bascule répétée toutes les
-    // ~20s pendant toute la boucle. Sur ces 2.5s, le tableau standard + la
-    // barre mini (rendus visibles par ce même fix d'interlude pour révéler la
-    // page principale, cf. _hideMiniOverlayForInterlude/_restoreMiniOverlay-
-    // AfterInterlude plus bas) transparaissent en fondu derrière le texte
-    // azkar qui rentre -- rendu fantôme/superposé à CHAQUE cycle, capturé par
-    // capture d'écran. ucAzkarFastFade (custom.css) réduit cette transition à
-    // 0.3s uniquement pour ces bascules d'interlude, sans toucher à l'entrée
-    // initiale (showAzkarDisplayFunction, coeur, ne passe pas par cette
-    // fonction) qui garde son fondu d'origine.
+    // ~20s pendant toute la boucle. Sur ces 2.5s, le tableau standard restait
+    // visible en transparence derrière le texte azkar qui rentre -- rendu
+    // fantôme/superposé à CHAQUE cycle, capturé par capture d'écran.
+    // ucAzkarFastFade (custom.css) réduit cette transition à 0.3s uniquement
+    // pour ces bascules d'interlude, sans toucher à l'entrée initiale
+    // (showAzkarDisplayFunction, coeur, ne passe pas par cette fonction) qui
+    // garde son fondu d'origine.
     function _setAzkarContainersClass(cls) {
         var h = document.getElementById('azkarContainerHorizontal');
         var v = document.getElementById('azkarContainerVertical');
@@ -21479,53 +21477,39 @@ function _ucPrependTopMenuLink(a) {
         if (v) v.className = cls + ' ucAzkarFastFade';
     }
 
-    // Bug rapporté (retour utilisateur, boîtier) : pendant cette pause, la
-    // page principale réapparaît bien (l'azkar plein écran est masqué), mais
-    // le tableau STANDARD des prières manquait -- remplacé par la barre
-    // compacte "mini" (délais d'iqama + prières sur une ligne). Cause : le
-    // coeur (m2body.js, prepareAzkarDisplayFunction) affiche cette barre
-    // compacte UNE SEULE FOIS au tout début de la séquence azkar (elle reste
-    // ensuite invisible tout du long, cachée SOUS le conteneur azkar plein
-    // écran -- personne ne remarque qu'elle est restée active). Notre
-    // interlude masque le conteneur azkar SANS le savoir, ce qui révèle cette
-    // barre compacte au lieu du vrai tableau standard qu'elle recouvre.
-    // Fix : basculer nous-mêmes cette barre (mêmes fonctions coeur que
-    // prepareAzkarDisplayFunction/cleanupAzkarDisplayFunction) en miroir de
-    // notre propre bascule du conteneur azkar -- idempotent, sans dépendre
-    // d'aucun état interne du coeur.
-    function _hideMiniOverlayForInterlude() {
-        if (typeof window.hidePrayerTimesOverlayFunction === 'function') window.hidePrayerTimesOverlayFunction();
-    }
-    // BUG (constaté en conditions réelles, 28/07/2026, boîtier X88 Pro 20,
-    // vrai cycle Maghreb) : showPrayerTimesOverlayFunction() (coeur) ne
-    // montre PAS la barre mini immédiatement -- elle programme en interne
-    // un setTimeout(..., 1000). Si la restauration d'interlude tombe sur la
-    // TOUTE DERNIÈRE page azkar, ce "show" retardé (~1s plus tard) tombe
-    // quasiment au même instant que le "hide" de la fin naturelle de la
-    // séquence (displayNextAzkarFunction détecte le tableau épuisé et
-    // appelle hideAzkarDisplayFunction() -> cleanupAzkarDisplayFunction()
-    // -> hidePrayerTimesOverlayFunction(), ~1s après le début de cette
-    // restauration, cf. _cancelPendingInterlude plus haut). Selon l'ordre
-    // exact de la file de timers du moteur JS (deux échéances à ~1s
-    // d'écart, non déterministe à la milliseconde près), le "show" retardé
-    // peut s'exécuter APRÈS le "hide" -- la barre mini reste alors visible
-    // en PERMANENCE, superposée au tableau standard, jusqu'au prochain
-    // cycle azkar (des heures plus tard). Intermittent par nature (dépend
-    // du timing exact), ce qui explique qu'il n'apparaissait pas à chaque
-    // test. Fix : reprendre ici la partie visuelle de
-    // showPrayerTimesOverlayFunction(false) SANS son délai interne --
-    // s'exécute alors strictement AVANT le hide éventuel de la fin
-    // naturelle (qui survient ~1s plus tard), plus de course possible.
-    function _restoreMiniOverlayAfterInterlude() {
-        if (isHorizontalOrientation) {
-            if (typeof hadithDisplayHorizontalElement !== 'undefined') hadithDisplayHorizontalElement.style.zIndex = 1000;
-            if (typeof marqueeContainerHorizontalElement !== 'undefined') marqueeContainerHorizontalElement.style.zIndex = 1000;
-            if (typeof window.showElementWithTransitionFunction === 'function') window.showElementWithTransitionFunction('miniPrayerTimesHorizontal');
-        } else {
-            if (typeof hadithDisplayVerticalElement !== 'undefined') hadithDisplayVerticalElement.style.zIndex = 1000;
-            if (typeof marqueeContainerVerticalElement !== 'undefined') marqueeContainerVerticalElement.style.zIndex = 1000;
-            if (typeof window.showElementWithTransitionFunction === 'function') window.showElementWithTransitionFunction('miniPrayerTimesVertical');
-        }
+    // SIMPLIFICATION (retour utilisateur, 28/07/2026) : les deux bugs
+    // précédents (tableau standard absent pendant la pause, puis barre mini
+    // bloquée visible en permanence après la fin des azkar) venaient tous les
+    // deux du même choix d'origine -- faire mirroiter notre propre bascule du
+    // conteneur azkar sur la barre mini du coeur (prepareAzkarDisplayFunction
+    // l'affiche UNE SEULE FOIS au tout début, jamais revisible ensuite en
+    // temps normal, cachée sous l'azkar plein écran). Chaque pause devait donc
+    // la recacher puis la réafficher pour rester en phase -- mais elle n'est
+    // JAMAIS censée être vue par l'utilisateur (le tableau standard, déjà
+    // maintenu visible en permanence par _installBlackScreenHidesPrayerTable,
+    // suffit à lui seul pendant les pauses). La faire clignoter à chaque
+    // transition (chaque bascule a son propre fondu CSS, perceptible même
+    // rapide) était visible et sans aucune utilité. Fix définitif : empêcher
+    // le coeur de la montrer dès le départ de la séquence azkar -- plus rien
+    // à cacher/réafficher ensuite, l'interlude n'a plus qu'à basculer le
+    // conteneur azkar lui-même.
+    var _origPrepareAzkarDisplay = window.prepareAzkarDisplayFunction;
+    if (typeof _origPrepareAzkarDisplay === 'function') {
+        window.prepareAzkarDisplayFunction = function () {
+            _origPrepareAzkarDisplay.apply(this, arguments);
+            if (typeof window.hidePrayerTimesOverlayFunction === 'function') window.hidePrayerTimesOverlayFunction();
+            // showPrayerTimesOverlayFunction() (coeur, appelée par l'original
+            // ci-dessus) ne montre pas la barre mini immédiatement -- elle
+            // programme elle-même un setTimeout(..., 1000) interne (sans
+            // handle exposé, donc impossible à annuler directement). Notre
+            // hide immédiat ci-dessus ne suffit donc pas seul : ce show
+            // retardé la re-révèle ~1s après le début de la séquence,
+            // constaté en test réel (boîtier X88 Pro 20). On la recache une
+            // seconde fois après ce délai pour avoir le dernier mot.
+            setTimeout(function () {
+                if (typeof window.hidePrayerTimesOverlayFunction === 'function') window.hidePrayerTimesOverlayFunction();
+            }, 1100);
+        };
     }
 
     function _attach(el) {
@@ -21536,7 +21520,6 @@ function _ucPrependTopMenuLink(a) {
             if (cur === 'fadeOutClass' && _prevClass !== 'fadeOutClass' && !_pending) {
                 _pending = true;
                 _setAzkarContainersClass('fullScreenHiddenClass');
-                _hideMiniOverlayForInterlude();
                 _pendingTimer = setTimeout(function () {
                     _pendingTimer = null;
                     _pending = false;
@@ -21545,12 +21528,10 @@ function _ucPrependTopMenuLink(a) {
                     // azkar ont malgré tout été arrêtés sans passer par
                     // stopAzkarDisplayFunction (chemin non anticipé), on ne
                     // réaffiche pas le conteneur -- le coeur a déjà fait le
-                    // nettoyage complet (cleanupAzkarDisplayFunction),
-                    // inutile/risqué de réafficher la barre compacte ici.
+                    // nettoyage complet (cleanupAzkarDisplayFunction).
                     var txt = document.getElementById('azkarTextDisplayHorizontal');
                     if (txt && txt.style.visibility === 'hidden') return;
                     _setAzkarContainersClass('fullScreenVisibleClass');
-                    _restoreMiniOverlayAfterInterlude();
                 }, INTERLUDE_MS);
             }
             _prevClass = cur;

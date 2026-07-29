@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.06';
+var CUSTOM_APP_VERSION = '12.07';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -15965,7 +15965,16 @@ function selectQPTakbir() {
     // déjà défini plus haut dans cette même IIFE) pour rester cohérent avec le
     // reste de _installMosqueInfoModal.
     var L_MPE = {
+        // Le titre générique ci-dessous ne sert plus que de repli initial
+        // (contenu HTML au moment de la construction, cf. _buildMosqueProfileEditOverlay) --
+        // _openMosqueProfileEdit le remplace à CHAQUE ouverture par titleCreate
+        // ou titleUpdate selon le contexte réel (cf. demande utilisateur
+        // 30/07/2026 : le titre doit être significatif et suivre l'action en
+        // cours -- création d'une nouvelle mosquée depuis le modèle anonyme,
+        // ou mise à jour d'une mosquée déjà existante).
         title:       { AR: 'تعديل معلومات المسجد', FR: 'Modifier les informations de la mosquée', EN: 'Edit mosque information' },
+        titleCreate: { AR: 'إضافة مسجد جديد', FR: 'Ajout d\'une nouvelle mosquée', EN: 'Adding a new mosque' },
+        titleUpdate: { AR: 'تحديث معلومات المسجد', FR: 'Mise à jour des informations de la mosquée', EN: 'Updating mosque information' },
         tabInfo:     { AR: 'معلومات المسجد', FR: 'Informations', EN: 'Information' },
         tabSettings: { AR: 'ضبط الإعدادات', FR: 'Paramétrage', EN: 'Settings' },
         mosqueName:  { AR: 'اسم المسجد', FR: 'Nom de la mosquée', EN: 'Mosque name' },
@@ -16149,6 +16158,16 @@ function selectQPTakbir() {
 
     function _openMosqueProfileEdit() {
         _buildMosqueProfileEditOverlay();
+
+        // Titre significatif selon le contexte réel à CHAQUE ouverture (pas
+        // seulement à la construction) : mosquée anonyme -> on est en train
+        // d'en créer une nouvelle (proposition) ; sinon (vraie mosquée,
+        // atteignable ici seulement si admin déverrouillé, cf.
+        // _mosqueProfileCanEdit) -> mise à jour d'une mosquée existante.
+        var _mid = ''; try { _mid = localStorage.getItem('UC_MOSQUE_ID') || ''; } catch (e) {}
+        var _isAnon = (!_mid || _mid === 'anonymous.generic');
+        document.getElementById('ucMosqueProfileEditTitle').textContent = _mpeT(_isAnon ? 'titleCreate' : 'titleUpdate');
+
         var c = JS_CUSTOM;
         document.getElementById('ucMPEName').value      = JS_DATA.ucMosqueName || '';
         document.getElementById('ucMPEAddress').value  = c.ucMosqueAddress  || '';

@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.00';
+var CUSTOM_APP_VERSION = '12.01';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -13773,7 +13773,7 @@ function selectQPTakbir() {
     // Traductions AR/FR/EN (auparavant mélange arabe/français figé selon
     // l'endroit -- cf. audit langue 25/07/2026).
     var L_MOSEL = {
-        selectMosque:  { AR: 'إختيار المسجد', FR: 'Choisir la mosquée', EN: 'Choose mosque' },
+        selectMosque:  { AR: 'إختيار/إضافة مسجد', FR: 'Choisir/Ajouter une mosquée', EN: 'Choose/Add mosque' },
         serviceUnavail:{ AR: 'الخدمة غير متوفرة', FR: 'Service indisponible', EN: 'Service unavailable' },
         loading:       { AR: 'جارٍ التحميل...', FR: 'Chargement...', EN: 'Loading...' },
         mosqueNotFound:{ AR: 'تعذر العثور على المسجد', FR: 'Mosquée introuvable', EN: 'Mosque not found' }
@@ -13961,9 +13961,17 @@ function selectQPTakbir() {
 
         var items = [];
         // 1) Mosquée anonyme — toujours épinglée en tête, quelle que soit la ville
-        //    (repli garanti hors-ligne, cf. discussion).
+        //    (repli garanti hors-ligne, cf. discussion). Texte de LIGNE dédié
+        //    (demande utilisateur 29/07/2026) : ne réutilise PAS
+        //    MOSQUE_NAME/LABEL du registre (respectivement "إسم المسجد" et
+        //    "مسجد بدون اسم | Mosquée anonyme") -- ces valeurs restent
+        //    inchangées ailleurs (UC_ANON_PLACEHOLDER_NAME, nom par défaut
+        //    affiché sur l'écran principal tant que non personnalisé). Ici,
+        //    seul l'AFFICHAGE de cette ligne du sélecteur change, pour
+        //    clarifier qu'il s'agit d'une demande d'ajout, pas d'une mosquée
+        //    existante sans nom.
         if (reg['anonymous.generic']) {
-            items.push({ id: 'anonymous.generic', name: reg['anonymous.generic'].MOSQUE_NAME, label: reg['anonymous.generic'].LABEL, remote: false });
+            items.push({ id: 'anonymous.generic', name: 'طلب إضافة مسجد', label: 'مسجد غير معرّف | Mosquée inconnue', remote: false });
         }
         // 2) Entrées locales embarquées (registre APK) situées dans la ville choisie —
         //    continuent de fonctionner hors-ligne, aucune régression pour les

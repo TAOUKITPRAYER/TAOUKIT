@@ -7500,6 +7500,21 @@
     .qbTick         { font-size: clamp(13px, 3.1vmin, 19px); }
     #qbKaabaMarker  { font-size: clamp(19px, 5.2vmin, 30px); }
     #qbNoSensorIcon { font-size: clamp(28px, 7vmin, 38px); }
+
+    /* #ucSelectMosqueButton/#ucEditMosqueNameButton/#ucMosqueNotifButton
+       (custom.css, plus haut) restent a font-size:2vw -- correct sur un grand
+       ecran horizontal (box), mais minuscule sur un telephone vertical
+       (viewport etroit, vw relatif au VIEWPORT entier, pas au conteneur --
+       meme piege que #ucBoxAdminBody, cf. custom.js). Aligne sur la taille
+       reellement utilisee par Export/Import juste en dessous
+       (.ucModernActionBtn, font-size:0.95em) plutot que d'inventer une
+       nouvelle valeur -- demande utilisateur 29/07/2026. Uniquement en
+       portrait : ne touche pas au rendu horizontal/box, deja correct. */
+    #ucSelectMosqueButton,
+    #ucEditMosqueNameButton,
+    #ucMosqueNotifButton {
+        font-size: 0.95em;
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

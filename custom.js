@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.04';
+var CUSTOM_APP_VERSION = '12.05';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -16540,15 +16540,28 @@ function selectQPTakbir() {
     // ── Reprise après bascule vers l'anonyme depuis ucMosqueSelectorProposeLink
     // (_installMosqueSelector) : cette bascule recharge la page
     // (_finishSelectMosque), donc rouvrir directement ucMosqueProfileEditBox
-    // ne peut pas se faire dans le même appel -- un indicateur one-shot
-    // (retiré immédiatement après lecture) fait rouvrir la boîte ici, juste
-    // après le rechargement.
+    // ne peut pas se faire dans le même appel -- un indicateur one-shot fait
+    // rouvrir la boîte ici, juste après le rechargement.
+    // IMPORTANT : ce premier rechargement n'est PAS le dernier -- passer sur
+    // l'id 'anonymous.generic' change aussi JS_CUSTOM.ucMosqueConfigVersion
+    // (mis à '' par _finishSelectMosque), ce qui déclenche systématiquement
+    // un SECOND rechargement automatique via _applyMosqueConfig() (+200ms,
+    // cf. CLAUDE.md) pour appliquer la config du modèle anonyme. Retirer
+    // l'indicateur trop tôt (avant l'ouverture réelle) le fait donc
+    // disparaître pendant cette fenêtre de 200 ms, sans jamais avoir ouvert
+    // la boîte -- on ne le retire qu'IMMÉDIATEMENT AVANT d'appeler
+    // window._ucOpenMosqueProfileEdit(), pas à la lecture : si ce premier
+    // passage est interrompu par le second rechargement, l'indicateur
+    // survit et une nouvelle tentative a lieu au chargement suivant (stable,
+    // plus de rechargement en attente à ce stade).
     (function _resumeProfileEditAfterReload() {
         var flag = false;
         try { flag = localStorage.getItem('UC_OPEN_PROFILE_EDIT_AFTER_RELOAD') === '1'; } catch (e) {}
         if (!flag) return;
-        try { localStorage.removeItem('UC_OPEN_PROFILE_EDIT_AFTER_RELOAD'); } catch (e) {}
-        setTimeout(function() { window._ucOpenMosqueProfileEdit(); }, 600);
+        setTimeout(function() {
+            try { localStorage.removeItem('UC_OPEN_PROFILE_EDIT_AFTER_RELOAD'); } catch (e) {}
+            window._ucOpenMosqueProfileEdit();
+        }, 600);
     })();
 
     console.log('[MOSQUE_INFO] modale installée');

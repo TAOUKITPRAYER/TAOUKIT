@@ -5333,6 +5333,59 @@
     text-align: center;
     margin: 0 0 14px;
 }
+/* ── Onglets Informations / Paramétrage (ucMosqueProfileEditBox) — même
+   mécanisme que .ucRATabBtn (_installRemoteMosqueAdmin), recoloré pour
+   rester cohérent avec la palette or (#ffd250) déjà utilisée dans cette
+   boîte (titre, bouton édition). */
+#ucMPETabs {
+    display: flex;
+    gap: 6px;
+    margin: 0 0 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+.ucMPETabBtn {
+    flex: 1;
+    text-align: center;
+    padding: 8px 4px;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 0.88em;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 2px solid transparent;
+}
+.ucMPETabBtn:hover { color: rgba(255, 255, 255, 0.85); }
+.ucMPETabBtnActive {
+    color: #ffd250;
+    border-bottom-color: #ffd250;
+}
+.ucMPEPane { display: none; }
+.ucMPEPaneActive { display: block; }
+
+/* ── Onglet "Paramétrage" : héberge le VRAI #adjustmentsContentContainer
+   (déplacé, pas cloné, cf. custom.js _dockAdjustmentsIntoTab) — ce
+   conteneur core est normalement positionné en absolu à même une modale
+   plein écran (.modalPopupClass, cf. style1.css/style2.css) ; neutralisé
+   ici pour qu'il s'écoule normalement dans notre petite boîte, qui gère
+   elle-même son propre scroll (#ucMosqueProfileEditBox, overflow-y:auto). */
+#ucMPEAdjustHost {
+    direction: rtl;
+    font-size: 0.78em;
+}
+#ucMPEAdjustHost #adjustmentsContentContainer {
+    position: static !important;
+    top: auto !important;
+    left: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 0 !important;
+    overflow: visible !important;
+}
+#ucMPEAdjustHost .ucOptionsTabBar {
+    margin: 0 0 10px;
+    padding: 1% 0 3%;
+}
 .ucMPELabel {
     display: block;
     color: rgba(255, 255, 255, 0.6);

@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.02';
+var CUSTOM_APP_VERSION = '12.03';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -15945,6 +15945,9 @@ function selectQPTakbir() {
     // reste de _installMosqueInfoModal.
     var L_MPE = {
         title:       { AR: 'تعديل معلومات المسجد', FR: 'Modifier les informations de la mosquée', EN: 'Edit mosque information' },
+        tabInfo:     { AR: 'معلومات المسجد', FR: 'Informations', EN: 'Information' },
+        tabSettings: { AR: 'ضبط الإعدادات', FR: 'Paramétrage', EN: 'Settings' },
+        mosqueName:  { AR: 'اسم المسجد', FR: 'Nom de la mosquée', EN: 'Mosque name' },
         address:     { AR: 'العنوان', FR: 'Adresse', EN: 'Address' },
         phone:       { AR: 'الهاتف', FR: 'Téléphone', EN: 'Phone' },
         email:       { AR: 'البريد الإلكتروني', FR: 'E-mail', EN: 'Email' },
@@ -15981,6 +15984,13 @@ function selectQPTakbir() {
         ov.innerHTML =
             '<div id="ucMosqueProfileEditBox">' +
                 '<p id="ucMosqueProfileEditTitle">' + _mpeT('title') + '</p>' +
+                '<div id="ucMPETabs">' +
+                    '<span class="ucMPETabBtn ucMPETabBtnActive" data-mpe-tab="info">' + _mpeT('tabInfo') + '</span>' +
+                    '<span class="ucMPETabBtn" data-mpe-tab="settings">' + _mpeT('tabSettings') + '</span>' +
+                '</div>' +
+                '<div class="ucMPEPane ucMPEPaneActive" data-mpe-pane="info">' +
+                '<label class="ucMPELabel">' + _mpeT('mosqueName') + '</label>' +
+                '<input id="ucMPEName" type="text" class="ucMPEInput"/>' +
                 '<label class="ucMPELabel">' + _mpeT('address') + '</label>' +
                 '<input id="ucMPEAddress" type="text" class="ucMPEInput"/>' +
                 '<label class="ucMPELabel">' + _mpeT('phone') + '</label>' +
@@ -16001,6 +16011,10 @@ function selectQPTakbir() {
                 '<label class="ucMPECheckRow"><input id="ucMPEParking" type="checkbox"/> ' + _mpeT('parking') + '</label>' +
                 '<label class="ucMPELabel">' + _mpeT('socialLink') + '</label>' +
                 '<input id="ucMPESocial" type="url" class="ucMPEInput" placeholder="https://…"/>' +
+                '</div>' +
+                '<div class="ucMPEPane" data-mpe-pane="settings">' +
+                    '<div id="ucMPEAdjustHost"></div>' +
+                '</div>' +
                 '<div id="ucMosqueProfileEditFooter">' +
                     '<span id="ucMPECancel" class="ucModalBtn ucModalBtn--secondary">' + _mpeT('cancel') + '</span>' +
                     '<span id="ucMPESave" class="ucModalBtn ucModalBtn--primary">' + _mpeT('save') + '</span>' +
@@ -16008,6 +16022,20 @@ function selectQPTakbir() {
             '</div>';
         document.body.appendChild(ov);
         _profileEditOv = ov;
+
+        // ── Onglets Informations / Paramétrage (même mécanisme que
+        // _installRemoteMosqueAdmin._switchTab : classes toggle sur boutons +
+        // panneaux, aucune donnée recalculée).
+        var _mpeTabBtns = ov.querySelectorAll('.ucMPETabBtn');
+        for (var _ti = 0; _ti < _mpeTabBtns.length; _ti++) {
+            _mpeTabBtns[_ti].addEventListener('click', function () {
+                var tab = this.getAttribute('data-mpe-tab');
+                var btns = ov.querySelectorAll('.ucMPETabBtn');
+                var panes = ov.querySelectorAll('.ucMPEPane');
+                for (var i = 0; i < btns.length; i++) btns[i].classList.toggle('ucMPETabBtnActive', btns[i] === this);
+                for (var j = 0; j < panes.length; j++) panes[j].classList.toggle('ucMPEPaneActive', panes[j].getAttribute('data-mpe-pane') === tab);
+            });
+        }
 
         ov.addEventListener('click', function (e) { if (e.target === ov) _closeMosqueProfileEdit(); });
         document.getElementById('ucMPECancel').addEventListener('click', _closeMosqueProfileEdit);
@@ -16023,6 +16051,21 @@ function selectQPTakbir() {
             });
         });
         document.getElementById('ucMPESave').addEventListener('click', function () {
+            // Nom de la mosquée (JS_DATA, pas JS_CUSTOM — même champ que
+            // editMosqueNameFunction/ucEditMosqueNameButton, core m2body.js).
+            // Reproduit exactement ses 3 effets de bord (valeur + les 2
+            // affichages DOM directs + sauvegarde core), cf. Common Pitfalls
+            // du CLAUDE.md : un override JS seul ne suffit jamais, le DOM déjà
+            // peuplé doit être mis à jour explicitement.
+            var newName = (document.getElementById('ucMPEName').value || '').trim();
+            if (newName !== (JS_DATA.ucMosqueName || '')) {
+                JS_DATA.ucMosqueName = newName;
+                var mv = document.getElementById('mosqueNameDisplayVertical');
+                var mh = document.getElementById('mosqueNameDisplayHorizontal');
+                if (mv) mv.innerHTML = newName;
+                if (mh) mh.innerHTML = newName;
+                if (typeof saveSettingsToStorageFunction === 'function') saveSettingsToStorageFunction();
+            }
             JS_CUSTOM.ucMosqueAddress       = (document.getElementById('ucMPEAddress').value || '').trim();
             JS_CUSTOM.ucMosquePhone         = (document.getElementById('ucMPEPhone').value || '').trim();
             JS_CUSTOM.ucMosqueEmail         = (document.getElementById('ucMPEEmail').value || '').trim();
@@ -16042,9 +16085,39 @@ function selectQPTakbir() {
         });
     }
 
+    // ── Onglet 2 "Paramétrage" : héberge temporairement le VRAI contenu de
+    // #adjustmentsContentContainer (la page "التعديلات" du menu core, déjà
+    // réorganisée en 5 sous-onglets + cartes verticales par prière, cf.
+    // _installAdjustmentsTabs / _installAdjustmentsBlocksLayout plus bas dans
+    // ce fichier) — déplacé (appendChild), jamais cloné : les id/onclick
+    // core (incrementIqamaMinutesFunction, editFixedIqamaFajrFunction,
+    // toggleJomoaOnHrScreenFunction, etc.) lisent/écrivent ces MÊMES éléments
+    // par id, un doublon casserait leurs mises à jour. Reproduit donc le
+    // contenu réel (pas une réplique séparée) le temps que la boîte est
+    // ouverte, puis restitué à sa place d'origine à la fermeture — l'entrée
+    // de menu "التعديلات" d'origine reste pleinement fonctionnelle une fois
+    // la boîte refermée.
+    function _dockAdjustmentsIntoTab() {
+        var host = document.getElementById('ucMPEAdjustHost');
+        var src  = document.getElementById('adjustmentsContentContainer');
+        if (!host || !src || host.contains(src)) return;
+        var sectionEl = document.getElementById('adjustmentsSectionId');
+        if (sectionEl) sectionEl.style.visibility = 'hidden';
+        host.appendChild(src);
+    }
+
+    function _undockAdjustmentsFromTab() {
+        var host = document.getElementById('ucMPEAdjustHost');
+        var src  = document.getElementById('adjustmentsContentContainer');
+        var sectionEl = document.getElementById('adjustmentsSectionId');
+        if (!host || !src || !sectionEl || !host.contains(src)) return;
+        sectionEl.appendChild(src);
+    }
+
     function _openMosqueProfileEdit() {
         _buildMosqueProfileEditOverlay();
         var c = JS_CUSTOM;
+        document.getElementById('ucMPEName').value      = JS_DATA.ucMosqueName || '';
         document.getElementById('ucMPEAddress').value  = c.ucMosqueAddress  || '';
         document.getElementById('ucMPEPhone').value    = c.ucMosquePhone    || '';
         document.getElementById('ucMPEEmail').value    = c.ucMosqueEmail    || '';
@@ -16057,10 +16130,19 @@ function selectQPTakbir() {
         document.getElementById('ucMPEParking').checked  = !!c.ucMosqueParking;
         document.getElementById('ucMPESocial').value   = c.ucMosqueSocialUrl || '';
         document.getElementById('ucMPEGeoErr').textContent = '';
+
+        // Repart toujours sur l'onglet "Informations" à l'ouverture.
+        var btns = _profileEditOv.querySelectorAll('.ucMPETabBtn');
+        var panes = _profileEditOv.querySelectorAll('.ucMPEPane');
+        for (var i = 0; i < btns.length; i++) btns[i].classList.toggle('ucMPETabBtnActive', btns[i].getAttribute('data-mpe-tab') === 'info');
+        for (var j = 0; j < panes.length; j++) panes[j].classList.toggle('ucMPEPaneActive', panes[j].getAttribute('data-mpe-pane') === 'info');
+
+        _dockAdjustmentsIntoTab();
         _profileEditOv.classList.add('ucMosqueModalOpen');
     }
 
     function _closeMosqueProfileEdit() {
+        _undockAdjustmentsFromTab();
         if (_profileEditOv) _profileEditOv.classList.remove('ucMosqueModalOpen');
     }
 

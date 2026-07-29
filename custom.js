@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.07';
+var CUSTOM_APP_VERSION = '12.08';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -24595,7 +24595,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         quran:      { AR: 'القرآن الكريم', FR: 'Le Saint Coran', EN: 'The Holy Quran' },
         locator:    { AR: 'الموقع الحالي', FR: 'Position actuelle', EN: 'Current location' },
         qibla:      { AR: 'اتجاه القبلة', FR: 'Direction de la Qibla', EN: 'Qibla Direction' },
-        remoteAdmin:{ AR: 'إدارة المسجد عن بعد', FR: 'Administrer la mosquée à distance', EN: 'Administer mosque remotely' }
+        remoteAdmin:{ AR: 'إدارة المسجد عن بعد', FR: 'Administrer la mosquée à distance', EN: 'Administer mosque remotely' },
+        assistant:  { AR: 'المساعد الذكي', FR: 'Assistant intelligent', EN: 'Smart assistant' }
     };
     function _lqbT(key) {
         var row = L_LQB[key];
@@ -24628,6 +24629,15 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         '<path d="M12,8a4,4,0,1,0,4,4A4,4,0,0,0,12,8Zm0,6a2,2,0,1,1,2-2A2,2,0,0,1,12,14Z"/>' +
         '<path d="M12,2A10,10,0,0,0,2,12a1,1,0,0,0,2,0,8,8,0,1,1,16,0,1,1,0,0,0,2,0A10,10,0,0,0,12,2Z"/>' +
         '<path d="M12,6a6,6,0,0,0-6,6,1,1,0,0,0,2,0,4,4,0,1,1,8,0,1,1,0,0,0,2,0A6,6,0,0,0,12,6Z"/></svg>';
+    var SVG_ASSISTANT = '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor">' +
+        '<rect x="5" y="8" width="14" height="11" rx="3"/>' +
+        '<rect x="10.7" y="2" width="2.6" height="4" rx="1.3"/>' +
+        '<circle cx="12" cy="2.6" r="1.6"/>' +
+        '<circle cx="9" cy="13" r="1.7" fill="#1e1a12"/>' +
+        '<circle cx="15" cy="13" r="1.7" fill="#1e1a12"/>' +
+        '<rect x="8.5" y="16.3" width="7" height="1.6" rx="0.8" fill="#1e1a12"/>' +
+        '<rect x="1.5" y="11" width="2.2" height="5" rx="1.1"/>' +
+        '<rect x="20.3" y="11" width="2.2" height="5" rx="1.1"/></svg>';
 
     // Téléphone uniquement -- administrer une box à distance depuis la box
     // elle-même n'a pas de sens (le panneau "Notifier" existant fait déjà ça
@@ -24660,6 +24670,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 _lqbRow('ucLQBQuran',      _lqbT('quran'),      SVG_QURAN) +
                 _lqbRow('ucLQBLocator',    _lqbT('locator'),    SVG_GPS) +
                 _lqbRow('ucLQBQibla',      _lqbT('qibla'),      SVG_COMPASS) +
+                _lqbRow('ucLQBAssistant',  _lqbT('assistant'),  SVG_ASSISTANT) +
                 // Masquée par défaut (ucLQBRowHidden) : ne doit apparaître
                 // qu'après déverrouillage admin (window._ucAdminUnlocked,
                 // cf. _installAdminBtnLockGate) -- un utilisateur lambda ne
@@ -24751,6 +24762,11 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     document.getElementById('ucLQBQibla').addEventListener('click', function() {
         _openTarget(function() {
             if (typeof window.openQiblaModal === 'function') window.openQiblaModal();
+        });
+    });
+    document.getElementById('ucLQBAssistant').addEventListener('click', function() {
+        _openTarget(function() {
+            if (typeof window._ucOpenSmartAssistant === 'function') window._ucOpenSmartAssistant();
         });
     });
     if (_isPhoneLQB) {
@@ -25570,6 +25586,15 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _mo.observe(sectionEl, { attributes: true, attributeFilter: ['style'] });
     }
 
+    // Exposé pour l'assistant intelligent (_installSmartAssistant, plus bas
+    // dans ce fichier) -- deep-link direct vers un onglet précis. À appeler
+    // APRÈS un court délai (setTimeout) par l'appelant : le MutationObserver
+    // ci-dessus réinitialise sinon systématiquement sur 'general' à chaque
+    // ouverture de la section (son callback, en microtâche, s'exécuterait
+    // APRÈS un appel synchrone immédiat et écraserait le choix).
+    window._ucOptionsSetTab = _setTab;
+    window._ucOptionsSetGeneralSubTab = generalSub.setTab;
+
     _L('CUSTOM', 'INIT', { item: 'optionsTabs' });
 })();
 
@@ -25853,6 +25878,11 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _mo.observe(sectionEl, { attributes: true, attributeFilter: ['style'] });
     }
 
+    // Exposé pour l'assistant intelligent (_installSmartAssistant) -- même
+    // remarque que window._ucOptionsSetTab (_installOptionsTabs) sur le
+    // délai requis avant appel.
+    window._ucAdjustmentsSetTab = _setTab;
+
     _L('CUSTOM', 'INIT', { item: 'adjustmentsTabs' });
 })();
 
@@ -25997,4 +26027,674 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 })();
 // ═════════════════════════════════════════════════════════════════════════════
 // FIN BLOCS VERTICAUX #adjustmentsContentContainer
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ASSISTANT INTELLIGENT (hors-ligne) — demande utilisateur 30/07/2026
+// ─────────────────────────────────────────────────────────────────────────────
+// Répond en langage naturel (AR/FR/EN mélangeables) aux questions courantes sur
+// l'usage de l'appli ("comment ajouter une mosquée ?", "où modifier l'iqama ?",
+// "pourquoi la Jumua ne s'affiche pas ?") et peut ouvrir directement la modale
+// concernée. Choix architecture (cf. discussion) : 100% local, AUCUN appel
+// réseau/LLM -- fonctionne offline (box comme téléphone), coût nul, latence
+// nulle. La "compréhension" est une correspondance floue par mots-clés
+// multilingues (normalisation + score de recouvrement, cf. _assistScore) sur
+// un catalogue d'intentions (INTENTS) couvrant les fonctions principales de
+// l'appli -- pas une conversation totalement libre, mais large et extensible
+// (ajouter une intention = un objet {kw, answer, action} de plus).
+// Chaque intention peut porter une action() qui ouvre la vraie modale/section
+// core correspondante (showElementFunction + éventuellement un deep-link vers
+// un onglet précis via window._ucAdjustmentsSetTab/_ucOptionsSetTab, exposés
+// plus haut dans ce fichier pour cet usage).
+(function _installSmartAssistant() {
+
+    function _lang() { return _ucLang(); }
+    function _esc(s) {
+        return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    var isPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && !window.AndroidMobile.isAndroidTv());
+
+    // ── Traductions de l'interface du chat (pas des réponses -- celles-ci
+    // sont dans INTENTS ci-dessous, une par intention). ─────────────────────
+    var L_AI = {
+        title:       { AR: '🤖 المساعد الذكي', FR: '🤖 Assistant intelligent', EN: '🤖 Smart assistant' },
+        placeholder: { AR: 'اكتب سؤالك هنا...', FR: 'Écrivez votre question...', EN: 'Type your question...' },
+        send:        { AR: 'إرسال', FR: 'Envoyer', EN: 'Send' },
+        openBtn:     { AR: '↗ فتح', FR: '↗ Ouvrir', EN: '↗ Open' },
+        greeting:    { AR: 'مرحبًا! اسألني عن أي شيء يخص التطبيق، مثلاً كيفية إضافة مسجد أو تعديل أوقات الإقامة.',
+                       FR: "Bonjour ! Posez-moi une question sur l'application, par exemple comment ajouter une mosquée ou modifier les horaires d'iqama.",
+                       EN: 'Hello! Ask me anything about the app, e.g. how to add a mosque or edit iqama times.' },
+        noMatch:     { AR: 'لم أفهم سؤالك جيدًا. جرّب إحدى هذه الاقتراحات، أو أعد صياغة السؤال بكلمات أخرى:',
+                       FR: "Je n'ai pas bien compris. Essayez une de ces suggestions, ou reformulez votre question :",
+                       EN: "I didn't quite understand. Try one of these suggestions, or rephrase your question:" },
+        offlineNote: { AR: 'يعمل هذا المساعد بالكامل بدون اتصال بالإنترنت.', FR: 'Cet assistant fonctionne entièrement hors connexion.', EN: 'This assistant works fully offline.' }
+    };
+    function _t(key) {
+        var row = L_AI[key];
+        if (!row) return key;
+        return row[_lang()] || row.EN;
+    }
+    function _ti(intent) {
+        var row = intent.answer;
+        return row[_lang()] || row.EN;
+    }
+    function _tq(intent) {
+        // Libellé court affiché sur les puces de suggestion : réutilise la
+        // 1ère phrase-clé déclarée dans la langue courante si présente,
+        // sinon la réponse elle-même tronquée.
+        if (intent.chip) {
+            var row = intent.chip;
+            return row[_lang()] || row.EN;
+        }
+        var a = _ti(intent);
+        return a.length > 40 ? a.slice(0, 40) + '…' : a;
+    }
+
+    // ── Actions : ouverture directe de la modale/section concernée ─────────
+    function _openSection(id) {
+        if (typeof closeMenuFunction === 'function') closeMenuFunction();
+        if (typeof showElementFunction === 'function') showElementFunction(id);
+    }
+    // Délai avant deep-link d'onglet : le MutationObserver de
+    // _installAdjustmentsTabs/_installOptionsTabs (posé sur le changement de
+    // style.visibility déclenché par showElementFunction ci-dessus) réinitialise
+    // sinon systématiquement sur le 1er onglet -- son callback (microtâche)
+    // s'exécuterait APRÈS un appel synchrone immédiat et écraserait le choix.
+    function _openAdjustmentsTab(tabKey) {
+        _openSection('adjustmentsSectionId');
+        setTimeout(function () {
+            if (typeof window._ucAdjustmentsSetTab === 'function') window._ucAdjustmentsSetTab(tabKey);
+        }, 80);
+    }
+    function _openOptionsTab(tabKey, subKey) {
+        _openSection('optionsSectionId');
+        setTimeout(function () {
+            if (typeof window._ucOptionsSetTab === 'function') window._ucOptionsSetTab(tabKey);
+            if (subKey && typeof window._ucOptionsSetGeneralSubTab === 'function') window._ucOptionsSetGeneralSubTab(subKey);
+        }, 80);
+    }
+    function _call(fnName) {
+        return function () { if (typeof window[fnName] === 'function') window[fnName](); };
+    }
+
+    // ── Catalogue d'intentions ──────────────────────────────────────────────
+    // kw : phrases-clés (mots simples ou courtes expressions), toutes langues
+    //      mélangées -- la correspondance se fait par recouvrement de mots
+    //      normalisés (cf. _assistScore), pas besoin de connaître la langue
+    //      de la question à l'avance.
+    // chip (optionnel) : libellé court AR/FR/EN pour la puce de suggestion --
+    //      si absent, la réponse elle-même (tronquée) sert de libellé.
+    // action (optionnel) : fonction appelée si l'utilisateur touche "Ouvrir".
+    var INTENTS = [
+        {
+            id: 'add_mosque',
+            kw: ['اضافة مسجد', 'اضافة مسجد جديد', 'كيف اضيف مسجد', 'اقتراح مسجد', 'انشاء مسجد', 'مسجد جديد',
+                 'proposer une mosquee', 'ajouter une mosquee', 'ajout mosquee', 'nouvelle mosquee', 'creer une mosquee',
+                 'add a mosque', 'add new mosque', 'create a mosque', 'propose a mosque', 'new mosque'],
+            chip: { AR: 'كيف أضيف مسجد جديد؟', FR: 'Comment ajouter une mosquée ?', EN: 'How to add a mosque?' },
+            answer: {
+                AR: 'من "موقع المسجد" اضغط "إختيار/إضافة مسجد"، ثم "اقتراح مسجد جديد" أسفل النافذة. سيُطلب منك تأكيد الانتقال إلى نموذج مسجد مجهول لملء بياناته.',
+                FR: 'Depuis "Localisation", ouvrez "Choisir/Ajouter une mosquée", puis touchez "Proposer une mosquée" en bas de la fenêtre. Une confirmation vous sera demandée avant de basculer sur le modèle anonyme à compléter.',
+                EN: 'From "Location", open "Choose/Add mosque", then tap "Propose a mosque" at the bottom. You will be asked to confirm switching to the anonymous template to fill in.'
+            },
+            action: function () { if (typeof window._ucOpenMosqueSelector === 'function') window._ucOpenMosqueSelector(); }
+        },
+        {
+            id: 'select_other_mosque',
+            kw: ['اختيار مسجد اخر', 'تصفح المساجد', 'قائمة المساجد', 'choisir une autre mosquee', 'parcourir les mosquees', 'liste des mosquees',
+                 'browse mosques', 'select another mosque', 'list of mosques', 'switch mosque'],
+            chip: { AR: 'كيف أختار مسجدًا آخر؟', FR: 'Comment choisir une autre mosquée ?', EN: 'How to select another mosque?' },
+            answer: {
+                AR: 'من "موقع المسجد" اضغط "إختيار/إضافة مسجد"، اختر المدينة والدولة ثم اضغط على اسم المسجد المطلوب في القائمة.',
+                FR: 'Depuis "Localisation", ouvrez "Choisir/Ajouter une mosquée", sélectionnez pays et ville, puis touchez le nom de la mosquée voulue dans la liste.',
+                EN: 'From "Location", open "Choose/Add mosque", pick country and city, then tap the desired mosque name in the list.'
+            },
+            action: function () { if (typeof window._ucOpenMosqueSelector === 'function') window._ucOpenMosqueSelector(); }
+        },
+        {
+            id: 'edit_mosque_name',
+            kw: ['تغيير اسم المسجد', 'تعديل اسم المسجد', 'changer le nom de la mosquee', 'modifier le nom de la mosquee', 'renommer la mosquee',
+                 'edit mosque name', 'change mosque name', 'rename mosque'],
+            chip: { AR: 'كيف أغيّر اسم المسجد؟', FR: 'Comment changer le nom de la mosquée ?', EN: 'How to change the mosque name?' },
+            answer: {
+                AR: 'من "موقع المسجد" اضغط "تحرير إسم المسجد"، اكتب الاسم الجديد ثم أكّد.',
+                FR: 'Depuis "Localisation", touchez "Modifier le nom de la mosquée", saisissez le nouveau nom puis confirmez.',
+                EN: 'From "Location", tap "Edit mosque name", type the new name then confirm.'
+            },
+            action: function () { if (typeof editMosqueNameFunction === 'function') editMosqueNameFunction(); }
+        },
+        {
+            id: 'edit_mosque_profile',
+            kw: ['عنوان المسجد', 'هاتف المسجد', 'بريد المسجد', 'موقع جغرافي', 'موقف سيارات', 'مصلى نساء',
+                 'adresse de la mosquee', 'telephone de la mosquee', 'position gps', 'commodites', 'parking mosquee',
+                 'mosque address', 'mosque phone', 'mosque email', 'mosque gps', 'mosque amenities'],
+            chip: { AR: 'أين أعدّل عنوان/هاتف المسجد؟', FR: "Où modifier l'adresse/téléphone de la mosquée ?", EN: 'Where to edit the mosque address/phone?' },
+            answer: {
+                AR: 'من نافذة "معلومات المسجد" اضغط زر التعديل (✏️) لفتح استمارة العنوان والهاتف والبريد والموقع الجغرافي والخدمات المتاحة.',
+                FR: 'Depuis la fenêtre "Informations mosquée", touchez le bouton d\'édition (✏️) pour ouvrir le formulaire adresse/téléphone/email/GPS/commodités.',
+                EN: 'From the "Mosque information" window, tap the edit button (✏️) to open the address/phone/email/GPS/amenities form.'
+            },
+            action: function () { if (typeof window._ucOpenMosqueProfileEdit === 'function') window._ucOpenMosqueProfileEdit(); }
+        },
+        {
+            id: 'edit_iqama',
+            kw: ['تعديل وقت الاقامة', 'مواعيد الاقامة', 'تاخير الاقامة', 'وقت ثابت للاقامة',
+                 'modifier iqama', 'delai iqama', 'horaire iqama', 'heure fixe iqama',
+                 'edit iqama time', 'iqama delay', 'change iqama', 'fixed iqama time'],
+            chip: { AR: 'أين أعدّل وقت الإقامة؟', FR: "Où modifier l'horaire de l'iqama ?", EN: 'Where to edit iqama times?' },
+            answer: {
+                AR: 'من "الإعدادات > التعديلات" اختر تبويب "تعديل الإقامة": استخدمي +/- لضبط التأخير بالدقائق، أو زر "ثابت" لتحديد ساعة إقامة ثابتة.',
+                FR: 'Depuis "Réglages > Ajustements", onglet "Ajustement iqama" : utilisez +/- pour le délai en minutes, ou le bouton "Fixe" pour une heure d\'iqama fixe.',
+                EN: 'From "Settings > Adjustments", tab "Iqama adjustment": use +/- for the delay in minutes, or the "Fixed" button for a fixed iqama time.'
+            },
+            action: function () { _openAdjustmentsTab('iqama'); }
+        },
+        {
+            id: 'edit_azan_minutes',
+            kw: ['تعديل دقائق الاذان', 'تقديم او تاخير الاذان', 'انحراف وقت الاذان',
+                 'ajuster minutes azan', 'decalage azan', 'avancer ou retarder azan',
+                 'adjust azan minutes', 'azan offset', 'shift azan time'],
+            chip: { AR: 'كيف أعدّل دقائق الأذان؟', FR: "Comment ajuster les minutes de l'azan ?", EN: 'How to adjust azan minutes?' },
+            answer: {
+                AR: 'من "الإعدادات > التعديلات" اختر تبويب "تعديل الأذان" واستخدم +/- لكل صلاة لتقديم أو تأخير وقت الأذان بالدقائق.',
+                FR: 'Depuis "Réglages > Ajustements", onglet "Ajustement azan" : utilisez +/- pour chaque prière afin d\'avancer ou retarder l\'azan en minutes.',
+                EN: 'From "Settings > Adjustments", tab "Azan adjustment": use +/- per prayer to shift the azan time by minutes.'
+            },
+            action: function () { _openAdjustmentsTab('azanAdj'); }
+        },
+        {
+            id: 'jumua_not_showing',
+            kw: ['الجمعة لا تظهر', 'لماذا لا تظهر الجمعة', 'اخفاء الجمعة', 'اظهار الجمعة',
+                 'pourquoi jumua ne s\'affiche pas', 'jumua invisible', 'afficher jumua',
+                 'jumua not showing', 'jumua hidden', 'why is jumua not displayed', 'show jumua'],
+            chip: { AR: 'لماذا لا تظهر صلاة الجمعة؟', FR: "Pourquoi la Jumua ne s'affiche pas ?", EN: "Why isn't Jumua showing?" },
+            answer: {
+                AR: 'تحقق من تبويب "الجمعة" في "الإعدادات > التعديلات": يجب تفعيل خانة "عرض الجمعة على الشاشة". إن ظلت مخفية، فقد تكون معطّلة كليًا من إعدادات المسجد نفسها (JUMUA_ENABLED).',
+                FR: 'Vérifiez l\'onglet "Vendredi (Jumu\'a)" dans "Réglages > Ajustements" : la case "Afficher la Jumua à l\'écran" doit être cochée. Si elle reste cachée, elle est peut-être désactivée au niveau de la config de la mosquée (JUMUA_ENABLED).',
+                EN: 'Check the "Friday (Jumu\'a)" tab in "Settings > Adjustments": the "Show Jumua on screen" checkbox must be enabled. If it stays hidden, it may be disabled at the mosque config level (JUMUA_ENABLED).'
+            },
+            action: function () { _openAdjustmentsTab('jomoa'); }
+        },
+        {
+            id: 'edit_jumua_time',
+            kw: ['تغيير وقت الجمعة', 'ضبط وقت الجمعة', 'وقت ثابت للجمعة',
+                 'modifier heure jumua', 'changer heure jumua', 'heure fixe jumua',
+                 'set jumua time', 'edit jumua time', 'fixed jumua time'],
+            chip: { AR: 'كيف أغيّر وقت الجمعة؟', FR: 'Comment changer l\'heure de la Jumua ?', EN: 'How to change Jumua time?' },
+            answer: {
+                AR: 'من تبويب "الجمعة" في "الإعدادات > التعديلات"، اضغط زر ساعة الجمعة لتحديد وقت ثابت، أو اتركها AUTO لتتبع أذان الظهر.',
+                FR: 'Depuis l\'onglet "Vendredi (Jumu\'a)" dans "Réglages > Ajustements", touchez le bouton d\'heure pour fixer un horaire, ou laissez AUTO pour suivre l\'azan du Dhuhr.',
+                EN: 'From the "Friday (Jumu\'a)" tab in "Settings > Adjustments", tap the time button to set a fixed time, or leave AUTO to follow the Dhuhr azan.'
+            },
+            action: function () { _openAdjustmentsTab('jomoa'); }
+        },
+        {
+            id: 'eid_settings',
+            kw: ['اعدادات العيد', 'عيد الفطر', 'عيد الاضحى', 'صلاة العيد',
+                 'reglages aid', 'aid al fitr', 'aid al adha', 'priere de l\'aid',
+                 'eid settings', 'eid al fitr', 'eid al adha', 'eid prayer'],
+            chip: { AR: 'أين أعدّل إعدادات العيد؟', FR: "Où régler les paramètres de l'Aïd ?", EN: 'Where to edit Eid settings?' },
+            answer: {
+                AR: 'من تبويب "العيدين" في "الإعدادات > التعديلات" يمكنك تفعيل/تعطيل عرض عيد الفطر والأضحى.',
+                FR: 'Depuis l\'onglet "Aïd al-Fitr/al-Adha" dans "Réglages > Ajustements", activez/désactivez l\'affichage de chaque Aïd.',
+                EN: 'From the "Eid al-Fitr/Adha" tab in "Settings > Adjustments", enable/disable the display of each Eid.'
+            },
+            action: function () { _openAdjustmentsTab('eid'); }
+        },
+        {
+            id: 'ramadan_settings',
+            kw: ['رمضان', 'توقيت العشاء رمضان', 'توقيت صيفي', 'ساعة اضافية',
+                 'reglages ramadan', 'heure ete', 'heure supplementaire',
+                 'ramadan settings', 'summer time', 'daylight saving', 'extra hour'],
+            chip: { AR: 'أين إعدادات رمضان والتوقيت الصيفي؟', FR: 'Où sont les réglages Ramadan/heure ?', EN: 'Where are Ramadan/time settings?' },
+            answer: {
+                AR: 'من تبويب "إضافات" في "الإعدادات > التعديلات": عشاء رمضان 30 دقيقة، التوقيت الصيفي، وإضافة/إنقاص ساعة يدويًا.',
+                FR: 'Depuis l\'onglet "Ramadan et heure" dans "Réglages > Ajustements" : Isha Ramadan 30 min, heure d\'été, décalage manuel d\'une heure.',
+                EN: 'From the "Ramadan & time" tab in "Settings > Adjustments": 30-min Ramadan Isha, summer time, manual one-hour shift.'
+            },
+            action: function () { _openAdjustmentsTab('ramadan'); }
+        },
+        {
+            id: 'change_city',
+            kw: ['تغيير المدينة', 'تغيير الدولة', 'اختيار المدينة',
+                 'changer de ville', 'changer de pays', 'choisir la ville',
+                 'change city', 'change country', 'select city'],
+            chip: { AR: 'كيف أغيّر المدينة/الدولة؟', FR: 'Comment changer de ville/pays ?', EN: 'How to change city/country?' },
+            answer: {
+                AR: 'من قائمة "موقع المسجد" اضغط زرّي "المدينة" و"الدولة" في الأعلى.',
+                FR: 'Depuis "Localisation", touchez les boutons "Ville" et "Pays" en haut de la page.',
+                EN: 'From "Location", tap the "City" and "Country" buttons at the top of the page.'
+            },
+            action: function () { _openSection('locationSectionId'); }
+        },
+        {
+            id: 'export_import_config',
+            kw: ['تصدير الاعدادات', 'استيراد الاعدادات', 'نسخة احتياطية',
+                 'exporter la config', 'importer la config', 'sauvegarde',
+                 'export config', 'import config', 'backup settings'],
+            chip: { AR: 'كيف أصدّر/أستورد الإعدادات؟', FR: 'Comment exporter/importer la config ?', EN: 'How to export/import config?' },
+            answer: {
+                AR: 'من "موقع المسجد" أسفل الصفحة، زرّا "Export config" و"Import config" (يتطلبان رمز PIN للحماية).',
+                FR: 'Depuis "Localisation", en bas de page, les boutons "Export config" et "Import config" (protégés par code PIN).',
+                EN: 'From "Location", at the bottom, the "Export config" and "Import config" buttons (PIN-protected).'
+            },
+            action: function () { _openSection('locationSectionId'); }
+        },
+        {
+            id: 'azan_voice_short',
+            kw: ['اذان قصير', 'اذان بدون صوت', 'بيب بدل الاذان', 'تعطيل صوت الاذان',
+                 'azan court', 'azan sans voix', 'bip au lieu de l\'azan', 'desactiver la voix de l\'azan',
+                 'short azan', 'azan beep', 'disable azan voice', 'silent azan'],
+            chip: { AR: 'كيف أفعّل الأذان القصير أو البيب؟', FR: "Comment activer l'azan court ou le bip ?", EN: 'How to enable short azan or beep?' },
+            answer: {
+                AR: 'من "الإعدادات > الخيارات" اختر تبويب "صوت الأذان": يمكنك تعطيل الصوت الكامل (بيب فقط) أو تفعيل الأذان القصير.',
+                FR: 'Depuis "Réglages > Options", onglet "Voix de l\'azan" : désactivez la voix complète (bip seul) ou activez l\'azan court.',
+                EN: 'From "Settings > Options", tab "Azan voice": disable the full voice (beep only) or enable short azan.'
+            },
+            action: function () { _openOptionsTab('azan'); }
+        },
+        {
+            id: 'azan_catalog',
+            kw: ['اختيار المؤذن', 'صوت المؤذن', 'تغيير صوت الاذان', 'قارئ الاذان',
+                 'choisir le muezzin', 'changer la voix de l\'azan', 'recitateur azan',
+                 'choose muezzin', 'change azan voice', 'azan catalog', 'azan reciter'],
+            chip: { AR: 'كيف أغيّر صوت المؤذن؟', FR: "Comment changer la voix du muezzin ?", EN: 'How to change the muezzin voice?' },
+            answer: {
+                AR: 'اضغط مطولاً على أيقونة السماعة 🔊 في الشاشة الرئيسية لفتح كتالوج الأذان واختيار المؤذن.',
+                FR: 'Appui long sur l\'icône haut-parleur 🔊 de l\'écran principal pour ouvrir le catalogue d\'azan et choisir le muezzin.',
+                EN: 'Long-press the speaker icon 🔊 on the main screen to open the azan catalog and choose the muezzin.'
+            },
+            action: function () { if (typeof window.openAzanCatalogModal === 'function') window.openAzanCatalogModal(); }
+        },
+        {
+            id: 'black_screen',
+            kw: ['الشاشة السوداء', 'اعدادات الشاشة السوداء', 'اطفاء الشاشة',
+                 'ecran noir', 'parametres ecran noir', 'extinction ecran',
+                 'black screen settings', 'dim screen', 'screen saver'],
+            chip: { AR: 'أين إعدادات الشاشة السوداء؟', FR: "Où sont les réglages de l'écran noir ?", EN: 'Where are black screen settings?' },
+            answer: {
+                AR: 'من قائمة الإعدادات اختر "الشاشة السوداء" لضبط تفعيلها أثناء الصلاة، عرض الساعة/التاريخ، ومدة كل صلاة.',
+                FR: 'Depuis le menu réglages, ouvrez "Écran noir" pour régler son activation pendant la prière, l\'affichage horloge/date et la durée par prière.',
+                EN: 'From the settings menu, open "Black screen" to configure activation during prayer, clock/date display, and duration per prayer.'
+            },
+            action: function () { _openSection('blackScreenSectionId'); }
+        },
+        {
+            id: 'display_options',
+            kw: ['نظام 24 ساعة', 'تنسيق الوقت', 'عرض الثواني', 'ارقام عربية',
+                 'affichage 24h', 'format horloge', 'afficher les secondes', 'chiffres arabes',
+                 '24 hour format', 'clock format', 'display seconds', 'arabic digits'],
+            chip: { AR: 'كيف أفعّل نظام 24 ساعة؟', FR: "Comment activer le format 24h ?", EN: 'How to enable 24h format?' },
+            answer: {
+                AR: 'من "الإعدادات > الخيارات" اختر تبويب "خيارات العرض" ثم مجموعة "نمط العرض" لتفعيل نظام 24 ساعة، الأرقام العربية، والساعة الكاملة.',
+                FR: 'Depuis "Réglages > Options", onglet "Options d\'affichage", groupe "Affichage et horloge" pour le format 24h, les chiffres arabes et l\'horloge complète.',
+                EN: 'From "Settings > Options", tab "Display options", group "Display & clock" for 24h format, Arabic digits and full clock.'
+            },
+            action: function () { _openOptionsTab('general', 'display'); }
+        },
+        {
+            id: 'counter_settings',
+            kw: ['العد التنازلي', 'الشاشة الكاملة للعداد', 'اخر دقيقة',
+                 'compte a rebours', 'plein ecran compteur', 'derniere minute',
+                 'countdown settings', 'fullscreen counter', 'last minute counter'],
+            chip: { AR: 'أين إعدادات العد التنازلي؟', FR: 'Où sont les réglages du compte à rebours ?', EN: 'Where are countdown settings?' },
+            answer: {
+                AR: 'من "الإعدادات > الخيارات" اختر تبويب "خيارات العرض" ثم مجموعة "العدّ والشاشات".',
+                FR: 'Depuis "Réglages > Options", onglet "Options d\'affichage", groupe "Compte à rebours".',
+                EN: 'From "Settings > Options", tab "Display options", group "Countdown & screens".'
+            },
+            action: function () { _openOptionsTab('general', 'counter'); }
+        },
+        {
+            id: 'fonts_settings',
+            kw: ['تغيير الخط', 'حجم الخط', 'نوع الخط',
+                 'changer la police', 'taille de police', 'type de police',
+                 'change font', 'font size', 'font type'],
+            chip: { AR: 'كيف أغيّر الخط أو حجمه؟', FR: 'Comment changer la police/taille ?', EN: 'How to change the font/size?' },
+            answer: {
+                AR: 'من "الإعدادات > الخيارات" اختر تبويب "الخطوط".',
+                FR: 'Depuis "Réglages > Options", onglet "Polices".',
+                EN: 'From "Settings > Options", tab "Fonts".'
+            },
+            action: function () { _openOptionsTab('fonts'); }
+        },
+        {
+            id: 'themes',
+            kw: ['تغيير الثيم', 'الوان التطبيق', 'مظهر التطبيق',
+                 'changer de theme', 'couleurs de l\'application', 'apparence',
+                 'change theme', 'app colors', 'app appearance'],
+            chip: { AR: 'كيف أغيّر ألوان التطبيق؟', FR: "Comment changer les couleurs de l'appli ?", EN: 'How to change app colors?' },
+            answer: {
+                AR: 'من قائمة الإعدادات اختر "الثيمات" لاختيار مظهر/ألوان مختلفة لكل صلاة أو للتطبيق كاملاً.',
+                FR: 'Depuis le menu réglages, ouvrez "Thèmes" pour choisir une apparence/des couleurs différentes par prière ou pour toute l\'application.',
+                EN: 'From the settings menu, open "Themes" to pick a different look/colors per prayer or for the whole app.'
+            },
+            action: function () { _openSection('themesSectionId'); }
+        },
+        {
+            id: 'quran_before_azan',
+            kw: ['القران قبل الاذان', 'برمجة القران', 'تلاوة قبل الاذان',
+                 'coran avant azan', 'programmer le coran', 'recitation avant azan',
+                 'quran before azan', 'schedule quran', 'quran playback'],
+            chip: { AR: 'كيف أبرمج تلاوة القرآن قبل الأذان؟', FR: 'Comment programmer le Coran avant l\'azan ?', EN: 'How to schedule Quran before azan?' },
+            answer: {
+                AR: 'من قائمة الإعدادات اختر "برمجة تلاوة القرآن" لتفعيل التشغيل قبل كل أذان، ضبط المدة، وتحديد الأيام.',
+                FR: 'Depuis le menu réglages, ouvrez "Programmation du Coran" pour activer la lecture avant chaque azan, régler la durée et choisir les jours.',
+                EN: 'From the settings menu, open "Quran scheduling" to enable playback before each azan, set the duration, and choose the days.'
+            },
+            action: function () { _openSection('soundRemindersSectionId'); }
+        },
+        {
+            id: 'bottom_messages',
+            kw: ['الرسائل المتحركة', 'شريط الاخبار', 'اعلانات المسجد',
+                 'messages defilants', 'bandeau texte', 'annonces de la mosquee',
+                 'marquee messages', 'scrolling text', 'mosque announcements'],
+            chip: { AR: 'كيف أضيف رسالة متحركة؟', FR: 'Comment ajouter un message défilant ?', EN: 'How to add a scrolling message?' },
+            answer: {
+                AR: 'من قائمة الإعدادات اختر "الرسائل السفلية" لإضافة/تعديل الرسائل المتحركة أسفل الشاشة.',
+                FR: 'Depuis le menu réglages, ouvrez "Messages du bas" pour ajouter/modifier le bandeau défilant en bas d\'écran.',
+                EN: 'From the settings menu, open "Bottom messages" to add/edit the scrolling banner at the bottom of the screen.'
+            },
+            action: function () { _openSection('bottomMessagesSectionId'); }
+        },
+        {
+            id: 'custom_images',
+            kw: ['تغيير خلفية الشاشة', 'رفع صورة', 'صورة الخلفية',
+                 'changer l\'arriere plan', 'televerser une image', 'image de fond',
+                 'change background', 'upload image', 'background picture'],
+            chip: { AR: 'كيف أغيّر خلفية الشاشة؟', FR: "Comment changer l'image de fond ?", EN: 'How to change the background image?' },
+            answer: {
+                AR: 'من قائمة الإعدادات اختر "ملفاتي الشخصية" لرفع صورة خلفية أو صورة أذكار الخمس دقائق.',
+                FR: 'Depuis le menu réglages, ouvrez "Mes fichiers" pour téléverser une image de fond ou une image des azkars de 5 min.',
+                EN: 'From the settings menu, open "My files" to upload a background image or a 5-minute azkar image.'
+            },
+            action: function () { _openSection('personalFilesSectionId'); }
+        },
+        {
+            id: 'weather',
+            kw: ['الطقس', 'درجة الحرارة', 'حالة الجو',
+                 'meteo', 'temperature', 'previsions meteo',
+                 'weather settings', 'temperature display'],
+            chip: { AR: 'أين إعدادات الطقس؟', FR: 'Où sont les réglages météo ?', EN: 'Where are weather settings?' },
+            answer: {
+                AR: 'من قائمة الإعدادات اختر "الطقس" لضبط إحداثيات المدينة المستخدمة لعرض درجة الحرارة.',
+                FR: 'Depuis le menu réglages, ouvrez "Météo" pour régler les coordonnées de la ville utilisées pour la température.',
+                EN: 'From the settings menu, open "Weather" to set the city coordinates used to display the temperature.'
+            },
+            action: function () { _openSection('meteoSectionId'); }
+        },
+        {
+            id: 'notifications_mute',
+            kw: ['كتم الاشعارات', 'ايقاف الاشعارات', 'اشعارات المسجد',
+                 'couper les notifications', 'desactiver les alertes', 'notifications de la mosquee',
+                 'mute notifications', 'disable notifications', 'mosque notifications'],
+            chip: { AR: 'كيف أكتم إشعارات مسجد؟', FR: 'Comment couper les notifications ?', EN: 'How to mute notifications?' },
+            answer: {
+                AR: 'من زر "الجرس 🔔" بجانب اسم المسجد، أو من نافذة "معلومات المسجد"، يمكنك تفعيل/كتم إشعارات كل مسجد اخترته سابقًا على حدة.',
+                FR: 'Depuis le bouton "cloche 🔔" à côté du nom de la mosquée, ou depuis "Informations mosquée", activez/coupez les notifications de chaque mosquée déjà choisie.',
+                EN: 'From the "bell 🔔" button next to the mosque name, or from "Mosque information", enable/mute notifications for each previously selected mosque.'
+            },
+            action: function () { if (typeof window._ucOpenMosqueNotifPanel === 'function') window._ucOpenMosqueNotifPanel(); }
+        },
+        {
+            id: 'qibla',
+            kw: ['اتجاه القبلة', 'بوصلة القبلة', 'اين القبلة',
+                 'direction qibla', 'boussole qibla', 'ou est la qibla',
+                 'qibla direction', 'qibla compass', 'where is qibla'],
+            chip: { AR: 'كيف أعرف اتجاه القبلة؟', FR: 'Comment trouver la direction de la Qibla ?', EN: 'How to find the Qibla direction?' },
+            answer: {
+                AR: 'اضغط شعار التطبيق لفتح الشريط العائم ثم اختر "اتجاه القبلة" (وضع عمودي فقط).',
+                FR: 'Touchez le logo de l\'appli pour ouvrir la barre flottante puis choisissez "Direction de la Qibla" (mode vertical uniquement).',
+                EN: 'Tap the app logo to open the floating bar then choose "Qibla Direction" (portrait mode only).'
+            },
+            action: function () { if (typeof window.openQiblaModal === 'function') window.openQiblaModal(); }
+        },
+        {
+            id: 'my_location_map',
+            kw: ['موقعي الحالي', 'الخريطة', 'تحديد موقعي',
+                 'ma position actuelle', 'la carte', 'me localiser',
+                 'current location', 'map', 'locate me'],
+            chip: { AR: 'كيف أرى موقعي الحالي على الخريطة؟', FR: 'Comment voir ma position sur la carte ?', EN: 'How to see my location on the map?' },
+            answer: {
+                AR: 'اضغط شعار التطبيق لفتح الشريط العائم ثم اختر "الموقع الحالي" (وضع عمودي فقط).',
+                FR: 'Touchez le logo de l\'appli pour ouvrir la barre flottante puis choisissez "Position actuelle" (mode vertical uniquement).',
+                EN: 'Tap the app logo to open the floating bar then choose "Current location" (portrait mode only).'
+            },
+            action: function () { if (typeof window.openMapLocatorModal === 'function') window.openMapLocatorModal(); }
+        },
+        {
+            id: 'alerts_silent_mode',
+            kw: ['تنبيه قبل الاذان', 'وضع الصامت التلقائي', 'كتم بعد الاذان', 'قلب الهاتف لكتم الاذان',
+                 'alerte avant azan', 'mode silencieux automatique', 'couper apres azan', 'retourner le telephone pour couper',
+                 'alert before azan', 'automatic silent mode', 'mute after azan', 'flip to mute'],
+            chip: { AR: 'كيف أفعّل تنبيهًا قبل الأذان أو الوضع الصامت التلقائي؟', FR: 'Comment activer une alerte avant azan ou le mode silencieux auto ?', EN: 'How to enable an alert before azan or auto-silent mode?' },
+            answer: {
+                AR: 'اضغط شعار التطبيق ثم "إعدادات الهاتف" لضبط التنبيه الصوتي قبل الأذان، الوضع الصامت التلقائي حول الأذان، وقلب الهاتف لكتم الصوت.',
+                FR: 'Touchez le logo de l\'appli puis "Réglages du téléphone" pour l\'alerte vocale avant azan, le mode silencieux automatique autour de l\'azan, et couper en retournant le téléphone.',
+                EN: 'Tap the app logo then "Phone settings" for the voice alert before azan, automatic silent mode around azan, and flip-to-mute.'
+            },
+            action: function () { if (typeof window._ucOpenSettingsModal === 'function') window._ucOpenSettingsModal(); }
+        }
+    ];
+
+    if (isPhone) {
+        INTENTS.push({
+            id: 'remote_admin',
+            kw: ['ادارة المسجد عن بعد', 'تحكم عن بعد', 'التحكم في الصندوق عن بعد',
+                 'administrer a distance', 'gestion a distance', 'controler la box a distance',
+                 'remote administration', 'manage remotely', 'control the box remotely'],
+            chip: { AR: 'كيف أدير المسجد عن بعد من هاتفي؟', FR: 'Comment administrer la mosquée à distance ?', EN: 'How to administer the mosque remotely?' },
+            answer: {
+                AR: 'من "موقع المسجد" اضغط "تفعيل إشعارات المساجد" ثم "إدارة عن بعد" (يتطلب رمز PIN معرّف مسبقًا على الصندوق).',
+                FR: 'Depuis "Localisation", touchez "Activer les notifications" puis "Administration à distance" (nécessite un code PIN déjà défini sur la box).',
+                EN: 'From "Location", tap "Enable notifications" then "Remote administration" (requires a PIN already set on the box).'
+            },
+            action: function () { if (typeof window._ucOpenRemoteMosqueAdmin === 'function') window._ucOpenRemoteMosqueAdmin(); }
+        });
+    }
+
+    INTENTS.push({
+        id: 'contact_support',
+        kw: ['التواصل مع المطور', 'مساعدة', 'تواصل معنا', 'مشكلة تقنية', 'ابلاغ عن خطا',
+             'contacter le developpeur', 'aide', 'besoin d\'aide', 'probleme technique', 'signaler un bug',
+             'contact support', 'need help', 'contact developer', 'technical issue', 'report a bug'],
+        chip: { AR: 'كيف أتواصل مع المطوّر؟', FR: 'Comment contacter le développeur ?', EN: 'How to contact the developer?' },
+        answer: {
+            AR: 'راسل tawkit.net@gmail.com، أو استخدم زر "إرسال تقرير" في وحدة التصحيح (Debug) داخل التطبيق لإرفاق سجلّ تلقائي.',
+            FR: 'Écrivez à tawkit.net@gmail.com, ou utilisez le bouton "Envoyer un rapport" de la console de débogage intégrée pour joindre un journal automatique.',
+            EN: 'Email tawkit.net@gmail.com, or use the "Send report" button in the built-in debug console to attach an automatic log.'
+        }
+    });
+
+    // ── Correspondance floue (normalisation + score de recouvrement) ───────
+    var _DIACRITICS = /[ً-ْ]/g;
+    var _PUNCT = /[.,!?؟،؛:"'«»()\[\]{}\-_/\\|]+/g;
+    function _norm(s) {
+        return String(s || '')
+            .toLowerCase()
+            .replace(/[إأآا]/g, 'ا')
+            .replace(/ى/g, 'ي')
+            .replace(/ة/g, 'ه')
+            .replace(_DIACRITICS, '')
+            .replace(_PUNCT, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+    function _words(normStr) { return normStr ? normStr.split(' ').filter(Boolean) : []; }
+
+    function _scoreIntent(queryNorm, queryWords, intent) {
+        var best = 0;
+        for (var i = 0; i < intent.kw.length; i++) {
+            var kwNorm = _norm(intent.kw[i]);
+            if (!kwNorm) continue;
+            var kwWords = _words(kwNorm);
+            if (!kwWords.length) continue;
+            var hits = 0;
+            for (var j = 0; j < kwWords.length; j++) {
+                if (queryWords.indexOf(kwWords[j]) !== -1) hits++;
+            }
+            var score = hits / kwWords.length;
+            if (queryNorm.indexOf(kwNorm) !== -1) score = Math.max(score, 0.95);
+            if (score > best) best = score;
+        }
+        return best;
+    }
+
+    function _rankIntents(query) {
+        var qNorm = _norm(query);
+        var qWords = _words(qNorm);
+        if (!qWords.length) return [];
+        var ranked = INTENTS.map(function (intent) {
+            return { intent: intent, score: _scoreIntent(qNorm, qWords, intent) };
+        });
+        ranked.sort(function (a, b) { return b.score - a.score; });
+        return ranked;
+    }
+
+    // ── Interface (overlay + boîte de dialogue façon chat) ─────────────────
+    var _modal = null, _thread = null, _input = null;
+
+    function _buildModal() {
+        if (document.getElementById('ucAssistOverlay')) { _modal = document.getElementById('ucAssistOverlay'); return; }
+
+        var overlay = document.createElement('div');
+        overlay.id = 'ucAssistOverlay';
+        overlay.className = 'ucAssistHidden';
+        overlay.innerHTML =
+            '<div id="ucAssistBox" dir="' + (_ucIsRtl() ? 'rtl' : 'ltr') + '">' +
+                '<div id="ucAssistHeader">' +
+                    '<span id="ucAssistTitle">' + _esc(_t('title')) + '</span>' +
+                    '<span id="ucAssistClose">&#10005;</span>' +
+                '</div>' +
+                '<div id="ucAssistThread"></div>' +
+                '<div id="ucAssistInputRow">' +
+                    '<input type="text" id="ucAssistInput" autocomplete="off"/>' +
+                    '<span id="ucAssistSend"></span>' +
+                '</div>' +
+            '</div>';
+        document.documentElement.appendChild(overlay);
+        _modal  = overlay;
+        _thread = document.getElementById('ucAssistThread');
+        _input  = document.getElementById('ucAssistInput');
+        _input.placeholder = _t('placeholder');
+        document.getElementById('ucAssistSend').textContent = _t('send');
+
+        document.getElementById('ucAssistClose').addEventListener('click', _close);
+        overlay.addEventListener('click', function (e) { if (e.target === overlay) _close(); });
+        document.getElementById('ucAssistSend').addEventListener('click', _handleSend);
+        _input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); _handleSend(); }
+        });
+
+        _L('CUSTOM', 'INIT', { item: 'smartAssistant' });
+    }
+
+    function _scrollThreadDown() {
+        requestAnimationFrame(function () { _thread.scrollTop = _thread.scrollHeight; });
+    }
+
+    function _addBubble(text, who) {
+        var row = document.createElement('div');
+        row.className = 'ucAssistMsg ucAssistMsg-' + who;
+        var bubble = document.createElement('div');
+        bubble.className = 'ucAssistBubble';
+        bubble.textContent = text;
+        row.appendChild(bubble);
+        _thread.appendChild(row);
+        _scrollThreadDown();
+        return row;
+    }
+
+    function _addAnswerBubble(intent) {
+        var row = document.createElement('div');
+        row.className = 'ucAssistMsg ucAssistMsg-bot';
+        var bubble = document.createElement('div');
+        bubble.className = 'ucAssistBubble';
+        bubble.textContent = _ti(intent);
+        row.appendChild(bubble);
+        if (intent.action) {
+            var btn = document.createElement('span');
+            btn.className = 'ucAssistOpenBtn';
+            btn.textContent = _t('openBtn');
+            btn.addEventListener('click', function () {
+                _close();
+                intent.action();
+            });
+            row.appendChild(btn);
+        }
+        _thread.appendChild(row);
+        _scrollThreadDown();
+    }
+
+    function _addSuggestionChips(intents) {
+        var wrap = document.createElement('div');
+        wrap.className = 'ucAssistChipsWrap';
+        intents.forEach(function (intent) {
+            var chip = document.createElement('span');
+            chip.className = 'ucAssistChip';
+            chip.textContent = _tq(intent);
+            chip.addEventListener('click', function () { _ask(_tq(intent)); });
+            wrap.appendChild(chip);
+        });
+        _thread.appendChild(wrap);
+        _scrollThreadDown();
+    }
+
+    var MATCH_THRESHOLD = 0.5;
+
+    function _ask(query) {
+        query = String(query || '').trim();
+        if (!query) return;
+        _addBubble(query, 'user');
+
+        var ranked = _rankIntents(query);
+        if (ranked.length && ranked[0].score >= MATCH_THRESHOLD) {
+            _addAnswerBubble(ranked[0].intent);
+        } else {
+            _addBubble(_t('noMatch'), 'bot');
+            var top3 = ranked.slice(0, 3).map(function (r) { return r.intent; });
+            if (top3.length) _addSuggestionChips(top3);
+        }
+    }
+
+    function _handleSend() {
+        var q = _input.value;
+        _input.value = '';
+        _ask(q);
+    }
+
+    function _open() {
+        _buildModal();
+        _thread.innerHTML = '';
+        _addBubble(_t('greeting'), 'bot');
+        // 6 suggestions de départ, dans l'ordre déclaré ci-dessus (les
+        // exemples cités par l'utilisateur en premier).
+        var starterIds = ['add_mosque', 'edit_iqama', 'jumua_not_showing', 'edit_mosque_name', 'azan_catalog', 'edit_mosque_profile'];
+        var starters = starterIds.map(function (id) {
+            for (var i = 0; i < INTENTS.length; i++) if (INTENTS[i].id === id) return INTENTS[i];
+            return null;
+        }).filter(Boolean);
+        _addSuggestionChips(starters);
+        _modal.classList.remove('ucAssistHidden');
+        _input.value = '';
+        setTimeout(function () { _input.focus(); }, 200);
+        if (typeof window._pushBack === 'function') window._pushBack();
+        _L('AI', 'FIRE', { action: 'open' });
+    }
+
+    function _close() {
+        if (_modal) _modal.classList.add('ucAssistHidden');
+        if (typeof window._popBack === 'function') window._popBack();
+        _L('AI', 'FIRE', { action: 'close' });
+    }
+
+    window._ucOpenSmartAssistant  = _open;
+    window._ucCloseSmartAssistant = _close;
+
+    _L('CUSTOM', 'INIT', { item: 'smartAssistant' });
+})();
+// ═════════════════════════════════════════════════════════════════════════════
+// FIN ASSISTANT INTELLIGENT
 // ═════════════════════════════════════════════════════════════════════════════

@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.97';
+var CUSTOM_APP_VERSION = '11.98';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -20842,8 +20842,16 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     if (typeof window._ucRelocateAdminRow === 'function') window._ucRelocateAdminRow();
 
     // ── Overlay de déverrouillage (mêmes styles que les autres overlays PIN) ──
+    // z-index volontairement au-delà de tout le reste (cf. #ucAdminTooltip,
+    // même valeur max) : ce prompt PIN est désormais aussi déclenché DEPUIS
+    // #ucBoxAdminOverlay (mode box horizontal, cf. _installBoxHorizontalAdminAccess
+    // plus bas) -- à z-index égal (999999 des deux côtés), l'ordre DOM faisait
+    // gagner #ucBoxAdminOverlay (ajouté après <body> dans <html>), cachant le
+    // prompt PIN DERRIÈRE la boîte qui vient pourtant de le déclencher (retour
+    // utilisateur 29/07/2026). Un prompt PIN doit toujours pouvoir passer
+    // au-dessus de N'IMPORTE QUEL overlay admin, quel qu'il soit.
     var OV  = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.78);'
-            + 'z-index:999999;align-items:center;justify-content:center;';
+            + 'z-index:2147483647;align-items:center;justify-content:center;';
     var BOX = 'background:#1a1a2e;border:1px solid #555;border-radius:10px;'
             + 'padding:24px;min-width:270px;text-align:center;color:#fff;'
             + 'font-family:inherit;box-sizing:border-box;';

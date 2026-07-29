@@ -4722,12 +4722,20 @@
    borné (comme #ucBoxControlModal) car les boutons admin utilisent des
    tailles en vw pensées pour un écran de téléphone (3.8vw) -- sur une box
    1920px ça donnerait un texte énorme sans l'override de taille ci-dessous. */
+/* z-index volontairement SOUS le palier standard des dialogues admin
+   (Notifier/Message/Janaza/changement PIN/historique, tous à 999999 --
+   cf. custom.js) : ces dialogues s'ouvrent PAR-DESSUS ce conteneur une fois
+   qu'un des boutons qu'il héberge est cliqué. À z-index égal, l'ordre DOM
+   faisait gagner ce conteneur (ajouté après <body>), cachant chaque
+   dialogue DERRIÈRE lui (retour utilisateur 29/07/2026, mode box
+   horizontal). Rester sous 999999 garantit qu'ils passent tous au-dessus
+   sans avoir à toucher à chacun d'eux individuellement. */
 #ucBoxAdminOverlay {
     display:         none;
     position:        fixed;
     inset:           0;
     background:      rgba(0,0,0,0.78);
-    z-index:         999999;
+    z-index:         900000;
     align-items:     center;
     justify-content: center;
 }

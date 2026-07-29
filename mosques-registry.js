@@ -309,14 +309,22 @@ window.MOSQUES_REGISTRY = {
     },
 
     // =========================================================================
-    // MONASTIR — CITÉ CHAKER
+    // TUNIS — CITÉ CHAKER (RAOUED)
     // =========================================================================
 
-    'tn.monastir.nour-chaker': {
-        VERSION:       '1.3',
+    // Clé alignée sur le mosque_id Supabase (tn.tunis.nour-chaker, cf. migration
+    // du 24/07/2026 : le mosque_id disait à tort "monastir" alors que la
+    // mosquée est à Raoued/Tunis, comme LOCATION_CODE ci-dessous le confirmait
+    // déjà). Avant cet alignement, cette entrée du registre local (id
+    // tn.monastir.nour-chaker) et la ligne Supabase renommée (tn.tunis.nour-chaker)
+    // désignaient la même mosquée sous deux id différents -> _renderList
+    // (sélecteur de mosquée) les affichait toutes les deux pour la ville
+    // "tunis" (déduplication par id, pas par nom).
+    'tn.tunis.nour-chaker': {
+        VERSION:       '1.4',
         LABEL:         'Mosquée Al-Nûr — Cité Chaker, Raoued',
         MOSQUE_NAME:   'جامع النُّور بحي شاكر',
-        ADDRESS:       'Cité Chaker, Raoued, Monastir, Tunisie',
+        ADDRESS:       'Cité Chaker, Raoued, Tunis, Tunisie',
         IMAGE:         'nourchaker.jpeg',
         MOSQUE_COORDS: { latitude: 36.94450154159308, longitude: 10.173568985600673 },
         LOCATION_CODE: 'tn.tunis',

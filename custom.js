@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.03';
+var CUSTOM_APP_VERSION = '12.04';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -13901,9 +13901,30 @@ function selectQPTakbir() {
                 '<div id="ucMosqueSelectorProposeLink" class="ucMosqueProposeLink">➕ اقتراح مسجد جديد | Proposer une mosquée</div>' +
             '</div>';
         document.body.appendChild(modal);
+        // ── "Proposer une mosquée" : toujours visible/cliquable, quel que
+        // soit l'appareil (box comme téléphone -- appelle directement
+        // window._ucOpenMosqueProfileEdit, PAS window._ucOpenMosqueInfoModal,
+        // qui lui refuse de s'ouvrir en orientation horizontale, cf.
+        // _installMosqueInfoModal). Si l'utilisateur est déjà sur la
+        // mosquée anonyme, ouvre directement la boîte d'édition. Sinon
+        // (vraie mosquée déjà configurée), avertit d'abord — même modale
+        // que la sélection directe de l'entrée anonyme du registre, cf.
+        // _showAnonMosqueWarning plus bas -- et ne bascule vers l'anonyme
+        // que si l'utilisateur confirme. La bascule recharge la page
+        // (_finishSelectMosque) : un indicateur localStorage fait rouvrir
+        // automatiquement la boîte d'édition juste après ce rechargement
+        // (cf. _installMosqueInfoModal, _resumeProfileEditAfterReload).
         document.getElementById('ucMosqueSelectorProposeLink').addEventListener('click', function() {
-            window._ucCloseMosqueSelector();
-            if (typeof window._ucOpenMosqueInfoModal === 'function') window._ucOpenMosqueInfoModal();
+            var currentId = _getCurrentId();
+            if (!currentId || _ucIsAnonymousMosqueId(currentId)) {
+                window._ucCloseMosqueSelector();
+                if (typeof window._ucOpenMosqueProfileEdit === 'function') window._ucOpenMosqueProfileEdit();
+                return;
+            }
+            _showAnonMosqueWarning(function() {
+                try { localStorage.setItem('UC_OPEN_PROFILE_EDIT_AFTER_RELOAD', '1'); } catch (e) {}
+                _finishSelectMosque('anonymous.generic', true);
+            });
         });
         _modal       = modal;
         _searchInput = document.getElementById('ucMosqueSearch');
@@ -14030,11 +14051,11 @@ function selectQPTakbir() {
         _buildModal();
         if (_searchInput) _searchInput.value = '';
         _refreshForCity('');
-        var proposeLink = document.getElementById('ucMosqueSelectorProposeLink');
-        if (proposeLink) {
-            var canPropose = (typeof window._ucCanProposeMosque === 'function') && window._ucCanProposeMosque();
-            proposeLink.style.display = canPropose ? '' : 'none';
-        }
+        // ucMosqueSelectorProposeLink reste désormais toujours visible (cf.
+        // le handler câblé dans _buildModal, qui gère lui-même la bascule
+        // vers l'anonyme + l'avertissement le cas échéant si l'utilisateur
+        // est actuellement sur une VRAIE mosquée) — plus de masquage
+        // conditionné à _ucCanProposeMosque ici.
         if (_modal) _modal.classList.add('ucMosqueModalOpen');
     };
 
@@ -16146,6 +16167,13 @@ function selectQPTakbir() {
         if (_profileEditOv) _profileEditOv.classList.remove('ucMosqueModalOpen');
     }
 
+    // Exposé pour ucMosqueSelectorProposeLink (_installMosqueSelector) : ouvre
+    // directement cette boîte SANS passer par window._ucOpenMosqueInfoModal,
+    // qui refuse de s'ouvrir en orientation horizontale (cf. plus haut) — la
+    // proposition de nouvelle mosquée doit rester accessible sur box comme
+    // sur téléphone.
+    window._ucOpenMosqueProfileEdit = _openMosqueProfileEdit;
+
     // ── Photo de la mosquée (upload Supabase Storage) ──────────────────────
     // Même condition d'édition que le profil (_mosqueProfileCanEdit). Choix
     // via <input type="file" capture> -> onShowFileChooser (MainActivity.kt,
@@ -16508,6 +16536,20 @@ function selectQPTakbir() {
     // #ucAdminBtnRow/#ucAdminLockBtn (filet de sécurité, en plus du rattachement
     // direct fait à leur création).
     window._ucRelocateAdminRow = _relocateAdminRow;
+
+    // ── Reprise après bascule vers l'anonyme depuis ucMosqueSelectorProposeLink
+    // (_installMosqueSelector) : cette bascule recharge la page
+    // (_finishSelectMosque), donc rouvrir directement ucMosqueProfileEditBox
+    // ne peut pas se faire dans le même appel -- un indicateur one-shot
+    // (retiré immédiatement après lecture) fait rouvrir la boîte ici, juste
+    // après le rechargement.
+    (function _resumeProfileEditAfterReload() {
+        var flag = false;
+        try { flag = localStorage.getItem('UC_OPEN_PROFILE_EDIT_AFTER_RELOAD') === '1'; } catch (e) {}
+        if (!flag) return;
+        try { localStorage.removeItem('UC_OPEN_PROFILE_EDIT_AFTER_RELOAD'); } catch (e) {}
+        setTimeout(function() { window._ucOpenMosqueProfileEdit(); }, 600);
+    })();
 
     console.log('[MOSQUE_INFO] modale installée');
 

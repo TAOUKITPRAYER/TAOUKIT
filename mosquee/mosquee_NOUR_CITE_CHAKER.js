@@ -12,12 +12,12 @@
 
 window.MOSQUE_CONFIG = {
 
-    VERSION:       '1.1',                    // ← incrémenter à chaque modification
-    MOSQUE_ID:     'tn.monastir.nour-chaker',
+    VERSION:       '1.2',                    // incrementer a chaque modification
+    MOSQUE_ID:     'tn.tunis.nour-chaker',   // aligne sur le mosque_id Supabase (migration 24/07/2026 : la mosquee est a Raoued/Tunis, pas Monastir)
 
     // ── Identité de la mosquée ────────────────────────────────────────────────
     MOSQUE_NAME:   'جامع النُّور بحي شاكر',           // Nom affiché dans l'application
-    LOCATION_CODE: 'tn.monastir',           // Code ville (toujours en minuscules)
+    LOCATION_CODE: 'tn.tunis',              // Code ville (toujours en minuscules)
                                              // Liste : Paramètres > Ville de calcul
 
     // ── Délais iqama en minutes ───────────────────────────────────────────────

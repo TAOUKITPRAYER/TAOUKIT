@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.01';
+var CUSTOM_APP_VERSION = '12.02';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -22868,8 +22868,19 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         // notification en arriere-plan, sans aucun moyen de le desactiver.
         // Desactive : annule toute alarme native deja programmee (heure exacte
         // ET rappel "N min avant") et ne reprogramme rien.
+        //
+        // EXCEPTION téléphone (hors boîtier) : la notification native à
+        // l'heure exacte de l'azan (son réel si voiceMode actif, sinon simple
+        // bip -- cf. AzanPlaybackService.playAzan) doit rester obligatoire sur
+        // téléphone quel que soit ce réglage ou tout autre paramétrage --
+        // c'est le seul moyen d'être notifié de l'heure de la prière une fois
+        // l'appli fermée/en arrière-plan. Le boîtier garde l'ancien
+        // comportement (aucune alerte native si désactivé) : il reste allumé
+        // en continu, la notification système n'a pas de sens dessus.
         var azanEnabled = (JS_DATA.ucShowAzanWindow != 0);
-        if (!azanEnabled) {
+        var isPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && !window.AndroidMobile.isAndroidTv());
+        if (!azanEnabled && !isPhone) {
             if (typeof window.AndroidMobile.cancelAllNotifications === 'function') {
                 window.AndroidMobile.cancelAllNotifications();
             }
@@ -22877,6 +22888,9 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 window.AndroidMobile.log('[NativeAlarms] ucShowAzanWindow=0 -> alarmes natives annulees, rien reprogramme');
             }
             return;
+        }
+        if (!azanEnabled && isPhone && typeof window.AndroidMobile.log === 'function') {
+            window.AndroidMobile.log('[NativeAlarms] ucShowAzanWindow=0 mais telephone -> notification azan obligatoire maintenue');
         }
 
         var keys = [

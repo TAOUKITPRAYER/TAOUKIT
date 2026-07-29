@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.98';
+var CUSTOM_APP_VERSION = '11.99';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -17874,9 +17874,25 @@ function selectQPTakbir() {
         // l'identique) -- sinon la requête du sélecteur (qui normalise, elle)
         // ne retrouve jamais la ligne.
         var _liveCity = ((typeof JS_DATA !== 'undefined' && JS_DATA.ucNowCityCODE) || '').replace(/_+$/, '');
+        var _resolvedName = nameOverride || r.backup.mosque || '';
+        // Garde-fou anti-placeholder (audit 29/07/2026, test Ksar Hellal) :
+        // seul _ucProposeNewMosque vérifiait jusqu'ici que le nom n'était pas
+        // resté "إسم المسجد" -- les 2 AUTRES appelants de cette fonction
+        // (Export config -> Distant, sélecteur distant) n'avaient AUCUNE
+        // vérification, alors qu'ils font un UPSERT sur un mosque_id déjà
+        // réel : un nom retombé sur le placeholder (reset du profil,
+        // sélection du modèle "Par défaut") pouvait donc écraser
+        // silencieusement un nom valide déjà enregistré. Centralisé ICI,
+        // dans la fonction d'écriture elle-même, pour protéger les 3 chemins
+        // d'un coup plutôt qu'un correctif par appelant.
+        if (!_resolvedName || _resolvedName === UC_ANON_PLACEHOLDER_NAME) {
+            alert(_cfgT('proposeNameRequired'));
+            onDone(false, null);
+            return;
+        }
         var row = {
             mosque_id:     mosqueId,
-            mosque_name:   nameOverride || r.backup.mosque || '',
+            mosque_name:   _resolvedName,
             location_code: _liveCity || (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.LOCATION_CODE) || null,
             backup_json:   r.backup
         };

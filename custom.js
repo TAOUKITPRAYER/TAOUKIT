@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.05';
+var CUSTOM_APP_VERSION = '12.06';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -16004,11 +16004,15 @@ function selectQPTakbir() {
         ov.id = 'ucMosqueProfileEditOverlay';
         ov.innerHTML =
             '<div id="ucMosqueProfileEditBox">' +
-                '<p id="ucMosqueProfileEditTitle">' + _mpeT('title') + '</p>' +
+                '<div id="ucMosqueProfileEditHeader">' +
+                    '<span id="ucMosqueProfileEditTitle">' + _mpeT('title') + '</span>' +
+                    '<span id="ucMPEClose">&#10005;</span>' +
+                '</div>' +
                 '<div id="ucMPETabs">' +
                     '<span class="ucMPETabBtn ucMPETabBtnActive" data-mpe-tab="info">' + _mpeT('tabInfo') + '</span>' +
                     '<span class="ucMPETabBtn" data-mpe-tab="settings">' + _mpeT('tabSettings') + '</span>' +
                 '</div>' +
+                '<div id="ucMPEBody">' +
                 '<div class="ucMPEPane ucMPEPaneActive" data-mpe-pane="info">' +
                 '<label class="ucMPELabel">' + _mpeT('mosqueName') + '</label>' +
                 '<input id="ucMPEName" type="text" class="ucMPEInput"/>' +
@@ -16040,9 +16044,17 @@ function selectQPTakbir() {
                     '<span id="ucMPECancel" class="ucModalBtn ucModalBtn--secondary">' + _mpeT('cancel') + '</span>' +
                     '<span id="ucMPESave" class="ucModalBtn ucModalBtn--primary">' + _mpeT('save') + '</span>' +
                 '</div>' +
+                '</div>' +
             '</div>';
         document.body.appendChild(ov);
         _profileEditOv = ov;
+
+        // ── En-tête figé (titre + X), même fonctionnement que
+        // ucMosqueInfoHeader/ucMosqueInfoClose (_installMosqueInfoModal) :
+        // #ucMosqueProfileEditBox passe en colonne flex (CSS) avec le corps
+        // scrollable dans #ucMPEBody -- le X ferme sans enregistrer, comme
+        // le bouton "Annuler".
+        document.getElementById('ucMPEClose').addEventListener('click', _closeMosqueProfileEdit);
 
         // ── Onglets Informations / Paramétrage (même mécanisme que
         // _installRemoteMosqueAdmin._switchTab : classes toggle sur boutons +
@@ -18963,15 +18975,26 @@ function selectQPTakbir() {
 // précèdent .locationSettingsClass vers la fin du conteneur, dans leur ordre
 // d'origine (appendChild successifs = ordre préservé) — fonctionne quels que
 // soient les nœuds exacts (input, texte "&nbsp;", label, <hr>), sans dépendre
-// de leur nombre/type précis.
+// de leur nombre/type précis. Regroupés dans un wrapper (au lieu de rester
+// des nœuds détachés) pour pouvoir les masquer d'un bloc sur téléphone (cf.
+// ci-dessous, demande 29/07/2026) : ce réglage (fichier wcsv.js à éditer
+// manuellement dans le dossier de l'appli) n'a de sens que sur box.
 (function _installMoveWcsvBlockLast() {
     function _init() {
         var container  = document.getElementById('locationContentContainer');
         var settingsDiv = container && container.querySelector('.locationSettingsClass');
         if (!container || !settingsDiv) { setTimeout(_init, 300); return; }
+        var wrap = document.createElement('div');
+        wrap.id = 'ucWcsvBlockWrap';
         while (container.firstChild !== settingsDiv) {
-            container.appendChild(container.firstChild);
+            wrap.appendChild(container.firstChild);
         }
+        container.appendChild(wrap);
+
+        var isPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && !window.AndroidMobile.isAndroidTv());
+        if (isPhone) wrap.style.display = 'none';
+
         _L('CUSTOM', 'INIT', { item: 'moveWcsvBlockLast' });
     }
     _init();

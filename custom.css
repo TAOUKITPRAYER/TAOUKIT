@@ -5319,29 +5319,65 @@
     background: #1a1a2e;
     border: 1px solid #555;
     border-radius: 10px;
-    padding: 20px;
     width: 92%;
     max-width: 380px;
     max-height: 86vh;
-    overflow-y: auto;
     box-sizing: border-box;
     direction: rtl;
+    /* En-tête + onglets figés, seul le corps défile -- même agencement que
+       #ucMosqueInfoModal/#ucRemoteAdminModal (colonne flex, header en
+       flex-shrink:0, corps en flex:1 + overflow-y:auto), cf. demande
+       utilisateur 29/07/2026 ("même fonctionnement que ucMosqueInfoHeader"). */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+#ucMosqueProfileEditHeader {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    padding: 18px 20px 12px;
+    flex-shrink: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
 }
 #ucMosqueProfileEditTitle {
     color: #ffd250;
     font-size: 1.05em;
     text-align: center;
-    margin: 0 0 14px;
 }
+#ucMPEClose {
+    position: absolute;
+    top: 50%;
+    right: 20px;
+    transform: translateY(-50%);
+    color: #e05050;
+    cursor: pointer;
+    font-size: 1.1em;
+    line-height: 1;
+    transition: color 0.15s;
+}
+#ucMPEClose:hover { color: #ff7070; }
 /* ── Onglets Informations / Paramétrage (ucMosqueProfileEditBox) — même
    mécanisme que .ucRATabBtn (_installRemoteMosqueAdmin), recoloré pour
    rester cohérent avec la palette or (#ffd250) déjà utilisée dans cette
-   boîte (titre, bouton édition). */
+   boîte (titre, bouton édition). Fixe (flex-shrink:0) comme l'en-tête. */
 #ucMPETabs {
     display: flex;
     gap: 6px;
-    margin: 0 0 14px;
+    padding: 10px 20px 0;
+    flex-shrink: 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+/* ── Corps scrollable (les 2 panneaux .ucMPEPane + le pied Enregistrer/
+   Annuler) -- flex:1 + min-height:0 nécessaire pour qu'un enfant flex en
+   colonne accepte de se réduire sous sa taille de contenu et laisse
+   overflow-y:auto s'engager réellement (même remarque que #ucRemoteAdminBody). */
+#ucMPEBody {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px 20px 20px;
 }
 .ucMPETabBtn {
     flex: 1;
@@ -7563,10 +7599,16 @@
        (.ucModernActionBtn, font-size:0.95em) plutot que d'inventer une
        nouvelle valeur -- demande utilisateur 29/07/2026. Uniquement en
        portrait : ne touche pas au rendu horizontal/box, deja correct. */
+    /* Espacement vertical entre les 3 boutons un peu plus genereux sur
+       telephone (demande utilisateur 29/07/2026) -- le 1.5% auto de base
+       (custom.css, plus haut) calcule un ecart trop faible sur un viewport
+       etroit ; valeur fixe en px plutot que %, coherente avec le passage a
+       font-size en em juste au-dessus. */
     #ucSelectMosqueButton,
     #ucEditMosqueNameButton,
     #ucMosqueNotifButton {
         font-size: 0.95em;
+        margin: 10px auto;
     }
 }
 

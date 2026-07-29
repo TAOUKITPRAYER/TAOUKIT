@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.99';
+var CUSTOM_APP_VERSION = '12.00';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -14051,7 +14051,7 @@ function selectQPTakbir() {
             }
             window._ucToast && window._ucToast(_msT('loading'), 'ok');
             window._ucPullRemoteBackup(id, function(json) {
-                if (json) window._ucRestoreFromJson(json, true);
+                if (json) window._ucRestoreFromJson(json, id);
                 else window._ucToast && window._ucToast(_msT('mosqueNotFound'), 'err');
             });
             return;
@@ -14069,7 +14069,7 @@ function selectQPTakbir() {
         if (typeof window._ucPullRemoteBackup === 'function') {
             window._ucPullRemoteBackup(id, function(json) {
                 if (json && typeof window._ucRestoreFromJson === 'function') {
-                    window._ucRestoreFromJson(json, true);
+                    window._ucRestoreFromJson(json, id);
                 } else {
                     _finishSelectMosque(id, true);
                 }
@@ -18038,7 +18038,7 @@ function selectQPTakbir() {
     // rien et a été signalé comme une boîte de dialogue intruse/
     // incompréhensible. On restaure et recharge directement, avec un simple
     // toast de confirmation.
-    function _restoreFromJson(jsonStr) {
+    function _restoreFromJson(jsonStr, forceMosqueId) {
         try {
             var backup = JSON.parse(jsonStr);
             if (!backup || typeof backup.data !== 'object')
@@ -18052,6 +18052,26 @@ function selectQPTakbir() {
                 } catch(ex) { errors.push(k + ': ' + ex.message); }
             });
 
+            // Selection d'une mosquee (selecteur ville/mosquee, "Import ->
+            // Distant" par ID) : force l'id REELLEMENT choisi par
+            // l'utilisateur, quel que soit UC_MOSQUE_ID contenu dans le blob
+            // restaure ci-dessus -- ce dernier reflete l'etat de l'APPAREIL
+            // QUI A CREE cette sauvegarde (souvent "anonymous.generic",
+            // jamais mis a jour au moment de la proposition, cf.
+            // _ucProposeNewMosque qui ne bascule jamais l'appareil source sur
+            // le nouvel id -- cf. custom.js plus haut), pas la mosquee que CET
+            // appareil-ci est en train de selectionner. Sans ce forcage, le
+            // selecteur "important" silencieusement le mauvais mosque_id,
+            // laissant tout generique (nom/ville/iqama) malgre une sauvegarde
+            // source parfaitement correcte (bug constate 29/07/2026, box +
+            // mosquee Ksar Hellal). Absent (undefined) pour un import "MA
+            // propre sauvegarde" (fichier local, modale, restauration de mon
+            // propre backup) : dans ce cas l'id embarque dans le blob EST la
+            // bonne identite a restaurer.
+            if (forceMosqueId) {
+                try { localStorage.setItem('UC_MOSQUE_ID', forceMosqueId); } catch(e) {}
+            }
+
             // Forcer re-application de mosquee.js
             try {
                 var custom = JSON.parse(localStorage.getItem('JS_DATA_CUSTOM') || '{}');
@@ -18059,7 +18079,7 @@ function selectQPTakbir() {
                 localStorage.setItem('JS_DATA_CUSTOM', JSON.stringify(custom));
             } catch(e) {}
 
-            _L('CFG', 'IMPORT', { keys: count, mosque: backup.mosque || '?', errors: errors.length });
+            _L('CFG', 'IMPORT', { keys: count, mosque: backup.mosque || '?', errors: errors.length, forcedId: forceMosqueId || null });
 
             if (errors.length) alert(_cfgT('importPartialError', { count: errors.length }));
             else window._ucToast && window._ucToast(_cfgT('importOk'), 'ok');
@@ -18335,7 +18355,7 @@ function selectQPTakbir() {
                             } else {
                                 window._ucToast && window._ucToast(_cfgT('retrieving'), 'ok');
                                 _pullRemoteBackup(id, function (json) {
-                                    if (json) _restoreFromJson(json);
+                                    if (json) _restoreFromJson(json, id);
                                     else window._ucToast && window._ucToast(_cfgT('configNotFound'), 'err');
                                 });
                             }

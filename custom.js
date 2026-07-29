@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '11.96';
+var CUSTOM_APP_VERSION = '11.97';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -20938,6 +20938,97 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     _L('CUSTOM', 'INIT', { item: 'adminBtnLockGate' });
 })();
 
+// ══════════════════════════════════════════════════════════════════════════
+// ── ACCÈS ADMIN DÉDIÉ — MODE BOX HORIZONTAL ─────────────────────────────────
+// window._ucOpenMosqueInfoModal (plus haut, _installMosqueInfoModal) refuse
+// explicitement de s'ouvrir en mode horizontal ("if (isHorizontalOrientation)
+// return;") -- ce comportement reste INCHANGÉ (la mise en page de cette
+// modale n'est pas adaptée à un grand écran horizontal). Or c'est l'unique
+// point d'entrée vers le cadenas admin (PIN, Notifier, Message, Janaza,
+// Historique) : sur une box, ni le nom de la mosquée (zone parfois occupée
+// par un logo), ni l'affichage jomoaa n'offrent d'autre déclencheur --
+// l'administrateur de la box n'a donc AUCUN moyen d'y accéder (retour
+// utilisateur 29/07/2026).
+//
+// Solution : un nouvel élément de menu séparé, sous "locationSettingsButton",
+// visible UNIQUEMENT en mode horizontal, qui ouvre un mini-overlay dédié au
+// gabarit adapté (largeur bornée, comme #ucBoxControlModal). Il réutilise les
+// VRAIS éléments admin (#ucAdminAlwaysRow/#ucAdminLockBtn/#ucAdminBtnRow,
+// créés par _installAdminNotifyPanel/_installAdminBtnLockGate) en les
+// déplaçant temporairement (appendChild déplace, ne copie pas -- mêmes
+// écouteurs, même état de verrouillage partagé) et les restaure dans
+// #ucMosqueInfoAdminSection à la fermeture via window._ucRelocateAdminRow
+// (déjà exposé pour ce genre de filet de sécurité). Aucune duplication de
+// logique PIN/Notifier/Message/Janaza, aucun changement du comportement
+// existant en vertical.
+// ══════════════════════════════════════════════════════════════════════════
+(function _installBoxHorizontalAdminAccess() {
+    var locBtn    = document.getElementById('locationSettingsButton');
+    var container = document.getElementById('menuSectionsContainer');
+    if (!locBtn || !container) return;
+
+    var L_BA = {
+        menuLabel: { AR: 'إدارة المسجد', FR: 'Administration mosquée', EN: 'Mosque administration' }
+    };
+    function _baT(key) { return (L_BA[key] && (L_BA[key][_ucLang()] || L_BA[key].EN)) || key; }
+    function _isHR() { return (typeof isHorizontalOrientation !== 'undefined') && isHorizontalOrientation; }
+
+    // ── Bouton de menu, juste après "locationSettingsButton" ───────────────
+    var menuBtn = document.createElement('div');
+    menuBtn.id = 'ucBoxAdminMenuButton';
+    menuBtn.innerHTML = (typeof bulletPointSymbol !== 'undefined' ? bulletPointSymbol : '') + '&#128274; ' + _baT('menuLabel');
+    if (locBtn.nextSibling) container.insertBefore(menuBtn, locBtn.nextSibling);
+    else container.appendChild(menuBtn);
+
+    function _syncMenuBtnVisibility() {
+        menuBtn.style.display = _isHR() ? '' : 'none';
+    }
+    _syncMenuBtnVisibility();
+    window.addEventListener('resize', function () {
+        if (typeof detectOrientationFunction === 'function') detectOrientationFunction();
+        _syncMenuBtnVisibility();
+    });
+
+    // ── Overlay dédié (gabarit borné, cf. #ucBoxControlModal) ───────────────
+    var overlay = document.createElement('div');
+    overlay.id = 'ucBoxAdminOverlay';
+    overlay.innerHTML =
+        '<div id="ucBoxAdminModal">' +
+            '<div id="ucBoxAdminHeader">' +
+                '<span id="ucBoxAdminTitle">&#128274; ' + _baT('menuLabel') + '</span>' +
+                '<span id="ucBoxAdminClose">&#10006;</span>' +
+            '</div>' +
+            '<div id="ucBoxAdminBody"></div>' +
+        '</div>';
+    document.documentElement.appendChild(overlay);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) _close(); });
+    document.getElementById('ucBoxAdminClose').addEventListener('click', _close);
+
+    function _open() {
+        if (typeof closeMenuFunction === 'function') closeMenuFunction();
+        var body      = document.getElementById('ucBoxAdminBody');
+        var alwaysRow = document.getElementById('ucAdminAlwaysRow');
+        var title     = document.getElementById('ucMosqueInfoAdminSectionTitle');
+        var lockBtn   = document.getElementById('ucAdminLockBtn');
+        var btnRow    = document.getElementById('ucAdminBtnRow');
+        if (alwaysRow) body.appendChild(alwaysRow);
+        if (title)     body.appendChild(title);
+        if (lockBtn)   body.appendChild(lockBtn);
+        if (btnRow)    body.appendChild(btnRow);
+        overlay.classList.add('ucBoxAdminOpen');
+    }
+    function _close() {
+        overlay.classList.remove('ucBoxAdminOpen');
+        // Remet les MÊMES noeuds DOM à leur emplacement d'origine (modale
+        // "Infos mosquée", mode vertical) -- écouteurs et état de
+        // verrouillage (window._ucAdminUnlocked) intacts et partagés.
+        if (typeof window._ucRelocateAdminRow === 'function') window._ucRelocateAdminRow();
+    }
+    menuBtn.addEventListener('click', _open);
+
+    _L('CUSTOM', 'INIT', { item: 'boxHorizontalAdminAccess' });
+})();
+
 // ==========================================================================
 // -- TOUR D'AIDE AU PREMIER LANCEMENT (ONBOARDING) --------------------------
 //  Au premier démarrage de l'application, une bulle d'aide guide
@@ -24021,7 +24112,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     }
 
     var GROUPS = [
-        { key: 'time',   ids: ['optionsSettingsButton', 'adjustmentsButton', 'techOptionsButton', 'lightProgrammingButton', 'locationSettingsButton'] },
+        { key: 'time',   ids: ['optionsSettingsButton', 'adjustmentsButton', 'techOptionsButton', 'lightProgrammingButton', 'locationSettingsButton', 'ucBoxAdminMenuButton'] },
         { key: 'screen', ids: ['blackScreenSettingsButton', 'themesButton', 'fullScreenButton', 'forcedVerticalOption', 'personalFilesButton', 'importExportButton', 'soundRemindersButton'] },
         { key: 'loc',    ids: ['bottomMessagesButton', 'azkarSettingsButton', 'slidesSettingsButton'] },
         { key: 'help',   ids: ['shortcutsInfoButton', 'ucAboutMenuItem', 'quranPlayerMenuButton'] },

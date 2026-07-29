@@ -4715,6 +4715,65 @@
 }
 #ucAdminLockBtn:active { opacity: 0.8; }
 
+/* ── Overlay admin dédié — mode box horizontal ────────────────────────────
+   cf. custom.js, _installBoxHorizontalAdminAccess : héberge temporairement
+   les VRAIS #ucAdminAlwaysRow/#ucAdminLockBtn/#ucAdminBtnRow (mêmes noeuds
+   DOM que dans #ucMosqueInfoAdminSection, simplement déplacés). Gabarit
+   borné (comme #ucBoxControlModal) car les boutons admin utilisent des
+   tailles en vw pensées pour un écran de téléphone (3.8vw) -- sur une box
+   1920px ça donnerait un texte énorme sans l'override de taille ci-dessous. */
+#ucBoxAdminOverlay {
+    display:         none;
+    position:        fixed;
+    inset:           0;
+    background:      rgba(0,0,0,0.78);
+    z-index:         999999;
+    align-items:     center;
+    justify-content: center;
+}
+#ucBoxAdminOverlay.ucBoxAdminOpen { display: flex; }
+#ucBoxAdminModal {
+    background:    #1c1c1c;
+    border:        1px solid #3a3a3a;
+    border-radius: 11px;
+    padding:       16px 18px;
+    width:         32vw;
+    max-width:     400px;
+    min-width:     260px;
+    max-height:    82vh;
+    overflow-y:    auto;
+    color:         #e8e8e8;
+    font-family:   'FreeSans', Arial, sans-serif;
+    box-sizing:    border-box;
+    box-shadow:    0 6px 30px rgba(0,0,0,0.85);
+}
+#ucBoxAdminHeader {
+    display:         flex;
+    align-items:     center;
+    justify-content: space-between;
+    margin-bottom:   14px;
+    padding-bottom:  10px;
+    border-bottom:   1px solid rgba(255,255,255,0.12);
+}
+#ucBoxAdminTitle { font-size: 1.05em; font-weight: 600; }
+#ucBoxAdminClose { cursor: pointer; opacity: 0.6; font-size: 1.1em; padding: 4px 8px; }
+#ucBoxAdminClose:active { opacity: 1; }
+#ucBoxAdminBody #ucMosqueInfoAdminSectionTitle { margin-top: 0; }
+#ucBoxAdminBody #ucAdminLockBtn { display: block; margin: 0 auto 10px; }
+
+/* Les boutons admin (#ucAdminAlwaysRow/#ucAdminBtnLine3/4/5, plus haut)
+   utilisent font-size:3.8vw -- pensé pour un écran téléphone étroit. `vw`
+   est relatif au VIEWPORT, pas à #ucBoxAdminModal : sans cet override,
+   resterait énorme même dans ce conteneur borné (~73px sur une box 1920px
+   de large). */
+#ucBoxAdminBody #ucAdminAlwaysRow button,
+#ucBoxAdminBody #ucAdminBtnLine3 button,
+#ucBoxAdminBody #ucAdminBtnLine4 button,
+#ucBoxAdminBody #ucAdminBtnLine5 button {
+    font-size: 15px;
+    height:    46px;
+}
+
 /* ── BOUTONS DES MODALES CUSTOM ────────────────────────────────────────── */
 .ucModalBtn {
     display: inline-block;

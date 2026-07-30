@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.08';
+var CUSTOM_APP_VERSION = '12.09';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1024,6 +1024,21 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
         _el.innerHTML = convertToArabicDigitsFunction(convertTo12HourFormat(_jt));
     };
     console.log('[CFG] patch jomoaTimeDisplayHorizontal installé');
+})();
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── LIBELLÉ jomoaOnHrLabel (JS_eLang.cx_JOMOA_SHOW) ──────────────────────────
+// Texte core "إظهار الجمعة على الشاشة الأفقية" trompeur : cette case coche
+// l'affichage de la Jumua tout court (JS_DATA.ucJomoaOnHRscreen), pas
+// seulement en mode horizontal -- demande utilisateur 30/07/2026. Comme tout
+// override de JS_eLang, insuffisant seul (initUILabels() a déjà peuplé le DOM
+// avant custom.js) : le <label id='jomoaOnHrLabel'> est mis à jour directement
+// aussi.
+(function _patchJomoaShowLabel() {
+    var TEXT = 'إظهار الجمعة على الشاشة';
+    if (typeof JS_eLang !== 'undefined') JS_eLang.cx_JOMOA_SHOW = TEXT;
+    var el = document.getElementById('jomoaOnHrLabel');
+    if (el) el.innerHTML = TEXT;
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 

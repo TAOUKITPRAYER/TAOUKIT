@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.13';
+var CUSTOM_APP_VERSION = '12.14';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -25318,14 +25318,18 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 _L('REMOTE_ADMIN', 'CONFIG_OK', { mosque_id: mid, reloadOnly: reloadOnly });
                 setStatus(_raT('sentOk'), 'ok');
                 if (pinEl) pinEl.value = '';
-                // Le téléphone qui vient d'envoyer la modif doit refléter le
-                // même changement que la box, pas rester sur son ancien état
-                // local -- incohérent sinon (cf. discussion 26/07/2026). On
-                // tire immédiatement la ligne fraîchement écrite plutôt que
-                // d'attendre le push silencieux/polling (qui ciblent surtout
-                // la box) : _ucSyncFromSupabase applique et recharge la page,
-                // ce qui ferme cette modale au passage.
-                if (typeof window._ucSyncFromSupabase === 'function') {
+                // Le téléphone qui vient d'envoyer une VRAIE modif de config doit
+                // refléter le même changement que la box, pas rester sur son
+                // ancien état local -- incohérent sinon (cf. discussion
+                // 26/07/2026). On tire immédiatement la ligne fraîchement écrite
+                // plutôt que d'attendre le push silencieux/polling (qui ciblent
+                // surtout la box) : _ucSyncFromSupabase applique et recharge la
+                // page, ce qui ferme cette modale au passage.
+                // reloadOnly=true ("Recharger la box uniquement") n'a RIEN
+                // modifié (config: {}) -- il n'y a donc rien à refléter sur CE
+                // téléphone, qui ne doit pas se recharger lui-même (retour
+                // utilisateur 30/07/2026 : seule la box visée doit réagir).
+                if (!reloadOnly && typeof window._ucSyncFromSupabase === 'function') {
                     window._ucSyncFromSupabase(mid, true);
                 }
             } else if (res.status === 401) {

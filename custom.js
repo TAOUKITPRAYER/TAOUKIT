@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.10';
+var CUSTOM_APP_VERSION = '12.11';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -19572,8 +19572,12 @@ function _ucDefaultAdminPin() {
                     'Prefer':         'return=minimal',
                 },
                 body: JSON.stringify({ pin_hash: hash }),
-            }).catch(function () {});
-            _L('CFG', 'PIN_HASH_PUSHED', { mosque_id: mid });
+            })
+            .then(function (r) {
+                if (r.ok) { _L('CFG', 'PIN_HASH_PUSHED', { mosque_id: mid }); }
+                else { _L('CFG', 'PIN_HASH_PUSH_ERR', { mosque_id: mid, status: r.status }); }
+            })
+            .catch(function (e) { _L('CFG', 'PIN_HASH_PUSH_ERR', { mosque_id: mid, error: (e && e.message) || String(e) }); });
         }).catch(function () {});
     }
 
@@ -25155,6 +25159,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var body = { type: 'remote_action', mosque_id: mid, pin: pin, action: action };
         if (target) body.target = target;
 
+        _L('REMOTE_ADMIN', 'ACTION_SEND', { mosque_id: mid, action: action, target: target || '' });
+
         fetch('https://tjmjmlzwzebocfdmifrg.supabase.co/functions/v1/rapid-service', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'apikey': 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4' },
@@ -25163,16 +25169,23 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
         .then(function (res) {
             if (res.ok) {
+                _L('REMOTE_ADMIN', 'ACTION_OK', { mosque_id: mid, action: action });
                 _setActionsStatus(_raT('actionSentOk'), 'ok');
             } else if (res.status === 401) {
+                _L('REMOTE_ADMIN', 'ACTION_ERR', { mosque_id: mid, action: action, status: res.status, reason: 'invalid_pin' });
                 _setActionsStatus(_raT('errInvalidPin'), 'err');
             } else if (res.status === 403) {
+                _L('REMOTE_ADMIN', 'ACTION_ERR', { mosque_id: mid, action: action, status: res.status, reason: 'not_configured' });
                 _setActionsStatus(_raT('errNotConfigured'), 'err');
             } else {
+                _L('REMOTE_ADMIN', 'ACTION_ERR', { mosque_id: mid, action: action, status: res.status, body: JSON.stringify(res.body || {}) });
                 _setActionsStatus((res.body && res.body.error) || _raT('errGeneric'), 'err');
             }
         })
-        .catch(function () { _setActionsStatus(_raT('errNetwork'), 'err'); });
+        .catch(function (e) {
+            _L('REMOTE_ADMIN', 'ACTION_NETWORK_ERR', { mosque_id: mid, action: action, error: (e && e.message) || String(e) });
+            _setActionsStatus(_raT('errNetwork'), 'err');
+        });
     }
 
     function _fillReciters(selectedDir) {
@@ -25272,6 +25285,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         if (reloadBtn) reloadBtn.style.pointerEvents = 'none';
         if (sendBtn)   sendBtn.style.pointerEvents   = 'none';
 
+        _L('REMOTE_ADMIN', 'CONFIG_SEND', { mosque_id: mid, reloadOnly: reloadOnly });
+
         fetch('https://tjmjmlzwzebocfdmifrg.supabase.co/functions/v1/rapid-service', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'apikey': 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4' },
@@ -25287,6 +25302,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             if (reloadBtn) reloadBtn.style.pointerEvents = '';
             if (sendBtn)   sendBtn.style.pointerEvents   = '';
             if (res.ok) {
+                _L('REMOTE_ADMIN', 'CONFIG_OK', { mosque_id: mid, reloadOnly: reloadOnly });
                 setStatus(_raT('sentOk'), 'ok');
                 if (pinEl) pinEl.value = '';
                 // Le téléphone qui vient d'envoyer la modif doit refléter le
@@ -25300,16 +25316,20 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                     window._ucSyncFromSupabase(mid, true);
                 }
             } else if (res.status === 401) {
+                _L('REMOTE_ADMIN', 'CONFIG_ERR', { mosque_id: mid, status: res.status, reason: 'invalid_pin' });
                 setStatus(_raT('errInvalidPin'), 'err');
             } else if (res.status === 403) {
+                _L('REMOTE_ADMIN', 'CONFIG_ERR', { mosque_id: mid, status: res.status, reason: 'not_configured' });
                 setStatus(_raT('errNotConfigured'), 'err');
             } else {
+                _L('REMOTE_ADMIN', 'CONFIG_ERR', { mosque_id: mid, status: res.status, body: JSON.stringify(res.body || {}) });
                 setStatus((res.body && res.body.error) || _raT('errGeneric'), 'err');
             }
         })
-        .catch(function () {
+        .catch(function (e) {
             if (reloadBtn) reloadBtn.style.pointerEvents = '';
             if (sendBtn)   sendBtn.style.pointerEvents   = '';
+            _L('REMOTE_ADMIN', 'CONFIG_NETWORK_ERR', { mosque_id: mid, error: (e && e.message) || String(e) });
             setStatus(_raT('errNetwork'), 'err');
         });
     }

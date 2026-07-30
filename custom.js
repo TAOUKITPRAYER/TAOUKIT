@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.15';
+var CUSTOM_APP_VERSION = '12.16';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -24913,6 +24913,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         timesTitle:       { AR: 'أوقات الأذان والإقامة',                        FR: 'Horaires azan / iqama',                                  EN: 'Azan / iqama times' },
         azanCol:          { AR: 'الأذان (د)',                                   FR: 'Azan (min)',                                             EN: 'Azan (min)' },
         iqamaCol:         { AR: 'الإقامة (د)',                                  FR: 'Iqama (min)',                                            EN: 'Iqama (min)' },
+        fixedCol:         { AR: 'ثابت',                                        FR: 'Heure fixe',                                             EN: 'Fixed time' },
         jumuaLabel:       { AR: 'وقت الجمعة',                                    FR: 'Heure Jumua',                                            EN: 'Jumua time' },
         quranTitle:       { AR: 'القرآن الكريم',                                FR: 'Coran',                                                  EN: 'Quran' },
         quranEnable:      { AR: 'تفعيل تشغيل القرآن قبل الأذان',                FR: "Activer la lecture du Coran avant l'azan",               EN: 'Enable Quran playback before azan' },
@@ -24936,18 +24937,39 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     }
 
     var PRAYERS = ['FAJR', 'DOHR', 'ASSR', 'MGRB', 'ISHA'];
-    function _azanKey(p) { return p === 'MGRB' ? 'maghrib' : p.toLowerCase(); }
+    // Doit correspondre EXACTEMENT aux clés lues par _applyRow (_installConfigSync,
+    // plus haut dans ce fichier) et par MOSQUE_CONFIG.IQAMA_DELAYS/AZAN offsets --
+    // 'dohr'/'assr' (juste p.toLowerCase()) ne correspondent à rien côté
+    // application ('dhuhr'/'asr' attendus) : toute valeur DOHR/ASSR envoyée
+    // retombait silencieusement à 0 (retour utilisateur 30/07/2026).
+    function _azanKey(p) {
+        if (p === 'MGRB') return 'maghrib';
+        if (p === 'DOHR') return 'dhuhr';
+        if (p === 'ASSR') return 'asr';
+        return p.toLowerCase();
+    }
 
     var _modal = null;
 
     function _buildModal() {
         if (document.getElementById('ucRemoteAdminOverlay')) { _modal = document.getElementById('ucRemoteAdminOverlay'); return; }
 
+        // MGRB n'a pas d'iqama en heure fixe (même schéma que _buildAdminPayload/
+        // _applyRow plus haut dans ce fichier -- iqama_fixed n'a pas de clé
+        // maghrib) : pas de case "ثابت" pour cette prière.
+        var FIXED_PRAYERS = ['FAJR', 'DOHR', 'ASSR', 'ISHA'];
         var timesRows = PRAYERS.map(function (p) {
             var name = (L_QURAN_PRAYER_NAMES[p] && L_QURAN_PRAYER_NAMES[p][_ucLang()]) || p;
+            var fixedCell = (FIXED_PRAYERS.indexOf(p) !== -1)
+                ? '<td class="ucRAFixedCell">' +
+                      '<input type="checkbox" id="ucRAFixedCb_' + p + '" class="ucRAFixedCb">' +
+                      '<input type="time" id="ucRAFixedTime_' + p + '" class="ucRAFixedTimeInput" disabled>' +
+                  '</td>'
+                : '<td></td>';
             return '<tr><td class="ucRAPrayerName">' + name + '</td>' +
                        '<td><input type="number" class="ucRANumInput" id="ucRAAzan_' + p + '" min="-30" max="30" step="1"></td>' +
-                       '<td><input type="number" class="ucRANumInput" id="ucRAIqama_' + p + '" min="0" max="120" step="1"></td></tr>';
+                       '<td><input type="number" class="ucRANumInput" id="ucRAIqama_' + p + '" min="0" max="120" step="1"></td>' +
+                       fixedCell + '</tr>';
         }).join('');
 
         var LIGHTS = [
@@ -24997,7 +25019,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                     '</div>' +
                     '<div class="ucRAPane" data-pane="settings">' +
                         '<div class="ucRASectionTitle">' + _raT('timesTitle') + '</div>' +
-                        '<table class="ucRATable"><thead><tr><th></th><th>' + _raT('azanCol') + '</th><th>' + _raT('iqamaCol') + '</th></tr></thead><tbody>' +
+                        '<table class="ucRATable"><thead><tr><th></th><th>' + _raT('azanCol') + '</th><th>' + _raT('iqamaCol') + '</th><th>' + _raT('fixedCol') + '</th></tr></thead><tbody>' +
                             timesRows +
                         '</tbody></table>' +
                         '<div class="ucRARow ucRARowJumua"><span class="ucRARowLabel">' + _raT('jumuaLabel') + '</span><input type="text" id="ucRAJumua" class="ucRAJumuaInput" placeholder="AUTO"></div>' +
@@ -25038,6 +25060,22 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         // _renderQuranTable() (cellules jour togglées), pas besoin de
         // réattacher un listener par cellule à chaque rendu.
         document.getElementById('ucRAQuranTableWrap').addEventListener('click', _onQuranTableClick);
+
+        // ── Iqama en heure fixe (case "ثابت" par prière) ─────────────────
+        // Coché : le champ heure devient éditable et le délai en minutes
+        // (colonne Iqama) est désactivé -- exclusifs l'un de l'autre, même
+        // logique que IQAMA_FIXED/IQAMA_DELAYS (IQAMA_FIXED prioritaire si
+        // non vide, cf. mosquee.js/_applyRow).
+        FIXED_PRAYERS.forEach(function (p) {
+            var cb   = document.getElementById('ucRAFixedCb_' + p);
+            var time = document.getElementById('ucRAFixedTime_' + p);
+            var mins = document.getElementById('ucRAIqama_' + p);
+            if (!cb) return;
+            cb.addEventListener('change', function () {
+                if (time) time.disabled = !cb.checked;
+                if (mins) mins.disabled = cb.checked;
+            });
+        });
 
         // ── Onglets ──────────────────────────────────────────────────────
         var _tabBtns = overlay.querySelectorAll('.ucRATabBtn');
@@ -25238,6 +25276,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     // Pré-remplit le formulaire avec les valeurs LOCALES actuelles (celles de
     // CET appareil, via _buildAdminPayload déjà existant) -- l'admin n'a plus
     // qu'à modifier ce qui doit changer, pas tout ressaisir depuis zéro.
+    // Champs de payload existants sans contrôle dans ce formulaire (aucune case
+    // à cocher pour "afficher la Jumua à l'écran") -- valeur capturée ici à
+    // l'ouverture et renvoyée telle quelle par _collectConfig(), plutôt que
+    // hardcodée à 0 (ce qui désactivait systématiquement l'affichage de la
+    // Jumua sur la box à chaque envoi distant, retour utilisateur 30/07/2026).
+    var _jumuaShowOnHrScreen = 0;
+
     function _prefill() {
         var payload = (typeof window._buildAdminPayload === 'function') ? window._buildAdminPayload() : null;
         var nameEl = document.getElementById('ucRemoteAdminMosqueName');
@@ -25250,9 +25295,22 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             var iqamaEl = document.getElementById('ucRAIqama_' + p);
             if (azanEl)  azanEl.value  = (payload.azan_offsets && payload.azan_offsets[k]) || 0;
             if (iqamaEl) iqamaEl.value = (payload.iqama_delay  && payload.iqama_delay[k])  || 0;
+
+            var fixedCb   = document.getElementById('ucRAFixedCb_' + p);
+            var fixedTime = document.getElementById('ucRAFixedTime_' + p);
+            if (fixedCb) {
+                var fv = (payload.iqama_fixed && payload.iqama_fixed[k]) || '';
+                fixedCb.checked      = !!fv;
+                if (fixedTime) {
+                    fixedTime.value    = fv;
+                    fixedTime.disabled = !fv;
+                }
+                if (iqamaEl) iqamaEl.disabled = !!fv;
+            }
         });
         var jumuaEl = document.getElementById('ucRAJumua');
         if (jumuaEl) jumuaEl.value = (payload.jumua && payload.jumua.time) || 'AUTO';
+        _jumuaShowOnHrScreen = (payload.jumua && payload.jumua.show_on_hr_screen) || 0;
 
         var qs = payload.quran_settings || {};
         var qEnEl = document.getElementById('ucRAQuranEnabled');
@@ -25270,13 +25328,19 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     }
 
     function _collectConfig() {
-        var azan_offsets = {}, iqama_delay = {}, quranPrayers = {};
+        var azan_offsets = {}, iqama_delay = {}, iqama_fixed = {}, quranPrayers = {};
         PRAYERS.forEach(function (p) {
             var k       = _azanKey(p);
             var azanEl  = document.getElementById('ucRAAzan_' + p);
             var iqamaEl = document.getElementById('ucRAIqama_' + p);
             azan_offsets[k] = azanEl  ? (parseInt(azanEl.value, 10)  || 0) : 0;
             iqama_delay[k]  = iqamaEl ? (parseInt(iqamaEl.value, 10) || 0) : 0;
+
+            var fixedCb   = document.getElementById('ucRAFixedCb_' + p);
+            var fixedTime = document.getElementById('ucRAFixedTime_' + p);
+            if (fixedCb) {
+                iqama_fixed[k] = (fixedCb.checked && fixedTime) ? (fixedTime.value || '') : '';
+            }
 
             var draft = _quranDraft[p] || { delayMin: 0, days: '1111111' };
             quranPrayers[p] = {
@@ -25292,7 +25356,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         return {
             azan_offsets: azan_offsets,
             iqama_delay:  iqama_delay,
-            jumua: { time: (jumuaEl && jumuaEl.value.trim()) || 'AUTO', show_on_hr_screen: 0 },
+            iqama_fixed:  iqama_fixed,
+            jumua: { time: (jumuaEl && jumuaEl.value.trim()) || 'AUTO', show_on_hr_screen: _jumuaShowOnHrScreen },
             quran_settings: {
                 enabled:    (qEnEl && qEnEl.checked) ? 1 : 0,
                 prayers:    quranPrayers,

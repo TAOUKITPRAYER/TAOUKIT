@@ -9495,6 +9495,20 @@ input[type='checkbox']:checked::after {
 .ucRATextInput { max-width: none; text-align: start; }
 select.ucRATextInput { text-align: start; }
 
+.ucRAFixedCell { display: flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }
+.ucRAFixedCb { accent-color: #dfcdb1; flex-shrink: 0; }
+.ucRAFixedTimeInput {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: #fff;
+    padding: 3px 4px;
+    font-size: 0.9em;
+    max-width: 90px;
+    box-sizing: border-box;
+}
+.ucRAFixedTimeInput:disabled, .ucRANumInput:disabled { opacity: 0.4; }
+
 .ucRARow {
     display: flex;
     align-items: center;

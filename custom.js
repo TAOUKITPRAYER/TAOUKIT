@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.11';
+var CUSTOM_APP_VERSION = '12.12';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -25152,8 +25152,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var mid   = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '';
         var pinEl = document.getElementById('ucRAActionsPin');
         var pin   = pinEl ? pinEl.value.trim() : '';
-        if (!mid) { _setActionsStatus(_raT('errGeneric'), 'err'); return; }
-        if (!/^\d{4,8}$/.test(pin)) { _setActionsStatus(_raT('errInvalidPin'), 'err'); return; }
+        if (!mid) { _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'no_mosque_id', action: action }); _setActionsStatus(_raT('errGeneric'), 'err'); return; }
+        if (!/^\d{4,8}$/.test(pin)) { _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'pin_format', mosque_id: mid, action: action, pinLen: pin.length }); _setActionsStatus(_raT('errInvalidPin'), 'err'); return; }
 
         _setActionsStatus(_raT('sending'), 'ok');
         var body = { type: 'remote_action', mosque_id: mid, pin: pin, action: action };
@@ -25276,8 +25276,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var mid   = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '';
         var pinEl = document.getElementById(pinElId);
         var pin   = pinEl ? pinEl.value.trim() : '';
-        if (!mid) { setStatus(_raT('errGeneric'), 'err'); return; }
-        if (!/^\d{4,8}$/.test(pin)) { setStatus(_raT('errInvalidPin'), 'err'); return; }
+        if (!mid) { _L('REMOTE_ADMIN', 'CONFIG_ABORT', { reason: 'no_mosque_id', reloadOnly: reloadOnly }); setStatus(_raT('errGeneric'), 'err'); return; }
+        if (!/^\d{4,8}$/.test(pin)) { _L('REMOTE_ADMIN', 'CONFIG_ABORT', { reason: 'pin_format', mosque_id: mid, reloadOnly: reloadOnly, pinLen: pin.length }); setStatus(_raT('errInvalidPin'), 'err'); return; }
 
         setStatus(_raT('sending'), 'ok');
         var reloadBtn = document.getElementById('ucRAReloadBtn');
@@ -25335,6 +25335,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     }
 
     window._ucOpenRemoteMosqueAdmin = function () {
+        _L('REMOTE_ADMIN', 'MODAL_OPEN', { mosque_id: (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '' });
         _buildModal();
         _setStatus('', '');
         _setActionsStatus('', '');

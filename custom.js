@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.09';
+var CUSTOM_APP_VERSION = '12.10';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -12349,6 +12349,36 @@ function forceHijriSyncFunction() {
             icV: icV && icV.className, icH: icH && icH.className
         });
     };
+})();
+
+// ── FIX : compteur iqama absent (+ affichages qui en dépendent, ex. ayats)
+//    sur un chargement A FROID de l'appli ouvert PENDANT une fenêtre
+//    azan-déjà-passé/iqama-pas-encore-atteinte -- corrigé seulement par un
+//    rechargement manuel (bug rapporté 30/07/2026, Dohr 12:30 -> iqama 13:00).
+//
+//    Cause : le cœur planifie son seul appel à checkAndRestoreIqamaCounter()
+//    (m2body.js ~L8842) à T+1s APRÈS le début du chargement -- beaucoup trop
+//    tôt dans cette appli personnalisée, où calculateAndDisplayTimesFunction()
+//    (donc dohrTimeInMinutes/currentTimeInMinutes utilisés par la comparaison,
+//    cf. _installIqamaCounterExactMinuteRestoreFix juste au-dessus) n'est
+//    fiablement calculé qu'après ~4.5s (même délai que celui déjà utilisé
+//    ailleurs dans ce fichier pour la même raison, cf. _installNativeAzanAlarms/
+//    _installWidgetBridge). À T+1s ces variables ne sont pas encore prêtes :
+//    aucun cas de la comparaison ne correspond, rien ne redémarre le
+//    compte à rebours, et comme cet appel core est un setTimeout unique
+//    (jamais répété tant qu'aucun retour au premier plan >=5s ne déclenche
+//    _ucResyncPrayerSequence), l'état reste figé pour tout le reste du
+//    cycle -- jusqu'au rechargement manuel constaté par l'utilisateur.
+//    Corrigé en rappelant la même fonction (déjà monkey-patchée ci-dessus)
+//    une seconde fois, une fois les horaires garantis disponibles ; sans
+//    effet si le compteur tourne déjà normalement (appel core à temps).
+(function _installIqamaCounterColdStartRestoreFix() {
+    if (typeof window.checkAndRestoreIqamaCounter !== 'function') return;
+    setTimeout(function () {
+        if (typeof isIqamaCounterActive !== 'undefined' && isIqamaCounterActive) return;
+        window.checkAndRestoreIqamaCounter();
+        _L('RESYNC', 'COLD_START_RESTORE_RETRY', {});
+    }, 4500);
 })();
 
 /* ═══════════════════════════════════════════════════════════════════════════

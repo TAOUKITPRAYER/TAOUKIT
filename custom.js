@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.12';
+var CUSTOM_APP_VERSION = '12.13';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -730,6 +730,19 @@ const MOSQUE_CONFIG = (typeof window.MOSQUE_CONFIG !== 'undefined')
         CLOSE_MOBILE_TEXT:      'من فضلك أغلق الهاتف', // ucCloseMobilePlease
     },
 };  // fin du fallback
+
+// Lecture unique et fiable de l'identifiant de la mosquée courante --
+// window.MOSQUE_CONFIG n'a JAMAIS de champ MOSQUE_ID (ni les entrées du
+// registre statique spec/mosques-registry.js, ni le fallback "gérée à
+// distance" de spec/mosquee.js) : seul localStorage['UC_MOSQUE_ID'] (écrit
+// par _installMosqueSelector) fait foi. Plusieurs endroits de ce fichier
+// lisaient à tort MOSQUE_CONFIG.MOSQUE_ID (toujours undefined) -- bug
+// constaté 30/07/2026 sur l'administration à distance (PIN jamais poussé
+// vers Supabase, polling de secours toujours no-op, mosque_id vide sur
+// chaque tentative depuis le téléphone).
+window._ucCurrentMosqueId = function () {
+    try { return localStorage.getItem('UC_MOSQUE_ID') || ''; } catch (e) { return ''; }
+};
 
 (function _applyMosqueConfig() {
     // Sentinel : aucune mosquée sélectionnée via le sélecteur multi-mosquée
@@ -19556,7 +19569,7 @@ function _ucDefaultAdminPin() {
     // changement de PIN local, qui reste effectif immédiatement sur cet
     // appareil quoi qu'il arrive.
     function _pushPinHash(pin) {
-        var mid = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '';
+        var mid = window._ucCurrentMosqueId();
         if (!mid) return;
         var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
                    || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
@@ -20864,7 +20877,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
                || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
 
     function _poll() {
-        var mid = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '';
+        var mid = window._ucCurrentMosqueId();
         if (!mid) return;
         fetch(_SB_URL + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid) + '&select=updated_at',
               { headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY } })
@@ -23628,7 +23641,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
     function _maybeShowPanel(lat, lng) {
         _lastLat = lat; _lastLng = lng;
-        var mosqueId = (MOSQUE_CONFIG && MOSQUE_CONFIG.MOSQUE_ID) || '';
+        var mosqueId = window._ucCurrentMosqueId();
         var local = _localCandidates(lat, lng, mosqueId);
         var localIds = local.map(function (c) { return c.id; });
         _remoteCandidates(lat, lng, mosqueId, localIds, function (remote) {
@@ -25149,7 +25162,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     // juste un push silencieux que la box exécute immédiatement (cf. listener
     // 'ucRemoteAction', custom.js plus haut, et rapid-service côté serveur).
     function _sendRemoteAction(action, target) {
-        var mid   = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '';
+        var mid   = window._ucCurrentMosqueId();
         var pinEl = document.getElementById('ucRAActionsPin');
         var pin   = pinEl ? pinEl.value.trim() : '';
         if (!mid) { _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'no_mosque_id', action: action }); _setActionsStatus(_raT('errGeneric'), 'err'); return; }
@@ -25273,7 +25286,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         // propre champ PIN/statut) ; "Envoyer" reste dans l'onglet Paramétrage.
         var pinElId    = reloadOnly ? 'ucRAActionsPin'    : 'ucRAPin';
         var setStatus  = reloadOnly ? _setActionsStatus   : _setStatus;
-        var mid   = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '';
+        var mid   = window._ucCurrentMosqueId();
         var pinEl = document.getElementById(pinElId);
         var pin   = pinEl ? pinEl.value.trim() : '';
         if (!mid) { _L('REMOTE_ADMIN', 'CONFIG_ABORT', { reason: 'no_mosque_id', reloadOnly: reloadOnly }); setStatus(_raT('errGeneric'), 'err'); return; }
@@ -25335,7 +25348,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     }
 
     window._ucOpenRemoteMosqueAdmin = function () {
-        _L('REMOTE_ADMIN', 'MODAL_OPEN', { mosque_id: (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_ID) || '' });
+        _L('REMOTE_ADMIN', 'MODAL_OPEN', { mosque_id: window._ucCurrentMosqueId() });
         _buildModal();
         _setStatus('', '');
         _setActionsStatus('', '');

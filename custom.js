@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.16';
+var CUSTOM_APP_VERSION = '12.17';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -26237,6 +26237,9 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         noMatch:     { AR: 'لم أفهم سؤالك جيدًا. جرّب إحدى هذه الاقتراحات، أو أعد صياغة السؤال بكلمات أخرى:',
                        FR: "Je n'ai pas bien compris. Essayez une de ces suggestions, ou reformulez votre question :",
                        EN: "I didn't quite understand. Try one of these suggestions, or rephrase your question:" },
+        didYouMean:  { AR: 'قصدك أحد هذه المواضيع؟ اختر الأقرب لسؤالك:',
+                       FR: 'Vouliez-vous dire l\'un de ces sujets ? Choisissez le plus proche de votre question :',
+                       EN: 'Did you mean one of these topics? Pick the closest to your question:' },
         offlineNote: { AR: 'يعمل هذا المساعد بالكامل بدون اتصال بالإنترنت.', FR: 'Cet assistant fonctionne entièrement hors connexion.', EN: 'This assistant works fully offline.' }
     };
     function _t(key) {
@@ -26552,7 +26555,10 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 FR: 'Depuis le menu réglages, ouvrez "Programmation du Coran" pour activer la lecture avant chaque azan, régler la durée et choisir les jours.',
                 EN: 'From the settings menu, open "Quran scheduling" to enable playback before each azan, set the duration, and choose the days.'
             },
-            action: function () { _openSection('soundRemindersSectionId'); }
+            // Bug corrigé (retour utilisateur 30/07/2026) : pointait vers
+            // soundRemindersSectionId (rappels vocaux personnalisés, tout
+            // autre chose) au lieu du vrai panneau de programmation Coran.
+            action: function () { _openSection('techOptionsSectionId'); }
         },
         {
             id: 'bottom_messages',
@@ -26676,12 +26682,446 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         }
     });
 
+    // ── Intentions supplémentaires (audit exhaustif des fonctionnalités,
+    // retour utilisateur 30/07/2026 : catalogue jugé trop pauvre, l'app a
+    // été explorée bien plus largement -- index.html, tous les _install*
+    // de custom.js, et MobileJsBridge.kt -- pour couvrir ce qui manquait). ──
+    INTENTS.push(
+        {
+            id: 'mosque_calendar',
+            kw: ['تقويم المسجد', 'التقويم الهجري', 'ايام العطل', 'مناسبات دينية',
+                 'calendrier de la mosquee', 'calendrier hijri', 'jours feries', 'fetes religieuses',
+                 'mosque calendar', 'hijri calendar', 'holidays', 'religious dates'],
+            chip: { AR: 'كيف أرى تقويم المسجد؟', FR: 'Comment voir le calendrier de la mosquée ?', EN: 'How to see the mosque calendar?' },
+            answer: {
+                AR: 'من معلومات المسجد افتح تبويب "📅 التقويم" لرؤية الأيام الهجرية والميلادية والمناسبات، واضغط على يوم لرؤية أوقات الصلاة فيه.',
+                FR: 'Depuis les informations de la mosquée, ouvrez l\'onglet "📅 Calendrier" pour voir les jours hégiriens/grégoriens et les fêtes, et touchez un jour pour ses horaires.',
+                EN: 'From the mosque information, open the "📅 Calendar" tab to see Hijri/Gregorian days and holidays, and tap a day to see its prayer times.'
+            },
+            action: function () {
+                if (typeof window._ucOpenMosqueInfoModal === 'function') window._ucOpenMosqueInfoModal();
+                setTimeout(function () { if (typeof window._ucMosqueInfoSwitchTab === 'function') window._ucMosqueInfoSwitchTab('calendar'); }, 80);
+            }
+        },
+        {
+            id: 'mosque_call_directions_share',
+            kw: ['الاتصال بالمسجد', 'الاتجاهات الى المسجد', 'مشاركة المسجد', 'بريد المسجد',
+                 'appeler la mosquee', 'itineraire vers la mosquee', 'partager la mosquee', 'email de la mosquee',
+                 'call the mosque', 'directions to mosque', 'share the mosque', 'mosque email'],
+            chip: { AR: 'كيف أتصل بالمسجد أو أحصل على الاتجاهات؟', FR: 'Comment appeler la mosquée ou obtenir l\'itinéraire ?', EN: 'How to call the mosque or get directions?' },
+            answer: {
+                AR: 'من معلومات المسجد (تبويب "ℹ️ معلومات") تجد أزرار الاتصال، الاتجاهات (خرائط)، المشاركة، والبريد الإلكتروني.',
+                FR: 'Dans les informations de la mosquée (onglet "ℹ️ Info"), vous trouverez les boutons Appeler, Itinéraire (carte), Partager, et Email.',
+                EN: 'In the mosque information (Info tab), you\'ll find Call, Directions (map), Share, and Email buttons.'
+            },
+            action: function () { if (typeof window._ucOpenMosqueInfoModal === 'function') window._ucOpenMosqueInfoModal(); }
+        },
+        {
+            id: 'mosque_news_feed',
+            kw: ['اخبار المسجد', 'اشعارات سابقة', 'سجل الاعلانات',
+                 'actualites de la mosquee', 'notifications precedentes', 'historique des annonces',
+                 'mosque news', 'previous notifications', 'announcement history'],
+            chip: { AR: 'أين أرى إشعارات المسجد السابقة؟', FR: 'Où voir les anciennes notifications de la mosquée ?', EN: 'Where to see past mosque notifications?' },
+            answer: {
+                AR: 'من معلومات المسجد افتح تبويب "📰 أخبار" لرؤية آخر الإشعارات المرسلة من إدارة المسجد.',
+                FR: 'Depuis les informations de la mosquée, ouvrez l\'onglet "📰 Actualités" pour voir les dernières notifications envoyées par l\'administration.',
+                EN: 'From the mosque information, open the "📰 News" tab to see the latest notifications sent by the mosque administration.'
+            },
+            action: function () {
+                if (typeof window._ucOpenMosqueInfoModal === 'function') window._ucOpenMosqueInfoModal();
+                setTimeout(function () { if (typeof window._ucMosqueInfoSwitchTab === 'function') window._ucMosqueInfoSwitchTab('news'); }, 80);
+            }
+        },
+        {
+            id: 'import_prayer_times_csv',
+            kw: ['استيراد اوقات الصلاة', 'ملف اوقات مخصص', 'جدول اوقات يدوي',
+                 'importer les horaires', 'fichier horaires personnalise', 'horaires manuels',
+                 'import prayer times', 'custom times file', 'manual schedule'],
+            chip: { AR: 'كيف أستورد جدول أوقات صلاة خاص؟', FR: 'Comment importer mon propre tableau d\'horaires ?', EN: 'How to import my own prayer-times table?' },
+            answer: {
+                AR: 'من "موقع المسجد" فعّل خيار "استخدام الأوقات المستوردة" لاستعمال جدول أوقات مخصص بدلاً من الحساب التلقائي.',
+                FR: 'Depuis "Localisation", activez "Utiliser les horaires importés" pour utiliser un tableau d\'horaires personnalisé au lieu du calcul automatique.',
+                EN: 'From "Location", enable "Use imported times" to use a custom prayer-times table instead of automatic calculation.'
+            },
+            action: function () { _openSection('locationSectionId'); }
+        },
+        {
+            id: 'primary_azan_selection',
+            kw: ['الاذان الرئيسي', 'اي اذان يفعل الاضاءة',
+                 'azan principal', 'quel azan declenche l\'eclairage',
+                 'primary azan', 'which azan triggers lights', 'main azan'],
+            chip: { AR: 'ما هو "الأذان الرئيسي"؟', FR: 'Qu\'est-ce que l\'"azan principal" ?', EN: 'What is the "primary azan"?' },
+            answer: {
+                AR: 'من "ضبط أوقات الأذان والإقامة" تبويب "إضافات" يمكنك تحديد أي أذان يُعتبر "رئيسيًا" (يُستخدم مثلاً لتشغيل الإضاءة الخارجية).',
+                FR: 'Depuis "Ajustement azan/iqama" onglet "Ramadan et heure", choisissez quel azan est considéré "principal" (utilisé par ex. pour déclencher l\'éclairage extérieur).',
+                EN: 'From "Adjust azan/iqama times" tab "Ramadan & time", choose which azan is treated as "primary" (used e.g. to trigger outdoor lighting).'
+            },
+            action: function () { _openAdjustmentsTab('ramadan'); }
+        },
+        {
+            id: 'dohr_before_asr_display',
+            kw: ['اظهار الظهر قبل العصر', 'دقائق قبل العصر',
+                 'afficher dohr avant asr', 'minutes avant asr',
+                 'show dhuhr before asr', 'minutes before asr'],
+            chip: { AR: 'كيف أظهر وقت الظهر قبل العصر؟', FR: 'Comment afficher l\'heure du Dohr avant l\'Asr ?', EN: 'How to show Dhuhr time before Asr?' },
+            answer: {
+                AR: 'من "إضافات" (ضمن ضبط أوقات الأذان) اضبط عدد الدقائق لإظهار وقت الظهر مسبقًا قبل دخول وقت العصر.',
+                FR: 'Depuis "Ramadan et heure" (dans l\'ajustement des horaires), réglez le nombre de minutes pour afficher l\'heure du Dohr avant l\'entrée de l\'Asr.',
+                EN: 'From "Ramadan & time" (in times adjustment), set the number of minutes to show Dhuhr time ahead of Asr\'s entry.'
+            },
+            action: function () { _openAdjustmentsTab('ramadan'); }
+        },
+        {
+            id: 'last_minute_alert_message',
+            kw: ['رسالة الدقيقة الاخيرة', 'تحذير اغلاق الهاتف',
+                 'message derniere minute', 'avertissement fermer telephone',
+                 'last minute message', 'close phone warning'],
+            chip: { AR: 'كيف أغيّر رسالة "من فضلك أغلق هاتفك"؟', FR: 'Comment changer le message "veuillez éteindre votre téléphone" ?', EN: 'How to change the "please close your phone" message?' },
+            answer: {
+                AR: 'من "خيارات العرض" تبويب "تنبيهات" فعّل "رسالة تنبيه في الدقيقة الأخيرة" واضغط عليها لتعديل نصها.',
+                FR: 'Depuis "Options d\'affichage" onglet "Alertes", activez "Message d\'alerte à la dernière minute" et touchez-le pour modifier son texte.',
+                EN: 'From "Display options" tab "Alerts", enable "Last-minute alert message" and tap it to edit its text.'
+            },
+            action: function () { _openOptionsTab('alert'); }
+        },
+        {
+            id: 'mosque_proximity_suggestion',
+            kw: ['مسجد اقرب', 'تنبيه الابتعاد عن المسجد',
+                 'mosquee plus proche', 'alerte eloignement mosquee',
+                 'nearer mosque', 'far from mosque alert'],
+            chip: { AR: 'لماذا يقترح التطبيق مسجدًا أقرب؟', FR: 'Pourquoi l\'appli suggère une mosquée plus proche ?', EN: 'Why does the app suggest a nearer mosque?' },
+            answer: {
+                AR: 'عند الابتعاد كثيرًا عن المسجد الحالي (حسب GPS)، يقترح التطبيق تلقائيًا مسجدًا أقرب. يمكن تعطيل هذا من "إعدادات الهاتف" (شعار التطبيق).',
+                FR: 'Si vous vous éloignez beaucoup de la mosquée actuelle (via GPS), l\'appli suggère automatiquement une mosquée plus proche. Désactivable depuis "Réglages du téléphone" (logo de l\'appli).',
+                EN: 'When you\'re far from the current mosque (via GPS), the app automatically suggests a nearer one. Can be disabled from "Phone settings" (app logo).'
+            },
+            action: function () { if (typeof window._ucOpenSettingsModal === 'function') window._ucOpenSettingsModal(); }
+        },
+        {
+            id: 'hadith_reminder_notification',
+            kw: ['تنبيه حديث قبل الصلاة', 'اشعار حديث نبوي',
+                 'rappel hadith avant priere', 'notification hadith',
+                 'hadith reminder before prayer', 'hadith notification'],
+            chip: { AR: 'كيف أفعّل تنبيه حديث قبل كل صلاة؟', FR: 'Comment activer un rappel de hadith avant chaque prière ?', EN: 'How to enable a hadith reminder before each prayer?' },
+            answer: {
+                AR: 'من "إعدادات الهاتف" (شعار التطبيق) فعّل التنبيه بحديث نبوي صحيح قبل كل صلاة بحوالي 10 دقائق (يعمل حتى لو كان التطبيق مغلقًا).',
+                FR: 'Depuis "Réglages du téléphone" (logo de l\'appli), activez le rappel avec un hadith authentique ~10 min avant chaque prière (fonctionne même appli fermée).',
+                EN: 'From "Phone settings" (app logo), enable the reminder with an authentic hadith ~10 min before each prayer (works even with the app closed).'
+            },
+            action: function () { if (typeof window._ucOpenSettingsModal === 'function') window._ucOpenSettingsModal(); }
+        },
+        {
+            id: 'auto_start_on_boot',
+            kw: ['تشغيل تلقائي عند اعادة التشغيل', 'بدء تلقائي',
+                 'demarrage automatique', 'lancement au redemarrage',
+                 'auto start on boot', 'launch on restart'],
+            chip: { AR: 'كيف أجعل التطبيق يفتح تلقائيًا بعد إعادة التشغيل؟', FR: 'Comment lancer l\'appli automatiquement après redémarrage ?', EN: 'How to auto-launch the app after restart?' },
+            answer: {
+                AR: 'من "إعدادات الهاتف" فعّل "تشغيل تلقائي عند إعادة التشغيل". على الصندوق قد يتطلب أيضًا استثناء التطبيق من توفير البطارية في إعدادات أندرويد.',
+                FR: 'Depuis "Réglages du téléphone", activez "Lancement automatique au redémarrage". Sur une box, il peut aussi falloir exclure l\'appli de l\'économie de batterie dans les réglages Android.',
+                EN: 'From "Phone settings", enable "Auto-start on reboot". On a box, you may also need to exempt the app from battery optimization in Android settings.'
+            },
+            action: function () { if (typeof window._ucOpenSettingsModal === 'function') window._ucOpenSettingsModal(); }
+        },
+        {
+            id: 'azkar_settings',
+            kw: ['الاذكار', 'اذكار الصباح والمساء', 'صورة الاذكار',
+                 'azkar', 'invocations matin soir', 'image azkar',
+                 'azkar', 'morning evening remembrance', 'azkar picture'],
+            chip: { AR: 'كيف أفعّل الأذكار على الشاشة؟', FR: 'Comment activer les azkar à l\'écran ?', EN: 'How to enable azkar on screen?' },
+            answer: {
+                AR: 'من قائمة الإعدادات اختر "الأذكار" لتفعيلها، ضبط تكرارها، صورة الأذكار لمدة 5 دقائق، وأذكار كل صلاة (الصباح، العصر، المغرب، العشاء).',
+                FR: 'Depuis le menu réglages, ouvrez "Azkar" pour les activer, régler la répétition, l\'image azkar de 5 minutes, et les azkar par prière (matin, Asr, Maghreb, Isha).',
+                EN: 'From the settings menu, open "Azkar" to enable them, set repetition, the 5-minute azkar picture, and per-prayer azkar (morning, Asr, Maghreb, Isha).'
+            },
+            action: function () { _openSection('azkarSectionId'); }
+        },
+        {
+            id: 'horizontal_layout_mode',
+            kw: ['تغيير شكل الشاشة الافقية', 'نمط العرض الافقي',
+                 'changer style ecran horizontal', 'mode affichage horizontal',
+                 'change horizontal screen style', 'horizontal display mode'],
+            chip: { AR: 'كيف أغيّر شكل عرض الشاشة الأفقية؟', FR: 'Comment changer le style d\'affichage horizontal ?', EN: 'How to change the horizontal display style?' },
+            answer: {
+                AR: 'من "خيارات العرض" تبويب "نمط العرض" اختر أحد الأنماط الجاهزة (كلاسيكي، مركزي، أخضر إسلامي، ذهبي أنيق...).',
+                FR: 'Depuis "Options d\'affichage" onglet "Style d\'affichage", choisissez un des styles prédéfinis (classique, centré, vert islamique, doré élégant...).',
+                EN: 'From "Display options" tab "Display style", pick one of the preset styles (classic, centered, Islamic green, elegant gold...).'
+            },
+            action: function () { _openOptionsTab('general', 'display'); }
+        },
+        {
+            id: 'shortcuts_gestures_help',
+            kw: ['اختصارات مخفية', 'ايماءات التطبيق', 'سحب لاسفل للتحديث',
+                 'raccourcis caches', 'gestes de l\'application', 'glisser vers le bas pour rafraichir',
+                 'hidden shortcuts', 'app gestures', 'pull to refresh'],
+            chip: { AR: 'هل يوجد اختصارات مخفية في التطبيق؟', FR: 'Y a-t-il des raccourcis cachés dans l\'appli ?', EN: 'Are there hidden shortcuts in the app?' },
+            answer: {
+                AR: 'من قائمة الإعدادات اختر "الاختصارات" لرؤية قائمة بكل الإيماءات المخفية (نقر مزدوج، سحب لأسفل للتحديث...).',
+                FR: 'Depuis le menu réglages, ouvrez "Raccourcis" pour voir la liste de tous les gestes cachés (double-tap, glisser vers le bas pour rafraîchir...).',
+                EN: 'From the settings menu, open "Shortcuts" to see the list of all hidden gestures (double-tap, swipe down to refresh...).'
+            },
+            action: function () { _openSection('shortcutsSectionId'); }
+        },
+        {
+            id: 'app_reset_reload',
+            kw: ['اعادة ضبط التطبيق', 'التطبيق عالق', 'اعادة تحميل', 'مشكلة في التطبيق',
+                 'reinitialiser l\'application', 'appli bloquee', 'recharger', 'probleme d\'affichage',
+                 'reset the app', 'app stuck', 'reload', 'app not working'],
+            chip: { AR: 'التطبيق يبدو عالقًا أو به مشكلة، ماذا أفعل؟', FR: 'L\'appli semble bloquée ou a un problème, que faire ?', EN: 'The app seems stuck or has an issue, what do I do?' },
+            answer: {
+                AR: 'جرّب أولًا زر التحديث اليدوي (أسفل الشاشة)، أو "RELOAD" في أسفل القائمة. كحل أخير "RESET" يمسح كل الإعدادات المحلية ويعيد التطبيق لحالته الأولى (لا يؤثر على مسجدك المسجّل في الخادم).',
+                FR: 'Essayez d\'abord le bouton de rafraîchissement manuel (bas d\'écran), ou "RELOAD" en bas du menu. En dernier recours, "RESET" efface tous les réglages locaux et remet l\'appli à zéro (n\'affecte pas votre mosquée enregistrée côté serveur).',
+                EN: 'Try the manual refresh button first (bottom of screen), or "RELOAD" at the bottom of the menu. As a last resort, "RESET" clears all local settings and restores the app to its initial state (doesn\'t affect your mosque registered server-side).'
+            }
+        },
+        {
+            id: 'fullscreen_kiosk_mode',
+            kw: ['وضع ملء الشاشة', 'اخفاء شريط الحالة',
+                 'mode plein ecran', 'cacher la barre d\'etat',
+                 'fullscreen mode', 'hide status bar', 'kiosk mode'],
+            chip: { AR: 'كيف أشغّل وضع ملء الشاشة؟', FR: 'Comment activer le mode plein écran ?', EN: 'How to enable fullscreen mode?' },
+            answer: {
+                AR: 'من القائمة الرئيسية اضغط أيقونة ملء الشاشة لإخفاء أشرطة النظام والدخول في وضع العرض الكامل.',
+                FR: 'Depuis le menu principal, touchez l\'icône plein écran pour masquer les barres système et passer en affichage plein écran.',
+                EN: 'From the main menu, tap the fullscreen icon to hide system bars and enter full-screen display.'
+            }
+        },
+        {
+            id: 'onboarding_tour_replay',
+            kw: ['اعادة شرح الواجهة', 'جولة تعريفية',
+                 'revoir la visite guidee', 'tutoriel interface',
+                 'replay the tour', 'interface tutorial', 'app guide again'],
+            chip: { AR: 'كيف أعيد مشاهدة شرح الواجهة؟', FR: 'Comment revoir l\'explication de l\'interface ?', EN: 'How to replay the interface tour?' },
+            answer: {
+                AR: 'من أسفل القائمة الرئيسية اضغط "❓ إعادة شرح الواجهة" لإعادة عرض الجولة التعريفية التي تظهر عند أول استخدام.',
+                FR: 'En bas du menu principal, touchez "❓ Revoir l\'explication" pour relancer la visite guidée affichée au premier lancement.',
+                EN: 'At the bottom of the main menu, tap "❓ Replay the tour" to rerun the guided tour shown on first launch.'
+            },
+            action: function () { if (typeof window._ucStartOnboardingTour === 'function') window._ucStartOnboardingTour(); }
+        },
+        {
+            id: 'reciter_manager_download',
+            kw: ['تحميل قارئ', 'اضافة قارئ قران', 'استيراد عبر يو اس بي',
+                 'telecharger un recitateur', 'ajouter un recitateur', 'importer usb',
+                 'download reciter', 'add a reciter', 'import via usb'],
+            chip: { AR: 'كيف أضيف أو أحمّل قارئًا للقرآن؟', FR: 'Comment ajouter ou télécharger un récitateur ?', EN: 'How to add or download a reciter?' },
+            answer: {
+                AR: 'من "⚙ برمجة تلاوة القرآن" اختر "📥 إدارة القرّاء" لتفعيل القرّاء المدمجين، استيراد ملفات عبر USB، أو تصفّح وتحميل قرّاء إضافيين.',
+                FR: 'Depuis "⚙ Programmation du Coran", ouvrez "📥 Gestion des récitateurs" pour activer les récitateurs intégrés, importer des fichiers via USB, ou parcourir/télécharger d\'autres récitateurs.',
+                EN: 'From "⚙ Quran scheduling", open "📥 Reciter manager" to enable built-in reciters, import files via USB, or browse/download additional reciters.'
+            },
+            action: function () { _openSection('techOptionsSectionId'); }
+        },
+        {
+            id: 'voice_sound_reminders',
+            kw: ['تذكير صوتي مخصص', 'رسالة صوتية قبل الاذان',
+                 'rappel vocal personnalise', 'message audio avant azan',
+                 'custom voice reminder', 'audio message before azan'],
+            chip: { AR: 'كيف أضيف تذكيرًا صوتيًا خاصًا بي؟', FR: 'Comment ajouter mon propre rappel vocal ?', EN: 'How to add my own voice reminder?' },
+            answer: {
+                AR: 'من قائمة "التذكيرات" يمكنك برمجة رسائل صوتية مجدولة (مثلاً قبل الفجر بـ15 دقيقة) بصياغة بسيطة.',
+                FR: 'Depuis le menu "Rappels", vous pouvez programmer des messages vocaux planifiés (ex. 15 min avant Fajr) avec une syntaxe simple.',
+                EN: 'From the "Reminders" menu, you can schedule custom voice messages (e.g. 15 min before Fajr) with a simple syntax.'
+            },
+            action: function () { _openSection('soundRemindersSectionId'); }
+        },
+        {
+            id: 'salat_ala_nabi',
+            kw: ['الصلاة على النبي ليلة الجمعة',
+                 'salat ala nabi vendredi soir', 'salat sur le prophete',
+                 'salat ala nabi friday night'],
+            chip: { AR: 'ما هو صوت "الصلاة على النبي" ليلة الجمعة؟', FR: 'Qu\'est-ce que le son "Salat \'ala Nabi" le vendredi soir ?', EN: 'What is the "Salat \'ala Nabi" Friday-night sound?' },
+            answer: {
+                AR: 'يشغّل التطبيق تلقائيًا صوت الصلاة على النبي ﷺ ليلة الجمعة. يمكن تفعيله/تعطيله وضبطه لكل من المغرب والعشاء من "⚙ برمجة تلاوة القرآن".',
+                FR: 'L\'appli joue automatiquement le Salat \'ala Nabi ﷺ le vendredi soir. Activable/désactivable et réglable pour Maghreb et Isha depuis "⚙ Programmation du Coran".',
+                EN: 'The app automatically plays Salat \'ala Nabi ﷺ on Friday night. Can be enabled/disabled and set for Maghreb and Isha from "⚙ Quran scheduling".'
+            },
+            action: function () { _openSection('techOptionsSectionId'); }
+        },
+        {
+            id: 'takbir_dhul_hijja',
+            kw: ['التكبير في عشر ذي الحجة',
+                 'takbir dix jours dhoul hijja',
+                 'takbir first ten days dhul hijjah'],
+            chip: { AR: 'كيف أفعّل التكبير في عشر ذي الحجة؟', FR: 'Comment activer le Takbir des 10 jours de Dhul Hijja ?', EN: 'How to enable Takbir for the 10 days of Dhul Hijjah?' },
+            answer: {
+                AR: 'من "⚙ برمجة تلاوة القرآن" فعّل التكبير التلقائي خلال الأيام العشر الأولى من ذي الحجة، قبل أو بعد أذان المغرب حسب اختيارك.',
+                FR: 'Depuis "⚙ Programmation du Coran", activez le Takbir automatique pendant les 10 premiers jours de Dhul Hijja, avant ou après l\'azan du Maghreb selon votre choix.',
+                EN: 'From "⚙ Quran scheduling", enable automatic Takbir during the first 10 days of Dhul Hijjah, before or after Maghreb azan as you choose.'
+            },
+            action: function () { _openSection('techOptionsSectionId'); }
+        },
+        {
+            id: 'light_programming_hardware',
+            kw: ['البرمجة الضوئية', 'تشغيل الاضاءة عند الاذان', 'تحكم بالمكبر',
+                 'programmation lumiere', 'allumer eclairage a l\'azan', 'controler l\'amplificateur',
+                 'light programming', 'turn on lights at azan', 'control the amplifier'],
+            chip: { AR: 'كيف أربط إضاءة المسجد أو مكبر الصوت بالأذان؟', FR: 'Comment lier l\'éclairage ou l\'ampli de la mosquée à l\'azan ?', EN: 'How to link the mosque\'s lights or speaker to azan?' },
+            answer: {
+                AR: 'من "💡 البرمجة الضوئية" (تتطلب صلاحية إدارة) يمكن ربط المكبرات والمئذنة والمحراب بأحداث الأذان/الإقامة/الشاشة السوداء عبر روابط HTTP.',
+                FR: 'Depuis "💡 Programmation lumineuse" (accès admin requis), reliez amplis, minaret et mihrab aux événements azan/iqama/écran noir via des liens HTTP.',
+                EN: 'From "💡 Light programming" (admin access required), link amplifiers, minaret, and mihrab to azan/iqama/black-screen events via HTTP calls.'
+            },
+            action: function () { _openSection('lightProgrammingSectionId'); }
+        },
+        {
+            id: 'azan_screen_blinking',
+            kw: ['وميض الشاشة عند الاذان',
+                 'clignotement ecran a l\'azan',
+                 'screen blinking at azan', 'screen flash azan'],
+            chip: { AR: 'كيف أفعّل وميض الشاشة عند الأذان؟', FR: 'Comment activer le clignotement de l\'écran à l\'azan ?', EN: 'How to enable screen blinking at azan?' },
+            answer: {
+                AR: 'من "⚙ برمجة تلاوة القرآن" فعّل وميض الشاشة لعدد ثوانٍ محدد عند دخول وقت الأذان.',
+                FR: 'Depuis "⚙ Programmation du Coran", activez le clignotement de l\'écran pendant un nombre de secondes défini à l\'heure de l\'azan.',
+                EN: 'From "⚙ Quran scheduling", enable screen blinking for a set number of seconds at azan time.'
+            },
+            action: function () { _openSection('techOptionsSectionId'); }
+        },
+        {
+            id: 'post_azan_dua',
+            kw: ['شاشة الدعاء بعد الاذان',
+                 'ecran doua apres azan',
+                 'dua screen after azan', 'why dua screen'],
+            chip: { AR: 'لماذا تظهر شاشة دعاء بعد الأذان؟', FR: 'Pourquoi un écran de doua apparaît après l\'azan ?', EN: 'Why does a dua screen appear after azan?' },
+            answer: {
+                AR: 'هذه شاشة تلقائية تعرض دعاء ما بعد الأذان لبضع ثوانٍ، لا حاجة لتفعيلها، تظهر تلقائيًا بعد كل أذان.',
+                FR: 'C\'est un écran automatique qui affiche le doua après l\'azan pendant quelques secondes, aucune activation nécessaire, il apparaît après chaque azan.',
+                EN: 'This is an automatic screen showing the post-azan dua for a few seconds, no activation needed, it appears after every azan.'
+            }
+        },
+        {
+            id: 'app_update_check',
+            kw: ['التحقق من التحديثات', 'تحديث التطبيق', 'نسخة جديدة',
+                 'verifier les mises a jour', 'mettre a jour l\'application', 'nouvelle version',
+                 'check for updates', 'update the app', 'new version'],
+            chip: { AR: 'كيف أتحقق من وجود تحديث جديد؟', FR: 'Comment vérifier une nouvelle mise à jour ?', EN: 'How to check for a new update?' },
+            answer: {
+                AR: 'من القائمة الرئيسية اختر "التحقق من التحديثات". يتحقق التطبيق أيضًا تلقائيًا عند كل تشغيل.',
+                FR: 'Depuis le menu principal, choisissez "Vérifier les mises à jour". L\'appli vérifie aussi automatiquement à chaque lancement.',
+                EN: 'From the main menu, choose "Check for updates". The app also checks automatically on every launch.'
+            },
+            action: function () {
+                if (typeof closeMenuFunction === 'function') closeMenuFunction();
+                if (window.AndroidMobile && typeof window.AndroidMobile.checkForAppUpdate === 'function') window.AndroidMobile.checkForAppUpdate();
+            }
+        },
+        {
+            id: 'notification_history',
+            kw: ['سجل الاشعارات المرسلة',
+                 'historique des notifications envoyees',
+                 'sent notifications log', 'notification history'],
+            chip: { AR: 'أين أرى سجل الإشعارات التي أرسلتها كمشرف؟', FR: 'Où voir l\'historique des notifications envoyées en tant qu\'admin ?', EN: 'Where to see the log of notifications I sent as admin?' },
+            answer: {
+                AR: 'من لوحة الإدارة (بعد فتح القفل بالرمز السري) في معلومات المسجد، اضغط "سجل الإرساليات" لرؤية كل الإشعارات المرسلة وحالتها.',
+                FR: 'Depuis le panneau admin (après déverrouillage par PIN) dans les informations de la mosquée, touchez "Historique" pour voir toutes les notifications envoyées et leur statut.',
+                EN: 'From the admin panel (after PIN unlock) in the mosque information, tap "History" to see every notification sent and its status.'
+            },
+            action: function () { if (typeof window._ucOpenMosqueInfoModal === 'function') window._ucOpenMosqueInfoModal(); }
+        },
+        {
+            id: 'admin_janaza_announcement',
+            kw: ['اعلان جنازة', 'صلاة الجنازة',
+                 'annonce de deces', 'priere de l\'absent',
+                 'janaza announcement', 'funeral prayer'],
+            chip: { AR: 'كيف أعلن عن صلاة جنازة؟', FR: 'Comment annoncer une prière funéraire ?', EN: 'How to announce a funeral prayer?' },
+            answer: {
+                AR: 'من لوحة الإدارة (بعد فتح القفل) اضغط زر "جنازة" لإرسال إعلان صلاة الجنازة لكل متابعي المسجد.',
+                FR: 'Depuis le panneau admin (après déverrouillage), touchez le bouton "Janaza" pour envoyer une annonce de prière funéraire à tous les abonnés de la mosquée.',
+                EN: 'From the admin panel (after unlock), tap the "Janaza" button to send a funeral-prayer announcement to all mosque subscribers.'
+            },
+            action: function () { if (typeof window._ucOpenMosqueInfoModal === 'function') window._ucOpenMosqueInfoModal(); }
+        },
+        {
+            id: 'admin_messaging',
+            kw: ['ارسال رسالة للمصلين', 'اشعار تحديث الاوقات',
+                 'envoyer un message aux fideles', 'notifier mise a jour des horaires',
+                 'send a message to worshippers', 'notify schedule update'],
+            chip: { AR: 'كيف أرسل رسالة أو إشعارًا لمتابعي المسجد؟', FR: 'Comment envoyer un message ou une notification aux abonnés ?', EN: 'How to send a message or notification to subscribers?' },
+            answer: {
+                AR: 'من لوحة الإدارة (بعد فتح القفل) استخدم زر "رسالة" لإرسال نص حر (150 حرفًا كحد أقصى)، أو "إشعار" لتنبيه المتابعين بتحديث الأوقات.',
+                FR: 'Depuis le panneau admin (après déverrouillage), utilisez le bouton "Message" pour un texte libre (150 caractères max), ou "Notifier" pour signaler une mise à jour des horaires.',
+                EN: 'From the admin panel (after unlock), use the "Message" button for free text (150 chars max), or "Notify" to alert subscribers of a schedule update.'
+            },
+            action: function () { if (typeof window._ucOpenMosqueInfoModal === 'function') window._ucOpenMosqueInfoModal(); }
+        },
+        {
+            id: 'admin_pin_lock',
+            kw: ['نسيت رمز بين', 'فتح لوحة الادارة', 'كيف افتح القفل',
+                 'mot de passe pin oublie', 'ouvrir le panneau admin', 'comment deverrouiller',
+                 'forgot pin code', 'unlock admin panel', 'how to unlock'],
+            chip: { AR: 'نسيت رمز PIN الخاص بالإدارة، ماذا أفعل؟', FR: 'J\'ai oublié le code PIN admin, que faire ?', EN: 'I forgot the admin PIN, what do I do?' },
+            answer: {
+                AR: 'تواصل مع المطوّر عبر tawkit.net@gmail.com لإعادة ضبط رمز PIN، لا يمكن استرجاعه من داخل التطبيق لأسباب أمنية.',
+                FR: 'Contactez le développeur via tawkit.net@gmail.com pour réinitialiser le code PIN, il ne peut pas être récupéré depuis l\'application pour des raisons de sécurité.',
+                EN: 'Contact the developer at tawkit.net@gmail.com to reset the PIN, it cannot be recovered from within the app for security reasons.'
+            }
+        },
+        {
+            id: 'remote_config_sync',
+            kw: ['تغيرت الاعدادات من تلقاء نفسها', 'تحديث تلقائي للاعدادات',
+                 'reglages changes tout seuls', 'synchronisation automatique',
+                 'settings changed by themselves', 'automatic sync'],
+            chip: { AR: 'لماذا تتغير الإعدادات على الصندوق من تلقاء نفسها أحيانًا؟', FR: 'Pourquoi les réglages de la box changent parfois tout seuls ?', EN: 'Why do the box\'s settings sometimes change by themselves?' },
+            answer: {
+                AR: 'هذا طبيعي: الصندوق يتزامن دوريًا مع الإعدادات التي يدفعها مشرف المسجد عن بعد من هاتفه (كل ~18 ثانية كحد أقصى).',
+                FR: 'C\'est normal : la box se synchronise périodiquement avec les réglages poussés à distance par l\'admin de la mosquée depuis son téléphone (au plus toutes les ~18s).',
+                EN: 'This is normal: the box periodically syncs with settings pushed remotely by the mosque admin from their phone (at most every ~18s).'
+            }
+        },
+        {
+            id: 'home_screen_widget',
+            kw: ['ويدجت الشاشة الرئيسية', 'اداة اوقات الصلاة على الهاتف',
+                 'widget ecran d\'accueil', 'gadget horaires de priere',
+                 'home screen widget', 'prayer times widget'],
+            chip: { AR: 'هل يوجد أداة (widget) لأوقات الصلاة على الشاشة الرئيسية؟', FR: 'Y a-t-il un widget des horaires sur l\'écran d\'accueil ?', EN: 'Is there a home-screen widget for prayer times?' },
+            answer: {
+                AR: 'نعم، اضغط مطولًا على الشاشة الرئيسية للهاتف ثم اختر "أدوات" (Widgets) وابحث عن Tawkit لإضافة أداة أوقات الصلاة والعد التنازلي.',
+                FR: 'Oui, appuyez longuement sur l\'écran d\'accueil du téléphone puis "Widgets" et cherchez Tawkit pour ajouter le widget des horaires/compte à rebours.',
+                EN: 'Yes, long-press the phone\'s home screen then "Widgets" and look for Tawkit to add the prayer-times/countdown widget.'
+            }
+        },
+        {
+            id: 'permissions_troubleshooting',
+            kw: ['الوضع الصامت لا يعمل', 'التنبيهات لا تعمل', 'صلاحيات مفقودة',
+                 'mode silencieux ne fonctionne pas', 'alarmes ne marchent pas', 'permissions manquantes',
+                 'silent mode not working', 'alarms not working', 'missing permissions'],
+            chip: { AR: 'لماذا لا يعمل الوضع الصامت التلقائي أو التنبيهات؟', FR: 'Pourquoi le mode silencieux auto ou les alertes ne fonctionnent pas ?', EN: 'Why doesn\'t auto-silent mode or alerts work?' },
+            answer: {
+                AR: 'تأكد من منح التطبيق صلاحية "عدم الإزعاج" (Do Not Disturb) وصلاحية "التنبيهات الدقيقة" (Exact alarms)، واستثنائه من توفير البطارية في إعدادات أندرويد.',
+                FR: 'Vérifiez que l\'appli a bien la permission "Ne pas déranger" et "Alarmes exactes", et qu\'elle est exclue de l\'économie de batterie dans les réglages Android.',
+                EN: 'Make sure the app has "Do Not Disturb" access and "Exact alarms" permission, and is exempted from battery optimization in Android settings.'
+            }
+        }
+    );
+
+    if (!isPhone) {
+        INTENTS.push({
+            id: 'box_admin_access_landscape',
+            kw: ['ادارة المسجد على الصندوق', 'قفل الادارة افقي',
+                 'administration sur la box', 'verrou admin horizontal',
+                 'admin on the box', 'landscape admin lock'],
+            chip: { AR: 'كيف أصل للوحة الإدارة على شاشة الصندوق مباشرة؟', FR: 'Comment accéder au panneau admin directement sur la box ?', EN: 'How to access the admin panel directly on the box?' },
+            answer: {
+                AR: 'من القائمة الرئيسية على الصندوق، اختر "🔒 إدارة المسجد" للوصول مباشرة إلى نفس لوحة الإدارة (يتطلب رمز PIN).',
+                FR: 'Depuis le menu principal sur la box, choisissez "🔒 Administrer la mosquée" pour accéder directement au même panneau admin (code PIN requis).',
+                EN: 'From the main menu on the box, choose "🔒 Administer the mosque" to access the same admin panel directly (PIN required).'
+            }
+        });
+    }
+
     // ── Correspondance floue (normalisation + score de recouvrement) ───────
     var _DIACRITICS = /[ً-ْ]/g;
     var _PUNCT = /[.,!?؟،؛:"'«»()\[\]{}\-_/\\|]+/g;
+    // Accents FR/EN (é/è/ê/à/î/ï/ô/û/ù/ç...) -- absent avant (retour
+    // utilisateur 30/07/2026 : "reglages" ne matchait pas "réglages"). Passe
+    // par NFD (décompose lettre + accent en 2 codepoints) puis retire les
+    // marques diacritiques Unicode (̀-ͯ) -- couvre tous les accents
+    // latins d'un coup, plus robuste qu'une table de correspondance manuelle.
+    function _stripAccents(s) {
+        return s.normalize ? s.normalize('NFD').replace(/[̀-ͯ]/g, '') : s;
+    }
     function _norm(s) {
-        return String(s || '')
-            .toLowerCase()
+        return _stripAccents(String(s || '').toLowerCase())
             .replace(/[إأآا]/g, 'ا')
             .replace(/ى/g, 'ي')
             .replace(/ة/g, 'ه')
@@ -26691,6 +27131,16 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             .trim();
     }
     function _words(normStr) { return normStr ? normStr.split(' ').filter(Boolean) : []; }
+    // Tolérance légère aux variations morphologiques simples (pluriels FR/EN,
+    // conjugaisons courantes en -er/-é) : compare aussi les mots tronqués à
+    // leurs 4 premiers caractères si la comparaison exacte échoue -- couvre
+    // "réglage"/"réglages", "activer"/"activé"/"activation" sans faux
+    // positifs excessifs (4 caractères minimum, mots courts inchangés).
+    function _wordMatches(a, b) {
+        if (a === b) return true;
+        if (a.length >= 5 && b.length >= 5 && a.slice(0, 4) === b.slice(0, 4)) return true;
+        return false;
+    }
 
     function _scoreIntent(queryNorm, queryWords, intent) {
         var best = 0;
@@ -26701,7 +27151,9 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             if (!kwWords.length) continue;
             var hits = 0;
             for (var j = 0; j < kwWords.length; j++) {
-                if (queryWords.indexOf(kwWords[j]) !== -1) hits++;
+                for (var m = 0; m < queryWords.length; m++) {
+                    if (_wordMatches(queryWords[m], kwWords[j])) { hits++; break; }
+                }
             }
             var score = hits / kwWords.length;
             if (queryNorm.indexOf(kwNorm) !== -1) score = Math.max(score, 0.95);
@@ -26811,6 +27263,33 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     }
 
     var MATCH_THRESHOLD = 0.5;
+    // Marge de proximité : si le 2e (voire 3e) score est à moins de ceci du
+    // meilleur, la question est ambiguë entre plusieurs sujets plutôt que de
+    // trancher au hasard pour le meilleur score -- mieux vaut demander
+    // (retour utilisateur 30/07/2026 : "sois plus intelligent... propose des
+    // options proches et demande à l'utilisateur de choisir").
+    var DISAMBIGUATION_MARGIN = 0.15;
+
+    // Variante de _addSuggestionChips : répond DIRECTEMENT à l'intention
+    // choisie plutôt que de refaire correspondre le libellé de la puce comme
+    // une nouvelle question -- plus fiable pour une clarification explicite
+    // (le libellé court n'est pas garanti de re-matcher au-dessus du seuil).
+    function _addDisambiguationChips(intents) {
+        var wrap = document.createElement('div');
+        wrap.className = 'ucAssistChipsWrap';
+        intents.forEach(function (intent) {
+            var chip = document.createElement('span');
+            chip.className = 'ucAssistChip';
+            chip.textContent = _tq(intent);
+            chip.addEventListener('click', function () {
+                _addBubble(_tq(intent), 'user');
+                _addAnswerBubble(intent);
+            });
+            wrap.appendChild(chip);
+        });
+        _thread.appendChild(wrap);
+        _scrollThreadDown();
+    }
 
     function _ask(query) {
         query = String(query || '').trim();
@@ -26819,7 +27298,16 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
         var ranked = _rankIntents(query);
         if (ranked.length && ranked[0].score >= MATCH_THRESHOLD) {
-            _addAnswerBubble(ranked[0].intent);
+            var close = ranked.filter(function (r) {
+                return r.intent.id !== ranked[0].intent.id && (ranked[0].score - r.score) <= DISAMBIGUATION_MARGIN;
+            });
+            if (close.length) {
+                _addBubble(_t('didYouMean'), 'bot');
+                var candidates = [ranked[0]].concat(close.slice(0, 2)).map(function (r) { return r.intent; });
+                _addDisambiguationChips(candidates);
+            } else {
+                _addAnswerBubble(ranked[0].intent);
+            }
         } else {
             _addBubble(_t('noMatch'), 'bot');
             var top3 = ranked.slice(0, 3).map(function (r) { return r.intent; });

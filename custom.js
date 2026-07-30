@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.14';
+var CUSTOM_APP_VERSION = '12.15';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -20823,10 +20823,23 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     // Supabase associée (contrairement à ucConfigSync), ce sont des commandes
     // ponctuelles "fais ça maintenant", pas des changements de configuration.
     window.addEventListener('ucRemoteAction', function (e) {
+        // Garde box-only : ces commandes (Coran, aperçu azan, éclairage,
+        // rechargement) n'ont de sens QUE sur la box physique -- si jamais le
+        // push atteignait aussi le téléphone d'un simple utilisateur de la
+        // mosquée (ciblage côté serveur hors de ce dépôt), il ne doit rien se
+        // passer sur son appareil (retour utilisateur 30/07/2026).
+        var _isBox = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && window.AndroidMobile.isAndroidTv());
+        if (!_isBox) { _L('REMOTE_ACTION', 'SKIP', { reason: 'not_box' }); return; }
+
         var action = (e.detail && e.detail.action) || '';
         var target = (e.detail && e.detail.target) || '';
         _L('REMOTE_ACTION', 'FIRE', { action: action, target: target });
 
+        if (action === 'reload') {
+            location.reload();
+            return;
+        }
         if (action === 'quran_toggle') {
             var qAudio = document.getElementById('quranAudioPlayer');
             if (qAudio) {
@@ -25012,7 +25025,14 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         document.getElementById('ucRemoteAdminClose').addEventListener('click', _close);
         overlay.addEventListener('click', function (e) { if (e.target === overlay) _close(); });
         document.getElementById('ucRACancelBtn').addEventListener('click', _close);
-        document.getElementById('ucRAReloadBtn').addEventListener('click', function () { _submit(true); });
+        // "Recharger la box" n'a rien à modifier en base -- passe par le canal
+        // remote_action (push silencieux, aucune écriture Supabase), au lieu de
+        // remote_config_update (config: {}) qui écrivait dans `mosques` et
+        // déclenchait la notification "horaires mis à jour" envoyée à TOUS les
+        // abonnés de la mosquée, pas seulement la box visée (retour utilisateur
+        // 30/07/2026). Combiné à la garde box-only du listener 'ucRemoteAction'
+        // plus haut : aucun téléphone ne peut plus réagir à cette commande.
+        document.getElementById('ucRAReloadBtn').addEventListener('click', function () { _sendRemoteAction('reload', null); });
         document.getElementById('ucRASendBtn').addEventListener('click', function () { _submit(false); });
         // Délégation unique : la grille Coran est réécrite en entier à chaque
         // _renderQuranTable() (cellules jour togglées), pas besoin de

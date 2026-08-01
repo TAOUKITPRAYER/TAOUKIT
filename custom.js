@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.60';
+var CUSTOM_APP_VERSION = '12.61';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1531,6 +1531,23 @@ var _ucActiveIqamaSeqEpoch = -1;
                 window.hideElementFunction('fullScreenCounterContainerVertical');
                 window.hideElementFunction('fullScreenCounterContainerHorizontal');
             }
+            // RÉCIDIVE DU MÊME BUG (téléphone, 01/08/2026, retour utilisateur
+            // "figé sur le compteur 40s") : le compteur s'était figé PENDANT
+            // la "dernière minute" (remainingSeconds < 60, JS_DATA.
+            // ucCounterLastMinute==1) -- m2body.js bascule alors l'affichage
+            // sur secondCounterContainer* (un chiffre géant, secondes seules,
+            // cf. clockTickFunction ~L2018-2023), DISTINCT de iqamaCounterContainer*
+            // et fullScreenCounterContainer* traités ci-dessus. Le nettoyage
+            // normal du coeur (remainingSeconds==0, m2body.js ~L2038-2039)
+            // masque bien secondCounterContainer*, mais ce nettoyage-ci ne le
+            // faisait jamais -- si l'interval meurt AVANT d'atteindre 0 (ce
+            // qui a été constaté ici), ce chiffre reste affiché indéfiniment,
+            // survivant à tous les resyncs suivants (isIqamaCounterActive
+            // repasse bien à false, mais rien ne masque plus l'élément déjà
+            // visible ni ne réinitialise isLastMinuteCounter).
+            window.hideElementFunction('secondCounterContainerVertical');
+            window.hideElementFunction('secondCounterContainerHorizontal');
+            if (typeof isLastMinuteCounter !== 'undefined') isLastMinuteCounter = false;
         }
         // cf. _fixAyaPositionInCounter (plus bas dans le fichier) : sans ce
         // reset explicite, le verset sous l'horloge peut rester invisible en

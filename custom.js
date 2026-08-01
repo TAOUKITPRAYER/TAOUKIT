@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.61';
+var CUSTOM_APP_VERSION = '12.62';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1394,6 +1394,92 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
 var _ucIqamaSeqEpoch = 0;
 var _ucActiveIqamaSeqEpoch = -1;
 
+// ── FERMETURE CANONIQUE DE TOUTES LES FORMES DU COMPTEUR IQAMA ────────────
+// Point d'entree UNIQUE (02/08/2026, suite audit) : avant ce refactor,
+// _ucResyncPrayerSequence (juste en dessous) et _cancelStaleCounter
+// (_installCounterDriftCorrection, plus bas dans ce fichier) avaient chacune
+// leur PROPRE copie de cette liste de nettoyage, maintenue separement.
+// Consequence concrete constatee sur 5 bugs distincts entre le 25/07 et le
+// 01/08/2026 (compteur invisible, compteur fige "00:40", puis fige "40" sur
+// secondCounterContainer...) : chaque nouveau symptome n'etait corrige que
+// dans UNE des deux copies -- au moment d'ecrire ce refactor, le fix
+// secondCounterContainer/isLastMinuteCounter du 01/08 (ajoute dans
+// _ucResyncPrayerSequence) manquait encore dans _cancelStaleCounter, sans
+// qu'aucun rapport ne l'ait signale (meme bug, mais uniquement declenchable
+// par le chemin drift-correction, jamais encore observe en pratique par ce
+// chemin precis). Toute liste de nettoyage dupliquee finit par diverger --
+// ceci est desormais LA seule fonction qui sait fermer un compteur perime.
+window._ucForceCloseAllCounterOverlays = function () {
+    if (typeof window.hideElementFunction === 'function') {
+        window.hideElementFunction('iqamaCounterContainerVertical');
+        window.hideElementFunction('iqamaCounterContainerHorizontal');
+        // closeFullScreenCounterFunction() (coeur) plutot qu'un hide partiel :
+        // remet aussi --izBigCNTR a 1 (sinon le tableau standard des prieres
+        // reste invisible en permanence, cf. style1/2.css opacity:var(--izBigCNTR)).
+        if (typeof window.closeFullScreenCounterFunction === 'function') {
+            window.closeFullScreenCounterFunction();
+        } else {
+            window.hideElementFunction('fullScreenCounterContainerVertical');
+            window.hideElementFunction('fullScreenCounterContainerHorizontal');
+        }
+        // secondCounterContainer* : chiffre geant "derniere minute" (secondes
+        // seules, cf. clockTickFunction ~L2018-2023, coeur), DISTINCT des deux
+        // conteneurs ci-dessus -- angle mort trouve le 01/08/2026 (compteur
+        // fige sur "40" survivant a tous les resyncs suivants).
+        window.hideElementFunction('secondCounterContainerVertical');
+        window.hideElementFunction('secondCounterContainerHorizontal');
+    }
+    // Identifiants NUS obligatoires -- ce sont des `let` top-level de
+    // m2body.js (coeur), PAS des proprietes de window : window.isIqamaCounterActive
+    // (ou window.isLastMinuteCounter) serait une propriete separee et INERTE,
+    // sans aucun effet sur le vrai compteur que la boucle de tick lit en
+    // identifiant nu (confirme par test direct, cf. discussion 27/07/2026).
+    if (typeof isIqamaCounterActive !== 'undefined') isIqamaCounterActive = false;
+    if (typeof isLastMinuteCounter !== 'undefined') isLastMinuteCounter = false;
+    if (typeof window._ucResetAyaPositionGuard === 'function') window._ucResetAyaPositionGuard();
+    // Popup texte iqama (verset/hadith) : masque directement via la MEME
+    // classe que hideElementFunction() (m2body.js) plutot que via
+    // window.hideElementFunction() -- cet appel passerait par l'extension
+    // "+5s" (custom.js, plus bas) qui retarderait ce masquage de 5s de plus.
+    ['iqamaPopupVertical', 'iqamaPopupHorizontal'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.className = 'hiddenClass';
+    });
+    if (typeof window.resetPrayerRowsStyleFunction === 'function') window.resetPrayerRowsStyleFunction();
+};
+
+// ── GARDE-FOU PERIODIQUE : aucune forme du compteur ne doit rester visible
+// sans que isIqamaCounterActive ne le justifie ───────────────────────────
+// Meme principe que _installMiniOverlayInvariantGuard (28/07/2026, plus bas
+// dans ce fichier) et le meme constat qui a motive le refactor ci-dessus :
+// corriger au cas par cas (un resync ici, un drift-check la) oublie toujours
+// un chemin. Plutot que d'esperer avoir couvert tous les chemins possibles,
+// ce garde-fou impose l'invariant directement, en balayage periodique,
+// independamment de la cause exacte de l'incoherence -- absorbe non
+// seulement les bugs deja rencontres mais toute variante future du meme
+// probleme (nouvel element visuel lie au compteur qu'on ajouterait plus
+// tard sans penser a l'ajouter partout).
+(function _installCounterOverlayInvariantGuard() {
+    var CHECK_MS = 4000;
+    var _ids = [
+        'iqamaCounterContainerVertical', 'iqamaCounterContainerHorizontal',
+        'fullScreenCounterContainerVertical', 'fullScreenCounterContainerHorizontal',
+        'secondCounterContainerVertical', 'secondCounterContainerHorizontal'
+    ];
+    function _sweep() {
+        if (typeof isIqamaCounterActive !== 'undefined' && isIqamaCounterActive) return;
+        var stuck = _ids.filter(function (id) {
+            var el = document.getElementById(id);
+            return el && el.className !== 'hiddenClass';
+        });
+        if (!stuck.length) return;
+        _L('CTR', 'COUNTER_OVERLAY_STUCK_CORRECTED', { ids: stuck.join(',') });
+        window._ucForceCloseAllCounterOverlays();
+    }
+    setInterval(_sweep, CHECK_MS);
+    _L('CUSTOM', 'INIT', { item: 'counterOverlayInvariantGuard' });
+})();
+
 (function _installResyncOnResume() {
     var HIDDEN_THRESHOLD_MS = 5000; // ignorer les coups d'oeil rapides (volet de notifications, etc.)
     var _ucHiddenAt = null;
@@ -1495,79 +1581,11 @@ var _ucActiveIqamaSeqEpoch = -1;
             var _ptEl = document.getElementById(id);
             if (_ptEl) _ptEl.style.visibility = 'visible';
         });
-        if (typeof window.hideElementFunction === 'function') {
-            // BUG MAJEUR (retour utilisateur, 28/07/2026, téléphone -- compte
-            // à rebours figé sur une valeur type "00:40" après un retour en
-            // premier plan, y compris largement après l'heure réelle) : ce
-            // masquage ne couvrait QUE le compteur compact
-            // (iqamaCounterContainer*), jamais le compteur PLEIN ÉCRAN
-            // (fullScreenCounterContainer*, actif dès que
-            // JS_DATA.ucFullScreenCounter=1 -- constaté actif même sur
-            // téléphone en mode portrait, pas réservé aux boîtiers TV). Sur
-            // tout appareil en mode plein écran, ce nettoyage ne faisait donc
-            // RIEN de visible : exactement le symptôme signalé, et la raison
-            // pour laquelle chaque tentative de correction précédente
-            // (bug #26, récidive 27/07) semblait résolue en test puis
-            // revenait -- elle ne touchait jamais l'élément réellement
-            // affiché chez cet utilisateur.
-            window.hideElementFunction('iqamaCounterContainerVertical');
-            window.hideElementFunction('iqamaCounterContainerHorizontal');
-            // RÉGRESSION introduite par le fix ci-dessus (même jour) : masquer
-            // fullScreenCounterContainer* directement via hideElementFunction()
-            // ne fait QUE ça -- contrairement à closeFullScreenCounterFunction()
-            // (coeur), ça ne remet PAS --izBigCNTR (variable CSS) à 1. Or le
-            // tableau STANDARD des prières (#prayerTimesContainerVertical/
-            // Horizontal, style1/2.css) a "opacity: var(--izBigCNTR)" --
-            // laissée à 0 (mise par showIqamaCounter() à l'activation du mode
-            // plein écran), le tableau standard reste alors invisible en
-            // PERMANENCE (page vide, seule l'horloge reste visible), constaté
-            // en test réel juste après le fix précédent. closeFullScreenCounterFunction()
-            // fait cette remise à 1 (+ reset isFullScreenCounterMode + repositionne
-            // aya/message) -- c'est la fonction coeur complète à appeler, pas
-            // un hide partiel réinventé.
-            if (typeof window.closeFullScreenCounterFunction === 'function') {
-                window.closeFullScreenCounterFunction();
-            } else {
-                window.hideElementFunction('fullScreenCounterContainerVertical');
-                window.hideElementFunction('fullScreenCounterContainerHorizontal');
-            }
-            // RÉCIDIVE DU MÊME BUG (téléphone, 01/08/2026, retour utilisateur
-            // "figé sur le compteur 40s") : le compteur s'était figé PENDANT
-            // la "dernière minute" (remainingSeconds < 60, JS_DATA.
-            // ucCounterLastMinute==1) -- m2body.js bascule alors l'affichage
-            // sur secondCounterContainer* (un chiffre géant, secondes seules,
-            // cf. clockTickFunction ~L2018-2023), DISTINCT de iqamaCounterContainer*
-            // et fullScreenCounterContainer* traités ci-dessus. Le nettoyage
-            // normal du coeur (remainingSeconds==0, m2body.js ~L2038-2039)
-            // masque bien secondCounterContainer*, mais ce nettoyage-ci ne le
-            // faisait jamais -- si l'interval meurt AVANT d'atteindre 0 (ce
-            // qui a été constaté ici), ce chiffre reste affiché indéfiniment,
-            // survivant à tous les resyncs suivants (isIqamaCounterActive
-            // repasse bien à false, mais rien ne masque plus l'élément déjà
-            // visible ni ne réinitialise isLastMinuteCounter).
-            window.hideElementFunction('secondCounterContainerVertical');
-            window.hideElementFunction('secondCounterContainerHorizontal');
-            if (typeof isLastMinuteCounter !== 'undefined') isLastMinuteCounter = false;
-        }
-        // cf. _fixAyaPositionInCounter (plus bas dans le fichier) : sans ce
-        // reset explicite, le verset sous l'horloge peut rester invisible en
-        // permanence apres ce resync si l'app etait backgroundee pendant un
-        // countdown (son propre flag interne ne se remet jamais a jour ici,
-        // faute d'UC_EVT.IQAMA_TIME/AZAN_TIME emis par ce nettoyage direct).
-        if (typeof window._ucResetAyaPositionGuard === 'function') window._ucResetAyaPositionGuard();
-        // Popup texte iqama (verset/hadith) : masque directement via la MEME
-        // classe que hideElementFunction() (m2body.js) plutot que via
-        // window.hideElementFunction() -- cet appel passerait par l'extension
-        // "+5s" (custom.js, plus bas) qui RETARDERAIT ce masquage de 5s de
-        // plus au lieu de l'appliquer immediatement.
-        ['iqamaPopupVertical', 'iqamaPopupHorizontal'].forEach(function(id) {
-            var el = document.getElementById(id);
-            if (el) el.className = 'hiddenClass';
-        });
-        // Identifiant NU obligatoire -- cf. commentaire a STATE_BEFORE plus
-        // haut : window.isIqamaCounterActive est une propriete separee et
-        // inerte, sans effet sur le vrai compteur (let top-level, m2body.js).
-        isIqamaCounterActive = false;
+        // Ferme toutes les formes du compteur (compact, plein ecran, "derniere
+        // minute") + reinitialise les flags associes -- fonction canonique
+        // unique, cf. son commentaire (juste au-dessus de _installResyncOnResume)
+        // pour l'historique des bugs qui ont motive ce regroupement.
+        window._ucForceCloseAllCounterOverlays();
         // Doua post-azan (custom.js _installPostAzanDoua) : son propre timer
         // de fermeture (20s) est lui aussi suspendu en arriere-plan — meme
         // logique que les surcouches core ci-dessus.
@@ -8760,40 +8778,11 @@ function _doAudioUnlock() {
 
     function _cancelStaleCounter(hiddenSec) {
         _L('CTR', 'CANCEL_STALE', { hiddenSec: Math.round(hiddenSec), remAtHide: _remAtHide });
-        // Identifiant NU obligatoire -- window.isIqamaCounterActive est une
-        // propriete separee et inerte (cf. commentaire dans
-        // _ucResyncPrayerSequence), sans aucun effet sur le vrai compteur.
-        isIqamaCounterActive = false;
-        if (typeof window.hideElementFunction === 'function') {
-            // Même angle mort que _ucResyncPrayerSequence (cf. son commentaire) :
-            // ne couvrait que le compteur compact, jamais le plein écran
-            // (fullScreenCounterContainer*, actif y compris sur téléphone en
-            // portrait dès que JS_DATA.ucFullScreenCounter=1) -- élément
-            // réellement affiché lors du signalement (28/07/2026).
-            window.hideElementFunction('iqamaCounterContainerVertical');
-            window.hideElementFunction('iqamaCounterContainerHorizontal');
-            // RÉGRESSION du fix ci-dessus (même jour, cf. commentaire identique
-            // dans _ucResyncPrayerSequence) : un hide direct ne remet pas
-            // --izBigCNTR à 1, laissant le tableau STANDARD des prières
-            // (opacity: var(--izBigCNTR), style1/2.css) invisible en
-            // permanence. closeFullScreenCounterFunction() (coeur) fait le
-            // nettoyage complet -- à utiliser, pas un hide partiel réinventé.
-            if (typeof window.closeFullScreenCounterFunction === 'function') {
-                window.closeFullScreenCounterFunction();
-            } else {
-                window.hideElementFunction('fullScreenCounterContainerVertical');
-                window.hideElementFunction('fullScreenCounterContainerHorizontal');
-            }
-        }
-        // cf. _ucResyncPrayerSequence (meme correctif, meme raison) et
-        // _fixAyaPositionInCounter : ce nettoyage direct ne passe pas non plus
-        // par UC_EVT.IQAMA_TIME/AZAN_TIME.
-        if (typeof window._ucResetAyaPositionGuard === 'function') window._ucResetAyaPositionGuard();
-        ['iqamaPopupVertical', 'iqamaPopupHorizontal'].forEach(function (id) {
-            var el = document.getElementById(id);
-            if (el) el.className = 'hiddenClass';
-        });
-        if (typeof window.resetPrayerRowsStyleFunction === 'function') window.resetPrayerRowsStyleFunction();
+        // Fonction canonique unique (cf. son commentaire, juste avant
+        // _installResyncOnResume) -- evite que ce chemin diverge a nouveau de
+        // _ucResyncPrayerSequence comme constate le 01/08/2026 (fix
+        // secondCounterContainer ajoute la-bas, manquant ici).
+        window._ucForceCloseAllCounterOverlays();
         _startTime = -1;
         _startRem  = -1;
     }

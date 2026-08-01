@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.17';
+var CUSTOM_APP_VERSION = '12.60';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -415,6 +415,14 @@ const JS_CUSTOM_DEFAULTS = {
     // hadith authentique différent chaque jour par prière (rotation, cf.
     // ucHadithIdx{PRAYER} ci-dessous), toujours en arabe.
     ucHadithReminderEnabled:     0,
+    // Vérification automatique quotidienne (heure réglable, ucAutoDailyUpdateTime)
+    // de mise à jour silencieuse (box uniquement, cf. ucMosqueInfoAdminSection /
+    // MainActivity.setAutoDailyUpdateEnabled) -- remplace le push OneSignal
+    // comme mécanisme de déclenchement de production, celui-ci s'étant révélé
+    // peu fiable sur certains boîtiers TV bas de gamme (best-effort par
+    // nature, cf. discussion 31/07/2026). Activé par défaut (1/08/2026).
+    ucAutoDailyUpdateEnabled:    1,
+    ucAutoDailyUpdateTime:       '01:00',
     ucHadithIdxFAJR:             0,
     ucHadithIdxDOHR:             0,
     ucHadithIdxASSR:             0,
@@ -1070,6 +1078,28 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
                || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
     var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
                || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+    var CHECK_TIMEOUT_MS = 6000;
+
+    // Sonde générique : GET (jamais HEAD -- moins fiable via certains
+    // proxys/CDN, cf. retour utilisateur 01/08/2026 : étoile rouge alors que
+    // la connexion était bonne) avec timeout explicite (AbortController) --
+    // sans lui, un hôte qui ne répond pas peut faire pendre le fetch bien
+    // au-delà de l'intervalle de re-sondage du core.
+    function _probe(url, opts) {
+        var hasAbort = (typeof AbortController !== 'undefined');
+        var controller = hasAbort ? new AbortController() : null;
+        var timer = hasAbort ? setTimeout(function () { controller.abort(); }, CHECK_TIMEOUT_MS) : null;
+        var fetchOpts = { method: (opts && opts.method) || 'GET', headers: (opts && opts.headers) || {} };
+        if (hasAbort) fetchOpts.signal = controller.signal;
+        return fetch(url, fetchOpts).then(function (r) {
+            if (timer) clearTimeout(timer);
+            return !!r.ok;
+        }).catch(function () {
+            if (timer) clearTimeout(timer);
+            return false;
+        });
+    }
+
     window.checkInternetConnectionFunction = function() {
         if (JS_DATA.ucVerifyInternet == 0) return;
         if (!window.navigator.onLine) {
@@ -1077,19 +1107,24 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
             setInternetStatus(false);
             return;
         }
-        try {
-            fetch(_SB_URL + '/rest/v1/mosques?select=mosque_id&limit=1', {
-                method: 'HEAD',
-                headers: { apikey: _SB_KEY, Authorization: 'Bearer ' + _SB_KEY }
-            })
-            .then(function(response) { setInternetStatus(response.ok); })
-            .catch(function() { dolog('error_catch_fetch'); setInternetStatus(false); });
-        } catch (e) {
-            dolog('error_catch_fetch');
-            setInternetStatus(false);
-        }
+        // Un seul fournisseur peut ponctuellement échouer (incident côté
+        // Supabase, pile réseau/TLS d'un WebView ancien sur certains
+        // boîtiers...) sans que la connexion internet soit réellement
+        // absente -- Supabase d'abord (déjà utilisé partout ailleurs dans ce
+        // fichier), GitHub en secours seulement si Supabase échoue. "Hors
+        // ligne" uniquement si les deux échouent.
+        _probe(_SB_URL + '/rest/v1/mosques?select=mosque_id&limit=1', {
+            headers: { apikey: _SB_KEY, Authorization: 'Bearer ' + _SB_KEY }
+        }).then(function (ok) {
+            if (ok) { setInternetStatus(true); return; }
+            dolog('supabase_probe_failed_trying_github');
+            _probe('https://api.github.com/').then(function (ok2) {
+                if (!ok2) dolog('github_probe_failed_too');
+                setInternetStatus(ok2);
+            });
+        });
     };
-    console.log('[CFG] patch checkInternetConnectionFunction (Supabase) installé');
+    console.log('[CFG] patch checkInternetConnectionFunction (Supabase+GitHub, GET, timeout) installé');
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -10877,6 +10912,12 @@ function forceHijriSyncFunction() {
         });
     }
 
+    // Exposé pour déclenchement à distance (cf. action 'send_debug' du listener
+    // 'ucRemoteAction' plus bas) -- même fonction que le clic sur
+    // debugConsoleSendBtn, sans dépendre de l'overlay ouvert (_dbgLogs est déjà
+    // alimenté en continu par _capture() ci-dessous, overlay visible ou non).
+    window._ucSendDebugReport = _sendReport;
+
     // ── Effacer l'historique natif persistant (NativeEventLog cote Android) ──
     // N'efface PAS les logs JS deja affiches dans cette session (_dbgLogs) :
     // seulement le stockage natif, pour qu'un prochain rechargement de page
@@ -15605,18 +15646,21 @@ function selectQPTakbir() {
         var title     = document.getElementById('ucMosqueInfoAdminSectionTitle');
         var alwaysRow = document.getElementById('ucAdminAlwaysRow');
         var lockBtn   = document.getElementById('ucAdminLockBtn');
+        var dailyRow  = document.getElementById('ucAutoDailyUpdateRow');
         var btnRow    = document.getElementById('ucAdminBtnRow');
         if (!section) return;
         // Ordre : ligne 1 (toujours accessible) → titre (juste au-dessus du
-        // cadenas) → cadenas → rangée protégée par PIN. appendChild déplace
-        // chaque élément à la fin dans cet ordre précis : le résultat final
-        // est donc toujours cet agencement, quel que soit l'ordre DOM de
-        // départ (auto-correcteur, peut être rappelé sans risque).
+        // cadenas) → cadenas → mise à jour auto → rangée protégée par PIN.
+        // appendChild déplace chaque élément à la fin dans cet ordre précis :
+        // le résultat final est donc toujours cet agencement, quel que soit
+        // l'ordre DOM de départ (auto-correcteur, peut être rappelé sans
+        // risque).
         if (alwaysRow) section.appendChild(alwaysRow);
         if (title)     section.appendChild(title);
         if (lockBtn)   section.appendChild(lockBtn);
+        if (dailyRow)  section.appendChild(dailyRow);
         if (btnRow)    section.appendChild(btnRow);
-        section.style.display = (alwaysRow || lockBtn || btnRow) ? '' : 'none';
+        section.style.display = (alwaysRow || lockBtn || dailyRow || btnRow) ? '' : 'none';
     }
 
     // ── Bascule "texte agrandi" pour les notifications (mémorisée) ─────────
@@ -19636,6 +19680,106 @@ function _ucDefaultAdminPin() {
     line4.appendChild(btnNotify);
     line4.appendChild(btnPin);
 
+    // ── Mise à jour auto quotidienne (heure réglable) — box uniquement ─────
+    // Remplace le déclenchement par push (peu fiable sur certains boîtiers,
+    // cf. discussion 31/07/2026). Sciemment PAS dans #ucAdminBtnRow (pas
+    // besoin du code PIN, demande explicite 01/08/2026 : un simple réglage
+    // d'appareil, pas une action distante sur une mosquée). Heure éditée via
+    // openInputDialogFunction (boîte de saisie libre déjà utilisée partout
+    // ailleurs dans l'app, ex. editReciterNameFunction) plutôt qu'un <input
+    // type=time> (rendu natif du navigateur jugé peu adapté, demande
+    // explicite 01/08/2026). Chaque changement (case OU heure confirmée)
+    // s'applique immédiatement, sans bouton "Enregistrer" séparé -- la
+    // confirmation de la boîte de saisie en tient déjà lieu pour l'heure.
+    var dailyUpdateRow = document.createElement('div');
+    dailyUpdateRow.id = 'ucAutoDailyUpdateRow';
+    var _isBoxForDailyUpdate = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv());
+    if (_isBoxForDailyUpdate) {
+        var dailyUpdateLabel = document.createElement('label');
+        dailyUpdateLabel.id = 'ucAutoDailyUpdateLabel';
+        dailyUpdateLabel.style.display = 'flex';
+        dailyUpdateLabel.style.alignItems = 'center';
+        dailyUpdateLabel.style.gap = '6px';
+        dailyUpdateLabel.style.fontSize = '0.85em';
+        dailyUpdateLabel.style.margin = '6px 0';
+
+        var dailyUpdateCheckbox = document.createElement('input');
+        dailyUpdateCheckbox.type = 'checkbox';
+        dailyUpdateCheckbox.id = 'ucAutoDailyUpdateCheckbox';
+        dailyUpdateCheckbox.checked = !!JS_CUSTOM.ucAutoDailyUpdateEnabled;
+        dailyUpdateCheckbox.addEventListener('change', function () {
+            JS_CUSTOM.ucAutoDailyUpdateEnabled = this.checked ? 1 : 0;
+            _applyDailyUpdateNative();
+        });
+
+        var dailyUpdateText = document.createElement('span');
+        dailyUpdateText.textContent = 'Mise à jour auto à';
+
+        var btnEditDailyUpdateTime = _makeBtn('ucAutoDailyUpdateTimeBtn', JS_CUSTOM.ucAutoDailyUpdateTime || '01:00');
+        btnEditDailyUpdateTime.style.width = 'auto';
+        btnEditDailyUpdateTime.style.height = 'auto';
+        btnEditDailyUpdateTime.style.padding = '4px 10px';
+        btnEditDailyUpdateTime.addEventListener('click', function () { window._ucEditAutoDailyUpdateTime(); });
+
+        dailyUpdateLabel.appendChild(dailyUpdateCheckbox);
+        dailyUpdateLabel.appendChild(dailyUpdateText);
+        dailyUpdateLabel.appendChild(btnEditDailyUpdateTime);
+        dailyUpdateRow.appendChild(dailyUpdateLabel);
+
+        var dailyUpdateStatus = document.createElement('span');
+        dailyUpdateStatus.id = 'ucAutoDailyUpdateStatus';
+        dailyUpdateStatus.style.fontSize = '0.8em';
+        dailyUpdateStatus.style.opacity = '0.75';
+        dailyUpdateRow.appendChild(dailyUpdateStatus);
+
+        function _applyDailyUpdateNative() {
+            var enabled = !!JS_CUSTOM.ucAutoDailyUpdateEnabled;
+            var timeVal = JS_CUSTOM.ucAutoDailyUpdateTime || '01:00';
+            var parts = timeVal.split(':');
+            var hour = parseInt(parts[0], 10);
+            var minute = parseInt(parts[1], 10);
+            if (isNaN(hour) || hour < 0 || hour > 23) hour = 1;
+            if (isNaN(minute) || minute < 0 || minute > 59) minute = 0;
+
+            if (typeof saveCustomSettingsFunction === 'function') saveCustomSettingsFunction();
+            if (window.AndroidMobile && typeof window.AndroidMobile.setAutoDailyUpdateEnabled === 'function') {
+                window.AndroidMobile.setAutoDailyUpdateEnabled(enabled, hour, minute);
+            }
+            _L('CFG', 'SET', { ucAutoDailyUpdateEnabled: JS_CUSTOM.ucAutoDailyUpdateEnabled, ucAutoDailyUpdateTime: timeVal });
+            dailyUpdateStatus.textContent = enabled ? ('Activé (' + timeVal + ')') : 'Désactivé';
+        }
+        window._ucApplyDailyUpdateNative = _applyDailyUpdateNative;
+
+        // Boîte de saisie libre (HH:MM) -- pattern self-récursif standard de
+        // cette app (cf. editReciterNameFunction) : le 1er appel ouvre la
+        // boîte, le 2e (déclenché par son propre bouton OK) traite la saisie.
+        window._ucEditAutoDailyUpdateTime = function () {
+            if (!isInputDialogOpen) {
+                inputDialogValue  = '';
+                isInputDialogOpen = false;
+                openInputDialogFunction('Heure de mise à jour (HH:MM)', JS_CUSTOM.ucAutoDailyUpdateTime || '01:00', 'window._ucEditAutoDailyUpdateTime()', true);
+                return;
+            }
+            var raw = (inputDialogValue || '').trim();
+            var m = raw.match(/^(\d{1,2}):(\d{2})$/);
+            var hour = 1, minute = 0;
+            if (m) {
+                var h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+                if (h >= 0 && h <= 23) hour = h;
+                if (mi >= 0 && mi <= 59) minute = mi;
+            }
+            var normalized = (hour < 10 ? '0' : '') + hour + ':' + (minute < 10 ? '0' : '') + minute;
+            JS_CUSTOM.ucAutoDailyUpdateTime = normalized;
+            btnEditDailyUpdateTime.textContent = normalized;
+            _applyDailyUpdateNative();
+        };
+
+        // Etat initial : applique tout de suite le réglage persisté (ex. après
+        // un rechargement de la box), sans attendre une interaction.
+        _applyDailyUpdateNative();
+    }
+
     // Rattache DIRECTEMENT à #ucMosqueInfoAdminSection (déjà construite à ce
     // stade, cf. l'appel _buildModal() en fin de _installMosqueInfoModal plus
     // haut dans ce fichier) — jamais inséré dans adjustmentsContentContainer,
@@ -19643,6 +19787,7 @@ function _ucDefaultAdminPin() {
     var _adminSection = document.getElementById('ucMosqueInfoAdminSection');
     if (_adminSection) {
         _adminSection.appendChild(alwaysRow);
+        _adminSection.appendChild(dailyUpdateRow);
         _adminSection.appendChild(btnRow);
     } else {
         // Filet de sécurité si la modale n'a exceptionnellement pas pu être
@@ -20818,11 +20963,14 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     });
 
     // ── Actions à distance (onglet "Actions" de _installRemoteMosqueAdmin) ──
-    // Dispatché par MainActivity.kt (dispatchRemoteAction) à la réception du
-    // push silencieux OneSignal type="remote_action" -- aucune écriture
-    // Supabase associée (contrairement à ucConfigSync), ce sont des commandes
-    // ponctuelles "fais ça maintenant", pas des changements de configuration.
-    window.addEventListener('ucRemoteAction', function (e) {
+    // Déclenchées par deux chemins parallèles : le push OneSignal silencieux
+    // (rapide, MainActivity.kt dispatchRemoteAction -> event 'ucRemoteAction',
+    // aucune écriture Supabase associée) ET le polling de secours (fiable,
+    // cf. _installRemoteActionPolling plus bas -- push confirmé non fiable
+    // sur certains boîtiers, retour utilisateur 01/08/2026). Logique de
+    // dispatch centralisée ici pour que les deux chemins exécutent EXACTEMENT
+    // le même code, jamais dupliqué.
+    window._ucDispatchRemoteAction = function (action, target) {
         // Garde box-only : ces commandes (Coran, aperçu azan, éclairage,
         // rechargement) n'ont de sens QUE sur la box physique -- si jamais le
         // push atteignait aussi le téléphone d'un simple utilisateur de la
@@ -20832,8 +20980,6 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             && window.AndroidMobile.isAndroidTv());
         if (!_isBox) { _L('REMOTE_ACTION', 'SKIP', { reason: 'not_box' }); return; }
 
-        var action = (e.detail && e.detail.action) || '';
-        var target = (e.detail && e.detail.target) || '';
         _L('REMOTE_ACTION', 'FIRE', { action: action, target: target });
 
         if (action === 'reload') {
@@ -20863,9 +21009,147 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             if (url) _ucHttpCall(url, 'remote_' + target + '_' + action);
             return;
         }
+        if (action === 'update_app') {
+            // Mise à jour silencieuse déclenchée à distance (cf. RemoteSilentUpdater
+            // côté natif) -- aucune UI ici, le résultat arrive plus tard via
+            // l'event 'ucSilentUpdateResult' (cf. IIFE "MISE À JOUR SILENCIEUSE"
+            // plus bas).
+            if (window.AndroidMobile && typeof window.AndroidMobile.startSilentAppUpdate === 'function') {
+                window.AndroidMobile.startSilentAppUpdate();
+            }
+            return;
+        }
+        if (action === 'send_debug') {
+            // Même envoi que debugConsoleSendBtn (cf. IIFE "DEBUG CONSOLE"),
+            // déclenché à distance -- pas besoin d'ouvrir la console sur la box
+            // elle-même ni de s'y déplacer physiquement pour diagnostiquer un
+            // incident signalé par un utilisateur (ex. téléchargement resté
+            // ambigu -- cf. section AZAN CATALOG, retour utilisateur 31/07/2026).
+            if (typeof window._ucSendDebugReport === 'function') window._ucSendDebugReport();
+            return;
+        }
+    };
+
+    window.addEventListener('ucRemoteAction', function (e) {
+        var action = (e.detail && e.detail.action) || '';
+        var target = (e.detail && e.detail.target) || '';
+        window._ucDispatchRemoteAction(action, target);
     });
 
     _L('CUSTOM', 'INIT', { item: 'configSync' });
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MISE À JOUR SILENCIEUSE — capacité par box + résultat (31/07/2026)
+// ─────────────────────────────────────────────────────────────────────────────
+// Table dédiée mosque_device_status (PAS mosques) : la table mosques a un
+// trigger serveur (on_mosque_update) qui pousse une notification "horaires
+// mis à jour" à TOUS les abonnés de la mosquée à chaque écriture -- un
+// rapport de capacité écrit à chaque démarrage de la box y déclencherait ce
+// même trigger en boucle (retour au bug déjà corrigé le 30/07/2026 pour
+// "reload", cf. _installRemoteMosqueAdmin). mosque_device_status est une
+// table à part, sans ce trigger, alimentée uniquement par la box elle-même.
+//
+// SQL à exécuter une fois dans le dashboard Supabase (non fait automatiquement,
+// cette table n'existe pas encore) :
+//   create table if not exists public.mosque_device_status (
+//       mosque_id text primary key,
+//       silent_update_capable boolean,
+//       checked_at timestamptz,
+//       device_model text,
+//       android_version text,
+//       app_version text
+//   );
+//   alter table public.mosque_device_status enable row level security;
+//   create policy "anon select" on public.mosque_device_status for select using (true);
+//   create policy "anon insert" on public.mosque_device_status for insert with check (true);
+//   create policy "anon update" on public.mosque_device_status for update using (true);
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installSilentUpdateReporting() {
+    var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+               || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+    var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+               || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+
+    // Dispatché par MainActivity.dispatchSilentUpdateCapability() à chaque
+    // chargement de page sur une box (cf. onPageFinished, MainActivity.kt).
+    window.addEventListener('ucSilentUpdateCapability', function (e) {
+        var mid = window._ucCurrentMosqueId();
+        if (!mid) { _L('UPDATE', 'SKIP', { reason: 'no_mosque_id' }); return; }
+        var d = e.detail || {};
+        _L('UPDATE', 'CAPABILITY', { mosque_id: mid, capable: !!d.capable, model: d.model || '', androidVersion: d.androidVersion || '' });
+
+        var payload = {
+            mosque_id: mid,
+            silent_update_capable: !!d.capable,
+            checked_at: new Date().toISOString(),
+            device_model: d.model || '',
+            android_version: d.androidVersion || '',
+            app_version: (typeof CUSTOM_APP_VERSION !== 'undefined') ? CUSTOM_APP_VERSION : ''
+        };
+        fetch(_SB_URL + '/rest/v1/mosque_device_status', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'apikey': _SB_KEY,
+                'Authorization': 'Bearer ' + _SB_KEY,
+                'Prefer': 'resolution=merge-duplicates'
+            },
+            body: JSON.stringify(payload)
+        }).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            _L('UPDATE', 'CAPABILITY_REPORTED', { mosque_id: mid });
+        }).catch(function (err) {
+            _L('UPDATE', 'CAPABILITY_REPORT_ERR', { mosque_id: mid, error: err.message || String(err) });
+        });
+    });
+
+    // Dispatché par MainActivity.dispatchSilentUpdateOutcome() à la fin du
+    // pipeline RemoteSilentUpdater (téléchargement + installation) -- pas
+    // d'écriture Supabase ici (le prochain rapport de capacité/le numéro de
+    // version suffisent à constater le résultat) : juste une trace debug
+    // console, consultable via 'إرسال للمطوّر' / l'action distante send_debug.
+    window.addEventListener('ucSilentUpdateResult', function (e) {
+        var d = e.detail || {};
+        _L('UPDATE', 'RESULT', { success: !!d.success, silent: !!d.silent, message: d.message || '' });
+    });
+
+    // Dispatché par MainActivity.dispatchSilentUpdateProgress() à chaque étape
+    // notable de RemoteSilentUpdater.run() (checking/downloading/installing/
+    // success/failed) -- demandé le 31/07/2026 : suivi en direct depuis le
+    // téléphone admin (cf. _fetchUpdateStatus, onglet Actions), en plus du
+    // dialogue affiché nativement sur l'écran de la box (SilentUpdateProgressDialog.kt).
+    // Mêmes colonnes que le rapport de capacité (upsert sur mosque_id).
+    window.addEventListener('ucSilentUpdateProgress', function (e) {
+        var mid = window._ucCurrentMosqueId();
+        if (!mid) return;
+        var d = e.detail || {};
+        _L('UPDATE', 'PROGRESS', { mosque_id: mid, phase: d.phase || '', pct: d.pct, message: d.message || '' });
+
+        var payload = {
+            mosque_id: mid,
+            update_phase: d.phase || '',
+            update_progress_pct: (typeof d.pct === 'number') ? d.pct : null,
+            update_bytes_downloaded: d.bytesDownloaded || 0,
+            update_total_bytes: d.totalBytes || 0,
+            update_message: d.message || '',
+            update_updated_at: new Date().toISOString()
+        };
+        fetch(_SB_URL + '/rest/v1/mosque_device_status', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'apikey': _SB_KEY,
+                'Authorization': 'Bearer ' + _SB_KEY,
+                'Prefer': 'resolution=merge-duplicates'
+            },
+            body: JSON.stringify(payload)
+        }).catch(function (err) {
+            _L('UPDATE', 'PROGRESS_REPORT_ERR', { mosque_id: mid, error: err.message || String(err) });
+        });
+    });
+
+    _L('CUSTOM', 'INIT', { item: 'silentUpdateReporting' });
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -20918,6 +21202,67 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     setInterval(_poll, POLL_MS);
 
     _L('CUSTOM', 'INIT', { item: 'remoteConfigPolling' });
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// POLLING DE SECOURS POUR L'ONGLET "ACTIONS" À DISTANCE (box uniquement)
+// ─────────────────────────────────────────────────────────────────────────────
+// Coran, aperçu azan, éclairage, recharger, mise à jour, envoyer la console :
+// ces commandes ne passaient QUE par le push OneSignal silencieux
+// (remote_action) -- confirmé non fiable sur cette box (testé en direct
+// 01/08/2026 sur send_debug : appui côté téléphone, aucune trace REMOTE_ACTION
+// dans les logs de la box, aucune nouvelle ligne debug_reports tant que seul
+// le push était utilisé). Même filet de sécurité que _installRemoteConfigPolling
+// ci-dessus (Paramétrage), généralisé à ces trois colonnes de
+// mosque_device_status (écrites par le téléphone, cf. _requestActionViaPoll
+// dans _installRemoteMosqueAdmin) : la box les relit toutes les ~18s et, dès
+// qu'une nouvelle demande apparaît, exécute _ucDispatchRemoteAction -- le même
+// code que le listener 'ucRemoteAction' (push), rien de dupliqué.
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installRemoteActionPolling() {
+    var _isBox = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv());
+    if (!_isBox) return;
+
+    var POLL_MS = 18000;
+    var _lastKnown; // undefined tant que _poll() n'a pas tourné une 1ère fois
+    var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+               || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+    var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+               || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+
+    function _poll() {
+        var mid = window._ucCurrentMosqueId();
+        if (!mid) return;
+        fetch(_SB_URL + '/rest/v1/mosque_device_status?mosque_id=eq.' + encodeURIComponent(mid)
+              + '&select=pending_action,pending_action_target,pending_action_requested_at',
+              { headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY } })
+        .then(function (r) { return r.json(); })
+        .then(function (rows) {
+            var row = rows && rows[0];
+            var ts  = (row && row.pending_action_requested_at) || null;
+            // Amorçage silencieux au tout premier sondage (qu'une demande soit
+            // déjà en base ou non -- une demande déjà présente AVANT le
+            // démarrage de la box ne doit pas se redéclencher à chaque
+            // redémarrage) : _lastKnown vaut undefined uniquement ici, jamais
+            // après.
+            if (_lastKnown === undefined) {
+                _lastKnown = ts;
+                return;
+            }
+            if (ts && ts !== _lastKnown && row.pending_action) {
+                _lastKnown = ts;
+                _L('REMOTE_ACTION', 'POLL_DETECTED', { mosque_id: mid, action: row.pending_action, target: row.pending_action_target || '' });
+                window._ucDispatchRemoteAction(row.pending_action, row.pending_action_target || '');
+            }
+        })
+        .catch(function () {});
+    }
+
+    setTimeout(_poll, 5000);
+    setInterval(_poll, POLL_MS);
+
+    _L('CUSTOM', 'INIT', { item: 'remoteActionPolling' });
 })();
 
 (function _installAdminBtnTooltips() {
@@ -21316,10 +21661,12 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         var alwaysRow = document.getElementById('ucAdminAlwaysRow');
         var title     = document.getElementById('ucMosqueInfoAdminSectionTitle');
         var lockBtn   = document.getElementById('ucAdminLockBtn');
+        var dailyRow  = document.getElementById('ucAutoDailyUpdateRow');
         var btnRow    = document.getElementById('ucAdminBtnRow');
         if (alwaysRow) body.appendChild(alwaysRow);
         if (title)     body.appendChild(title);
         if (lockBtn)   body.appendChild(lockBtn);
+        if (dailyRow)  body.appendChild(dailyRow);
         if (btnRow)    body.appendChild(btnRow);
         overlay.classList.add('ucBoxAdminOpen');
     }
@@ -24010,6 +24357,14 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     var _acDownloading   = {};   // id -> true pendant qu'un téléchargement natif est en cours
     var _acPendingSelect = {};   // id -> groupKey en attente d'être sélectionné une fois le téléchargement réglé
     var _acPollTimers    = {};   // id -> setInterval id du polling de statut
+    // id -> message du dernier échec. Avant ce correctif, la ligne revenait à
+    // l'identique d'un article jamais essayé dès que le spinner s'arrêtait
+    // (succès OU échec) -- seul un toast transitoire signalait l'erreur, invisible
+    // si l'utilisateur n'était pas devant l'écran à cet instant précis (cas vécu :
+    // téléchargement lancé puis box laissée sans surveillance, retour utilisateur
+    // 31/07/2026 -- "la flèche a tourné puis s'est arrêtée sans savoir si...").
+    // Persiste jusqu'au prochain succès ou à la prochaine tentative.
+    var _acLastError      = {};
 
     var _AC_DOWNLOAD_TIMEOUT_MS = 45000;   // filet de sécurité (voir commentaire plus bas)
     var _acDownloadTimeouts = {};           // id -> setTimeout id
@@ -24018,16 +24373,26 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         if (groupKeyIfSelecting) _acPendingSelect[item.id] = groupKeyIfSelecting;
         if (_acDownloading[item.id]) return;   // déjà en cours : l'intention ci-dessus sera honorée à la fin
         _acDownloading[item.id] = true;
+        delete _acLastError[item.id];   // nouvelle tentative : efface la trace de l'échec précédent
         _acRenderAll();
         _L('AZANCAT', 'FIRE', { action: 'download_start', id: item.id });
 
-        function _settle(installed) {
+        function _settle(installed, errorMessage) {
             clearInterval(_acPollTimers[item.id]);
             delete _acPollTimers[item.id];
             clearTimeout(_acDownloadTimeouts[item.id]);
             delete _acDownloadTimeouts[item.id];
             delete _acDownloading[item.id];
-            if (installed && _acInstalledIds.indexOf(item.id) === -1) _acInstalledIds.push(item.id);
+            if (installed) {
+                delete _acLastError[item.id];
+                if (_acInstalledIds.indexOf(item.id) === -1) _acInstalledIds.push(item.id);
+            } else if (errorMessage) {
+                // Affiché de façon persistante sur la ligne (cf. _acRenderItemRow)
+                // jusqu'au prochain succès ou à la prochaine tentative -- le toast
+                // ci-dessous reste utile pour qui regarde l'écran à cet instant,
+                // mais ne suffit plus à lui seul (retour utilisateur 31/07/2026).
+                _acLastError[item.id] = errorMessage;
+            }
             var pendingGroup = _acPendingSelect[item.id];
             delete _acPendingSelect[item.id];
             _acRenderAll();
@@ -24045,7 +24410,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _acDownloadTimeouts[item.id] = setTimeout(function () {
             _L('AZANCAT', 'SKIP', { action: 'download_timeout', id: item.id });
             if (window._ucToast) window._ucToast('خطأ التحميل | Échec du téléchargement (délai dépassé)', 'error');
-            _settle(false);
+            _settle(false, 'délai dépassé | timeout');
         }, _AC_DOWNLOAD_TIMEOUT_MS);
 
         if (_ucHasNative('downloadAzanCatalogItem')) {
@@ -24074,7 +24439,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                     // TLS rejete -> echec silencieux a chaque tentative, interprete
                     // a tort comme "le telechargement n'a pas survecu au redemarrage".
                     if (window._ucToast) window._ucToast('خطأ التحميل | Échec du téléchargement' + (st.message ? ' — ' + st.message : ''), 'error');
-                    _settle(false);
+                    _settle(false, st.message || 'خطأ');
                 }
             }, 500);
             return;
@@ -24141,6 +24506,10 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var isSel  = (selectedId === item.id);
         var isInst = (_acInstalledIds.indexOf(item.id) !== -1);
         var isDl   = !!_acDownloading[item.id];
+        // Échec persistant (cf. _acLastError) : n'a de sens que si l'élément
+        // n'est ni déjà installé ni en cours de téléchargement -- ces deux cas
+        // sont mutuellement exclusifs avec "dernier essai en échec".
+        var isErr  = !isInst && !isDl && !!_acLastError[item.id];
         var isPrev = (_acPreviewId === item.id && _acPreviewEl && !_acPreviewEl.paused);
 
         var row = document.createElement('div');
@@ -24160,14 +24529,16 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                     meta.join(' &middot; ') +
                     (isInst
                         ? ' <span class="acBadge acBadgeOffline">&#10004; محفوظ للعمل بدون إنترنت</span>'
-                        : ' <span class="acBadge acBadgeStream">&#127760; بث مباشر</span>') +
+                        : isErr
+                            ? ' <span class="acBadge acBadgeError">&#9888; فشل آخر تحميل | Échec — إعادة المحاولة</span>'
+                            : ' <span class="acBadge acBadgeStream">&#127760; بث مباشر</span>') +
                 '</div>' +
             '</div>' +
             '<div class="acItemActions">' +
                 '<div class="acIconBtn acPlayBtn' + (isPrev ? ' acPlaying' : '') + '" data-id="' + item.id + '">' +
                     (isPrev ? '&#9208;' : '&#9654;') +
                 '</div>' +
-                '<div class="acIconBtn acDownloadBtn' + (isDl ? ' acDownloading' : '') + (isInst ? ' acDisabled' : '') + '">' +
+                '<div class="acIconBtn acDownloadBtn' + (isDl ? ' acDownloading' : '') + (isInst ? ' acDisabled' : '') + (isErr ? ' acDlError' : '') + '">' +
                     (isDl ? '&#8635;' : (isInst ? '&#10004;' : '&#8595;')) +
                 '</div>' +
             '</div>';
@@ -24910,6 +25281,14 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         lightOff:         { AR: 'إطفاء',                                       FR: 'Éteindre',                                               EN: 'Turn off' },
         actionSentOk:     { AR: 'تم الإرسال',                                  FR: 'Envoyé',                                                 EN: 'Sent' },
         reloadBtn:        { AR: 'إعادة تحميل الشاشة فقط',                       FR: 'Recharger la box uniquement',                            EN: 'Reload the box only' },
+        actDiagTitle:     { AR: 'التشخيص',                                     FR: 'Diagnostic',                                             EN: 'Diagnostics' },
+        actSendDebug:     { AR: 'إرسال سجل التصحيح للمطوّر',                    FR: 'Envoyer le journal de debug au développeur',             EN: 'Send debug log to developer' },
+        actUpdateTitle:   { AR: 'تحديث التطبيق',                               FR: 'Mise à jour de l’application',                       EN: 'App update' },
+        actUpdateBtn:     { AR: 'تحديث الآن',                                  FR: 'Mettre à jour maintenant',                               EN: 'Update now' },
+        updateCapable:    { AR: '✓ تحديث صامت متاح لهذا الجهاز',                FR: '✓ Mise à jour silencieuse disponible',                   EN: '✓ Silent update available' },
+        updateNotCapable: { AR: '⚠ يتطلب تأكيدًا يدويًا على الجهاز (نقرة واحدة)', FR: '⚠ Nécessite une confirmation sur place (1 tap)',         EN: '⚠ Needs on-site confirmation (1 tap)' },
+        updateUnknown:    { AR: 'الحالة غير معروفة — أعد تحميل الجهاز للتحقق',   FR: 'Statut inconnu — recharger la box pour vérifier',        EN: 'Unknown — reload the box to check' },
+        updateCheckedAt:  { AR: 'آخر تحقق:',                                   FR: 'Dernière vérification :',                                EN: 'Last checked:' },
         timesTitle:       { AR: 'أوقات الأذان والإقامة',                        FR: 'Horaires azan / iqama',                                  EN: 'Azan / iqama times' },
         azanCol:          { AR: 'الأذان (د)',                                   FR: 'Azan (min)',                                             EN: 'Azan (min)' },
         iqamaCol:         { AR: 'الإقامة (د)',                                  FR: 'Iqama (min)',                                            EN: 'Iqama (min)' },
@@ -25012,6 +25391,11 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                         lightRows +
                         '<div class="ucRASectionTitle">' + _raT('reloadBtn') + '</div>' +
                         '<div class="ucRAActionsTop"><span id="ucRAReloadBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('reloadBtn') + '</span></div>' +
+                        '<div class="ucRASectionTitle">' + _raT('actUpdateTitle') + '</div>' +
+                        '<div id="ucRAUpdateStatus" class="ucRAUpdateStatus">' + _raT('updateUnknown') + '</div>' +
+                        '<div class="ucRAActionsTop"><span id="ucRAUpdateBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actUpdateBtn') + '</span></div>' +
+                        '<div class="ucRASectionTitle">' + _raT('actDiagTitle') + '</div>' +
+                        '<div class="ucRAActionsTop"><span id="ucRASendDebugBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actSendDebug') + '</span></div>' +
                         '<div class="ucRASectionTitle">' + _raT('pinLabel') + '</div>' +
                         '<input type="password" id="ucRAActionsPin" class="ucRATextInput" maxlength="8" inputmode="numeric" autocomplete="off">' +
                         '<div id="ucRAPinHint">' + _raT('pinHint') + '</div>' +
@@ -25055,6 +25439,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         // 30/07/2026). Combiné à la garde box-only du listener 'ucRemoteAction'
         // plus haut : aucun téléphone ne peut plus réagir à cette commande.
         document.getElementById('ucRAReloadBtn').addEventListener('click', function () { _sendRemoteAction('reload', null); });
+        // Diagnostic à distance : déclenche sur la box le même envoi que le
+        // bouton debugConsoleSendBtn (cf. IIFE "DEBUG CONSOLE" plus haut,
+        // window._ucSendDebugReport) -- utile quand un incident (ex. téléchargement
+        // qui semble bloqué) est signalé par un utilisateur sur une box distante,
+        // sans avoir à s'y déplacer pour ouvrir la console et taper "envoyer".
+        document.getElementById('ucRAUpdateBtn').addEventListener('click', function () { _sendRemoteAction('update_app', null); });
+        document.getElementById('ucRASendDebugBtn').addEventListener('click', function () { _sendRemoteAction('send_debug', null); });
         document.getElementById('ucRASendBtn').addEventListener('click', function () { _submit(false); });
         // Délégation unique : la grille Coran est réécrite en entier à chaque
         // _renderQuranTable() (cellules jour togglées), pas besoin de
@@ -25199,6 +25590,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     function _close() {
         if (_modal) _modal.classList.add('ucRemoteAdminHidden');
         if (typeof window._popBack === 'function') window._popBack();
+        if (_updateStatusPollTimer) { clearInterval(_updateStatusPollTimer); _updateStatusPollTimer = null; }
     }
 
     function _setStatus(msg, type) {
@@ -25232,6 +25624,17 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
         _L('REMOTE_ADMIN', 'ACTION_SEND', { mosque_id: mid, action: action, target: target || '' });
 
+        // Chemin fiable, en plus du push ci-dessous (chemin rapide, gardé au
+        // cas où) : toutes les actions de cet onglet dépendaient EXCLUSIVEMENT
+        // du push OneSignal, confirmé non fiable sur certains boîtiers (testé
+        // en direct 01/08/2026 sur send_debug -- aucune trace côté box tant
+        // que seul le push était utilisé). Même filet de sécurité que
+        // _installRemoteConfigPolling (Paramétrage) : la box relit ces trois
+        // colonnes toutes les ~18s (cf. _installRemoteActionPolling plus bas)
+        // et réexécute EXACTEMENT le même code que le listener 'ucRemoteAction'
+        // (cf. _ucDispatchRemoteAction plus haut), sans rien dupliquer.
+        _requestActionViaPoll(mid, action, target);
+
         fetch('https://tjmjmlzwzebocfdmifrg.supabase.co/functions/v1/rapid-service', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'apikey': 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4' },
@@ -25257,6 +25660,36 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             _L('REMOTE_ADMIN', 'ACTION_NETWORK_ERR', { mosque_id: mid, action: action, error: (e && e.message) || String(e) });
             _setActionsStatus(_raT('errNetwork'), 'err');
         });
+    }
+
+    // Chemin fiable générique pour TOUTES les actions de cet onglet (cf.
+    // _installRemoteActionPolling, box uniquement, plus bas) : simple
+    // écriture upsert, aucune validation PIN serveur (même modèle de
+    // confiance que le rapport de progression de mise à jour sur cette même
+    // table -- écriture anon permissive ; le PIN reste vérifié côté client
+    // avant l'appel, cf. _sendRemoteAction ci-dessus, mais pas revérifié
+    // serveur pour ce chemin, cf. CLAUDE.md racine sur le modèle de confiance
+    // à l'échelle personnelle de ce projet).
+    function _requestActionViaPoll(mid, action, target) {
+        var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+                   || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+        var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+                   || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+        fetch(_SB_URL + '/rest/v1/mosque_device_status', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'apikey': _SB_KEY,
+                'Authorization': 'Bearer ' + _SB_KEY,
+                'Prefer': 'resolution=merge-duplicates'
+            },
+            body: JSON.stringify({
+                mosque_id: mid,
+                pending_action: action,
+                pending_action_target: target || null,
+                pending_action_requested_at: new Date().toISOString()
+            })
+        }).catch(function () {});
     }
 
     function _fillReciters(selectedDir) {
@@ -25436,6 +25869,71 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         });
     }
 
+    // Lit le dernier statut connu de la box (cf. table mosque_device_status,
+    // alimentée par la box elle-même à chaque chargement de page -- IIFE
+    // "MISE À JOUR SILENCIEUSE" plus haut) -- PAS la table mosques (voir
+    // commentaire de cette IIFE sur le trigger on_mosque_update). Rapelée
+    // toutes les 3s tant que l'onglet est ouvert (cf. _updateStatusPollTimer)
+    // pour suivre en direct une mise à jour en cours (colonnes update_*,
+    // rapportées par ucSilentUpdateProgress, ajoutées le 31/07/2026).
+    var _updateStatusPollTimer = null;
+
+    function _fetchUpdateStatus() {
+        var el = document.getElementById('ucRAUpdateStatus');
+        if (!el) return;
+        var mid = window._ucCurrentMosqueId();
+        if (!mid) { el.textContent = _raT('updateUnknown'); el.className = 'ucRAUpdateStatus'; return; }
+
+        var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+                   || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+        var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+                   || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+        fetch(_SB_URL + '/rest/v1/mosque_device_status?mosque_id=eq.' + encodeURIComponent(mid) +
+              '&select=silent_update_capable,checked_at,device_model,android_version,' +
+              'update_phase,update_progress_pct,update_message,update_updated_at',
+              { headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY } })
+        .then(function (r) { return r.json(); })
+        .then(function (rows) {
+            var row = rows && rows[0];
+            if (!row || row.checked_at == null) {
+                el.textContent = _raT('updateUnknown');
+                el.className = 'ucRAUpdateStatus';
+                return;
+            }
+            var when = new Date(row.checked_at).toLocaleString();
+            var label = row.silent_update_capable
+                ? _raT('updateCapable')
+                : _raT('updateNotCapable');
+            var html = label + '<br><span class="ucRAUpdateCheckedAt">' +
+                _raT('updateCheckedAt') + ' ' + when +
+                (row.device_model ? ' &middot; ' + row.device_model : '') + '</span>';
+
+            // Progression d'une mise à jour en cours/récente -- fenêtre de 15 min :
+            // au-delà, considéré obsolète (ex. la box a redémarré en plein milieu)
+            // plutôt que d'afficher indéfiniment un vieux "en cours".
+            if (row.update_phase) {
+                var ageMin = row.update_updated_at
+                    ? (Date.now() - new Date(row.update_updated_at).getTime()) / 60000
+                    : 999;
+                if (ageMin < 15) {
+                    var pctTxt = (typeof row.update_progress_pct === 'number') ? ' (' + row.update_progress_pct + ' %)' : '';
+                    var phaseClass = (row.update_phase === 'failed') ? 'ucRAUpdateWarn'
+                                    : (row.update_phase === 'success') ? 'ucRAUpdateOk' : '';
+                    html += '<br><span class="ucRAUpdateProgress ' + phaseClass + '">' +
+                        (row.update_message || row.update_phase) + pctTxt + '</span>';
+                }
+            }
+
+            el.innerHTML = html;
+            el.className = 'ucRAUpdateStatus' + (row.silent_update_capable ? ' ucRAUpdateOk' : ' ucRAUpdateWarn');
+        })
+        .catch(function (err) {
+            el.textContent = _raT('updateUnknown');
+            el.className = 'ucRAUpdateStatus';
+            _L('REMOTE_ADMIN', 'UPDATE_STATUS_ERR', { mosque_id: mid, error: err.message || String(err) });
+        });
+    }
+
     window._ucOpenRemoteMosqueAdmin = function () {
         _L('REMOTE_ADMIN', 'MODAL_OPEN', { mosque_id: window._ucCurrentMosqueId() });
         _buildModal();
@@ -25447,6 +25945,9 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         if (actionsPinEl) actionsPinEl.value = '';
         _switchTab('actions');
         _prefill();
+        _fetchUpdateStatus();
+        if (_updateStatusPollTimer) clearInterval(_updateStatusPollTimer);
+        _updateStatusPollTimer = setInterval(_fetchUpdateStatus, 3000);
         _modal.classList.remove('ucRemoteAdminHidden');
         if (typeof window._pushBack === 'function') window._pushBack();
     };
@@ -27353,4 +27854,65 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 })();
 // ═════════════════════════════════════════════════════════════════════════════
 // FIN ASSISTANT INTELLIGENT
+// ═════════════════════════════════════════════════════════════════════════════
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ENRICHISSEMENT AZKAR SABAH/MASAA (audit contenu, v12.18)
+// ═════════════════════════════════════════════════════════════════════════════
+// sabahAzkarArray / masaaAzkarArray (let, m1prime.js) sont construits par
+// buildAzkarArraysFunction() (m2body.js ~8798) à partir de azkar-sabah.js /
+// azkar-masaa.js AVANT le chargement de custom.js -- ces deux fichiers étant
+// des fichiers core (Golden Rule), l'enrichissement se fait ici en poussant
+// directement des blocs déjà au format produit par buildAzkarArraysFunction
+// (lignes jointes par "<br>", cf. m2body.js) plutôt qu'en éditant azkar-sabah.js
+// / azkar-masaa.js. Ajouts uniquement (rien retiré, rien déplacé) -- issus du
+// Hisn al-Muslim, authentiques et déjà utilisés ailleurs dans l'app :
+//   - Les 3 Qul (Ikhlas/Falaq/Nas) et Ayat al-Kursi n'existaient que dans les
+//     azkar "après chaque prière" (azkar.js) alors qu'ils font aussi partie
+//     des azkar sabah/masaa dédiés (hadith Abu Dawud/Tirmidhi, Ibn Khuzaymah)
+//     -- ajoutés aux deux, texte repris à l'identique de azkar.js.
+//   - "Allahumma ma asbaha/amsa bi min ni'matin..." (Abu Dawud, hasan) et
+//     "Radhitu billahi rabban..." (Ahmad/Abu Dawud/Tirmidhi) étaient absents
+//     des deux côtés -- ajoutés aux deux (formule adaptée matin/soir pour la
+//     première, texte identique pour la seconde).
+//   - "Subhanallahi wa bihamdihi 'adada khalqihi..." (Sahih Muslim) n'existait
+//     que côté masaa -- ajouté à sabah pour rétablir la symétrie matin/soir
+//     (texte repris à l'identique de azkar-masaa.js).
+(function _enrichSabahMasaaAzkar() {
+    if (typeof sabahAzkarArray === 'undefined' || typeof masaaAzkarArray === 'undefined') {
+        console.warn('[AZKAR] sabahAzkarArray/masaaAzkarArray introuvables -- enrichissement annulé');
+        return;
+    }
+
+    var THREE_QUL =
+        '﴿ قُلْ هُوَ ٱللَّهُ أَحَدٌ ... ﴾<br>' +
+        '﴿ قُلْ أَعُوذُ بِرَبِّ ٱلْفَلَقِ ... ﴾<br>' +
+        '﴿ قُلْ أَعُوذُ بِرَبِّ ٱلنَّاسِ ... ﴾<br>' +
+        '<span>ثلاث مرات</span>';
+
+    var AYAT_KURSI =
+        '<span>آية الكرسي</span><br>' +
+        '﴿ اللّهُ لاَ إِلَهَ إِلاَّ هُوَ الْحَيُّ الْقَيُّومُ ﴾';
+
+    var RADHITU =
+        'رَضِيتُ بِاللهِ رَبَّاً ، وَبِالإِسْلاَمِ دِيناً ، وَبِمُحَمَّدٍ صلى الله عليه وسلم نَبِيّاً';
+
+    var SUBHANALLAH_ADADA_KHALQIHI =
+        'سُبْحانَ اللهِ وَبِحَمْدِهِ عَدَدَ خَلْقِه ، وَرِضا نَفْسِه ، وَزِنَةَ عَرْشِه ، وَمِدادَ كَلِماتِه.<br>' +
+        '<span>ثلاث مرات</span>';
+
+    var SABAH_NIMA =
+        'اللَّهُمَّ مَا أَصْبَحَ بِي مِنْ نِعْمَةٍ أَوْ بِأَحَدٍ مِنْ خَلْقِكَ فَمِنْكَ وَحْدَكَ لاَ شَرِيكَ لَكَ ، فَلَكَ الْحَمْدُ وَلَكَ الشُّكْرُ';
+
+    var MASAA_NIMA =
+        'اللَّهُمَّ مَا أَمْسَى بِي مِنْ نِعْمَةٍ أَوْ بِأَحَدٍ مِنْ خَلْقِكَ فَمِنْكَ وَحْدَكَ لاَ شَرِيكَ لَكَ ، فَلَكَ الْحَمْدُ وَلَكَ الشُّكْرُ';
+
+    sabahAzkarArray.push(THREE_QUL, AYAT_KURSI, SABAH_NIMA, RADHITU, SUBHANALLAH_ADADA_KHALQIHI);
+    masaaAzkarArray.push(THREE_QUL, AYAT_KURSI, MASAA_NIMA, RADHITU);
+
+    _L('AZKAR', 'ENRICH', { sabah: sabahAzkarArray.length, masaa: masaaAzkarArray.length });
+})();
+// ═════════════════════════════════════════════════════════════════════════════
+// FIN ENRICHISSEMENT AZKAR SABAH/MASAA
 // ═════════════════════════════════════════════════════════════════════════════

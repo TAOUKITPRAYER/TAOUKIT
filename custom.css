@@ -4733,7 +4733,10 @@
 #ucBoxAdminOverlay {
     display:         none;
     position:        fixed;
-    inset:           0;
+    top:             0;
+    right:           0;
+    bottom:          0;
+    left:            0;
     background:      rgba(0,0,0,0.78);
     z-index:         900000;
     align-items:     center;
@@ -7858,6 +7861,13 @@ input[type='checkbox']:checked::after {
 }
 .acBadgeOffline { background: rgba(61, 220, 99, 0.18); color: #3ddc63; }
 .acBadgeStream  { background: rgba(143, 184, 224, 0.18); color: #8fb8e0; }
+/* Dernier échec de téléchargement (persiste après la fin du spinner, tant que
+   l'utilisateur n'a pas relancé/réussi -- cf. custom.js _acLastError, retour
+   utilisateur 31/07/2026 : un simple toast disparaissait avant que l'utilisateur
+   ne revienne voir l'écran, laissant croire qu'on ne pouvait plus savoir si le
+   téléchargement avait abouti). */
+.acBadgeError   { background: rgba(255, 68, 68, 0.18); color: #ff6b6b; }
+.acIconBtn.acDlError { color: #ff6b6b; border-color: #ff6b6b; }
 
 .acItemActions {
     flex-shrink: 0;
@@ -9557,6 +9567,33 @@ select.ucRATextInput { text-align: start; }
 }
 #ucRAStatus.ucRAStatus-ok,        #ucRAActionsStatus.ucRAStatus-ok  { color: #7ed17e; }
 #ucRAStatus.ucRAStatus-err,       #ucRAActionsStatus.ucRAStatus-err { color: #ff6b6b; }
+
+/* Statut de capacité "mise à jour silencieuse" (cf. _fetchUpdateStatus) --
+   même palette que ucRAStatus-ok/err ci-dessus pour rester cohérent. */
+.ucRAUpdateStatus {
+    font-size: 0.88em;
+    margin: 4px 0 10px;
+    color: rgba(223, 205, 177, 0.75);
+}
+.ucRAUpdateStatus.ucRAUpdateOk   { color: #7ed17e; }
+.ucRAUpdateStatus.ucRAUpdateWarn { color: #e0b050; }
+.ucRAUpdateCheckedAt {
+    font-size: 0.85em;
+    opacity: 0.7;
+}
+
+/* Progression en direct d'une mise à jour silencieuse en cours (cf.
+   ucSilentUpdateProgress / _fetchUpdateStatus) -- classes séparées de
+   .ucRAUpdateStatus.ucRAUpdateOk/Warn ci-dessus (sélecteur combiné, ne
+   matche pas sur ce <span> distinct). */
+.ucRAUpdateProgress {
+    display: block;
+    font-size: 0.85em;
+    margin-top: 4px;
+    color: rgba(223, 205, 177, 0.75);
+}
+.ucRAUpdateProgress.ucRAUpdateOk   { color: #7ed17e; }
+.ucRAUpdateProgress.ucRAUpdateWarn { color: #e0b050; }
 
 .ucRAActionsBottom {
     display: flex;

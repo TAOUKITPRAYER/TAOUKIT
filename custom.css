@@ -9811,3 +9811,15 @@ select.ucRATextInput { text-align: start; }
     transition: background 0.15s;
 }
 #ucAssistSend:active { background: #e6bc63; }
+
+/* Tentative du 02/08/2026 de masquer l'ancien sélecteur pays/ville de
+   "Paramètres > Ville" (citySelectionTitle + selectCountryButton +
+   selectCityButton) au profit d'ucMosqueLocRow (modale "Choisir/Ajouter une
+   mosquée") -- ANNULÉE. La synchro associée (custom.js, écouteur
+   ucAnonCityList appelant selectCityFunction) est entrée en conflit avec le
+   location.reload() du flux "choisir/ajouter une mosquée" et provoquait une
+   boucle de rechargement (app figée/"plante" en pratique, constaté par
+   l'utilisateur en essayant d'ajouter une mosquée sur be.namur-18). La
+   synchro a été retirée de custom.js ; ce sélecteur reste donc affiché ici
+   aussi, tant qu'une solution plus sûre n'est pas conçue -- mieux vaut une
+   UI un peu redondante qu'une fonctionnalité de changement de ville perdue. */

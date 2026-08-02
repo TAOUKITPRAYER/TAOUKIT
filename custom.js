@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.62';
+var CUSTOM_APP_VERSION = '12.65';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -9903,8 +9903,22 @@ window.SIMUL = (function() {
     _watchEl(_getH());
     _watchEl(_getV());
 
+    // Pas d'exception pour isDohaCounter (compteur "minutes avant Doha", qui
+    // démarre au chourouk) : le masquage doit s'appliquer à TOUT compteur
+    // plein écran, Doha compris. Le core tente bien de repositionner le
+    // verset "au-dessus" du compteur en plein écran (showIqamaCounter(),
+    // m2body.js ~L2980 : `ayaContainerVertical.style.top = '11%'`), mais
+    // `ayaContainerVertical`/`ayaContainerHorizontal` sont des noms
+    // permutés dans le core (cf. m2body.js L126-129 et le commentaire de
+    // _fixAyaFontSizeWideScreen plus bas dans ce fichier) : cet appel
+    // repositionne en réalité le conteneur de l'AUTRE orientation, jamais
+    // celui visible à l'écran. Sans ce masquage, le verset reste donc affiché
+    // à sa position par défaut (~40% du haut, cf. style1/2.css) et chevauche
+    // le compteur plein écran -- observé en pratique uniquement pendant le
+    // compteur Doha/chourouk car une ancienne exception ici l'excluait du
+    // masquage (les compteurs iqama normaux, eux, étaient déjà correctement
+    // masqués et ne montraient donc jamais le bug côté core).
     ucOn(UC_EVT.COUNTDOWN_TICK, function() {
-        if (typeof isDohaCounter !== 'undefined' && isDohaCounter) return;
         if (!_counterActive) {
             _counterActive = true;
             _hide(_getH());
@@ -10238,8 +10252,24 @@ let _hijriSyncTimer   = null;
 // ── État & cache : source officielle par pays (Supabase, cf. table
 //    hijri_month_starts) — prioritaire sur la synchro API générique
 //    ci-dessus quand une entrée valide couvre la date du jour.
+//
+//    IMPORTANT : on persiste la ligne BRUTE (date de début grégorienne du
+//    mois hijri + mois/année hijri), PAS un couple {d,m,y} figé pour "today".
+//    Cela permet de recalculer le jour hijri courant localement, de façon
+//    SYNCHRONE et SANS RÉSEAU, à chaque démarrage/rafraîchissement — y
+//    compris au passage de minuit — tant que la ligne connue couvre encore
+//    la date du jour (jour calculé entre 1 et 30). Avant ce changement, le
+//    cache stockait un {d,m,y} figé valable uniquement pour un jour-clé
+//    exact : il fallait donc RE-INTERROGER Supabase à chaque nouveau jour
+//    (et au premier lancement) avant de pouvoir afficher la bonne valeur,
+//    ce qui explique l'incohérence observée ("la 1ère valeur affichée après
+//    install/refresh n'est pas systématiquement celle de Supabase") — la
+//    fenêtre réseau (souvent > 200ms sur 1ère requête à froid) pouvait être
+//    interrompue par le location.reload() de _applyMosqueConfig() (premier
+//    lancement), ou simplement ne pas être terminée au moment où l'utilisateur
+//    regarde l'écran.
 const _HIJRI_OFFICIAL_KEY = 'JS_HIJRI_OFFICIAL_CACHE';
-let _hijriOfficialCache   = null;
+let _hijriOfficialRaw     = null; // { country, gregorianStartDate, hijriMonth, hijriYear, ts }
 
 (function _loadHijriSyncCache() {
     try {
@@ -10248,9 +10278,27 @@ let _hijriOfficialCache   = null;
     } catch (e) {}
     try {
         const rawO = localStorage.getItem(_HIJRI_OFFICIAL_KEY);
-        if (rawO) _hijriOfficialCache = JSON.parse(rawO);
+        if (rawO) _hijriOfficialRaw = JSON.parse(rawO);
     } catch (e) {}
 })();
+
+// ── Calcul LOCAL (sans réseau) du jour hijri courant à partir de la
+//    dernière ligne officielle connue. Retourne null si aucune ligne en
+//    cache, si elle concerne un autre pays (changement de ville/mosquée),
+//    ou si le calcul sort de la plage valide [1,30] (mois hijri suivant pas
+//    encore annoncé → il faut alors retenter le réseau, cf. _attemptHijriSync).
+function _computeOfficialToday(raw) {
+    if (!raw || !raw.gregorianStartDate) return null;
+    if (raw.country !== _resolveMosqueCountry()) return null;
+    try {
+        const start       = new Date(raw.gregorianStartDate + 'T00:00:00');
+        const now         = new Date();
+        const nowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const d           = Math.round((nowMidnight - start) / 86400000) + 1;
+        if (d < 1 || d > 30) return null;
+        return { d: d, m: raw.hijriMonth, y: raw.hijriYear };
+    } catch (e) { return null; }
+}
 
 // ── Helpers temporels ─────────────────────────────────────────────────────
 function _hijriTodayKey() {
@@ -10376,7 +10424,10 @@ function _attemptOfficialHijriMonthStart(callback) {
                 return;
             }
             dolog('[HijriSync] officiel ✅ ' + country + ' → ' + d + '/' + row.hijri_month + '/' + row.hijri_year);
-            callback({ d: d, m: row.hijri_month, y: row.hijri_year });
+            callback({ d: d, m: row.hijri_month, y: row.hijri_year }, {
+                country: country, gregorianStartDate: row.gregorian_start_date,
+                hijriMonth: row.hijri_month, hijriYear: row.hijri_year, ts: Date.now()
+            });
         })
         .catch(function (err) {
             dolog('[HijriSync] officiel (' + country + ') échec: ' + err.message + ' → fallback');
@@ -10402,20 +10453,30 @@ function _attemptHijriSync() {
 
     const today = _hijriTodayKey();
 
-    _attemptOfficialHijriMonthStart(function (officialResult) {
+    _attemptOfficialHijriMonthStart(function (officialResult, rawRow) {
         if (officialResult) {
-            _hijriOfficialCache = { date: today, d: officialResult.d, m: officialResult.m, y: officialResult.y, ts: Date.now() };
-            try { localStorage.setItem(_HIJRI_OFFICIAL_KEY, JSON.stringify(_hijriOfficialCache)); } catch (e) {}
+            _hijriOfficialRaw = rawRow;
+            try { localStorage.setItem(_HIJRI_OFFICIAL_KEY, JSON.stringify(_hijriOfficialRaw)); } catch (e) {}
             _forceHijriDisplayRefresh();
             refreshHijriSyncUI();
             _scheduleHijriSync(_msUntil1am(), 'synchro');
             return;
         }
-        // Pas de donnée officielle valide aujourd'hui → invalider le cache
-        // officiel du jour (évite d'afficher une valeur d'hier) puis fallback
-        // sur la synchro API générique, strictement inchangée.
-        _hijriOfficialCache = null;
-        try { localStorage.removeItem(_HIJRI_OFFICIAL_KEY); } catch (e) {}
+        // Pas de NOUVELLE donnée officielle (échec réseau, hors-ligne, ou pas
+        // de ligne Supabase valide pour aujourd'hui) : on NE supprime PAS le
+        // cache brut existant — il reste utilisable tel quel tant que son
+        // calcul local (_computeOfficialToday) retombe dans la plage [1,30].
+        // Ça évite de perdre une valeur officielle encore parfaitement valide
+        // à cause d'un simple raté réseau (ex. fetch coupé par le
+        // location.reload() de _applyMosqueConfig() au premier lancement).
+        const stillLocal = _computeOfficialToday(_hijriOfficialRaw);
+        if (stillLocal) {
+            dolog('[HijriSync] pas de nouvelle donnée réseau, mais cache officiel local encore valide → conservé');
+            _forceHijriDisplayRefresh();
+            refreshHijriSyncUI();
+            _scheduleHijriSync(3600000, 'retry-officiel');
+            return;
+        }
         _attemptSalahhourSync(today);
     });
 }
@@ -10486,12 +10547,14 @@ function _startHijriSyncScheduler() {
     if (JS_CUSTOM.ucHijriSyncEnabled != 1) return;
     if (_hijriSyncTimer) clearTimeout(_hijriSyncTimer);
 
-    const today = _hijriTodayKey();
-    if (_hijriOfficialCache && _hijriOfficialCache.date === today) {
+    // Calcul LOCAL d'abord (aucune attente réseau) : si la dernière ligne
+    // officielle connue couvre encore aujourd'hui, on l'affiche immédiatement.
+    if (_computeOfficialToday(_hijriOfficialRaw)) {
+        dolog('[HijriSync] officiel (cache local) valide pour aujourd\'hui → affichage immédiat');
         _forceHijriDisplayRefresh();
         _scheduleHijriSync(_msUntil1am(), 'synchro');
     } else {
-        dolog('[HijriSync] source officielle non résolue pour ' + today + ' → tentative');
+        dolog('[HijriSync] source officielle non résolue localement pour aujourd\'hui → tentative réseau');
         _attemptHijriSync();
     }
 }
@@ -10516,8 +10579,8 @@ function _startHijriSyncScheduler() {
         _orig(myDate, _dek);
 
         const todayKey       = _hijriTodayKey();
-        const officialValid  = JS_CUSTOM.ucHijriSyncEnabled == 1 &&
-            !!_hijriOfficialCache && _hijriOfficialCache.date === todayKey;
+        const officialToday  = JS_CUSTOM.ucHijriSyncEnabled == 1 ? _computeOfficialToday(_hijriOfficialRaw) : null;
+        const officialValid  = !!officialToday;
         const salahhourValid = JS_CUSTOM.ucHijriSyncEnabled == 1 && !officialValid &&
             !!_hijriSyncCache && _hijriSyncCache.date === todayKey;
 
@@ -10532,7 +10595,7 @@ function _startHijriSyncScheduler() {
 
         // ③ Vérifications avant override
         if (!officialValid && !salahhourValid) return;
-        const source = officialValid ? _hijriOfficialCache : _hijriSyncCache;
+        const source = officialValid ? officialToday : _hijriSyncCache;
 
         // ④ Appliquer le décalage manuel sur la valeur retenue. _dek ne vaut
         //    jamais plus de ±3 (cf. adjustHijriDateFunction, m2body.js), donc
@@ -10656,10 +10719,11 @@ function refreshHijriSyncUI() {
                 var mn = ('0' + d.getMinutes())  .slice(-2);
                 return ' — ' + dd + '/' + mm + '/' + yy + ' ' + hh + ':' + mn;
             }
-            if (_hijriOfficialCache && _hijriOfficialCache.date === today) {
+            const officialTodayUI = _computeOfficialToday(_hijriOfficialRaw);
+            if (officialTodayUI) {
                 statusRow.innerHTML = '🏅 مصدر رسمي (' + (_resolveMosqueCountry() || '?') + '): '
-                    + _hijriOfficialCache.d + '/' + _hijriOfficialCache.m + '/' + _hijriOfficialCache.y
-                    + _fmtTs(_hijriOfficialCache.ts);
+                    + officialTodayUI.d + '/' + officialTodayUI.m + '/' + officialTodayUI.y
+                    + _fmtTs(_hijriOfficialRaw && _hijriOfficialRaw.ts);
             } else if (_hijriSyncCache && _hijriSyncCache.date === today) {
                 statusRow.innerHTML = '✅ آخر مزامنة: ' + _hijriSyncCache.d + '/' + _hijriSyncCache.m + '/' + _hijriSyncCache.y
                     + _fmtTs(_hijriSyncCache.ts);
@@ -10673,7 +10737,7 @@ function refreshHijriSyncUI() {
     var _dek = (typeof JS_CUSTOM !== 'undefined') ? (JS_CUSTOM.ucHijriDateFixer || 0) : 0;
     var _todayNow        = _hijriTodayKey();
     var _officialOkNow   = !_dek && JS_CUSTOM.ucHijriSyncEnabled == 1 &&
-        !!_hijriOfficialCache && _hijriOfficialCache.date === _todayNow;
+        !!_computeOfficialToday(_hijriOfficialRaw);
     var _salahhourOkNow  = !_dek && JS_CUSTOM.ucHijriSyncEnabled == 1 && !_officialOkNow &&
         !!_hijriSyncCache && _hijriSyncCache.date === _todayNow;
     document.body.classList.toggle('hijriOfficialOk', _officialOkNow);
@@ -12973,6 +13037,18 @@ function forceHijriSyncFunction() {
 
     // Demarrage : le core a deja charge wtimes via document.write().
     // On sonde spec/data/ ; si override trouve, on recharge JS_TIMES et recalcule.
+    //
+    // NOTE (02/08/2026) : FR/BE (les pays ajoutes cette session) vivent
+    // desormais directement dans data/FR/, data/BE/ -- comme TN/SA -- et
+    // n'ont donc plus besoin de ce probe : le document.write() natif du
+    // coeur les charge deja de facon synchrone et fiable, sans le decalage
+    // de timing ci-dessous. Ce probe reste utile pour spec/data/TN/ (rare
+    // override hyper-local specifique a une mosquee), mais souffre d'un bug
+    // latent PRE-EXISTANT (asynchrone : une fenetre pendant laquelle du code
+    // plus bas dans ce fichier peut deja calculer avec un JS_TIMES perime,
+    // ex. _installJomoaDohrGuard) -- non corrige ici, hors perimetre de
+    // l'ajout FR/BE, mais a garder en tete si une mosquee TN avec override
+    // spec/data rapporte un plantage similaire au demarrage.
     var _startCity = JS_DATA.ucNowCityCODE || '';
     if (_startCity) {
         _probeAndLoad(_startCity, function(src) {
@@ -13006,6 +13082,61 @@ function forceHijriSyncFunction() {
         };
     } else {
         _L('DATA', 'WARN', {reason: 'selectCityFunction_not_found'});
+    }
+
+    // ── Chargement generique de l'index des villes d'un pays ─────────────
+    // Point d'entree UNIQUE (02/08/2026) : sonde D'ABORD spec/data/{CC}/{cc}.js
+    // (pays ajoutes hors coeur, ex. FR/BE, cf. spec/data/FR/fr.js,
+    // spec/data/BE/be.js), et retombe sur le chemin coeur data/{CC}/{cc}.js
+    // sinon (TN, SA...). Expose sur window : reutilise a la fois ici
+    // (selecteur Parametres > Ville, plus bas) et par _installMosqueSelector
+    // (selecteur pays/ville de la modale "choisir/ajouter une mosquee").
+    // AVANT ce regroupement, les deux avaient chacun leur propre
+    // implementation quasi identique, non maintenue en phase -- exactement
+    // le genre de duplication qui a deja cause un angle mort similaire
+    // ailleurs dans ce fichier (cf. _ucForceCloseAllCounterOverlays, audit
+    // du 02/08/2026 sur le compteur iqama).
+    window._ucLoadCityIndex = function(countryCode, onLoaded, onFailed) {
+        function _tryLoad(src, onload, onerror) {
+            var s = document.createElement('script');
+            s.src = src + '?_ucli=' + Date.now();
+            s.onload  = onload;
+            s.onerror = function() {
+                if (s.parentNode) s.parentNode.removeChild(s);
+                onerror();
+            };
+            document.head.appendChild(s);
+        }
+        var cc = countryCode.toUpperCase();
+        var specSrc = _SD + cc + '/' + cc.toLowerCase() + '.js';
+        var coreSrc = 'data/' + cc + '/' + cc.toLowerCase() + '.js';
+        _tryLoad(specSrc, function() { onLoaded(specSrc); }, function() {
+            _tryLoad(coreSrc, function() { onLoaded(coreSrc); }, onFailed);
+        });
+    };
+
+    // Changement de pays : monkey-patch loadCountryCitiesFunction pour
+    // passer par le chargeur generique ci-dessus. Remplace entierement le
+    // coeur (au lieu de retomber dessus au miss) : reproduit fidelement sa
+    // preparation d'UI, donc plus rien a y deleguer.
+    if (typeof window.loadCountryCitiesFunction === 'function') {
+        window.loadCountryCitiesFunction = function(selectedCountryCode) {
+            hideElementByIdFunction('countryListModalId');
+            document.getElementById('cityListContent').innerHTML = "<button id='NX_citi_00' onclick=\"selectCityFunction('00.000');\">00.000.PERSONAL</button><br>";
+            var _cnBtn = document.getElementById('jCN_' + selectedCountryCode);
+            document.getElementById('selectCountryButton').innerHTML = _cnBtn ? _cnBtn.innerHTML : selectedCountryCode;
+            document.getElementById('selectCityButton').innerHTML = '&nbsp;';
+            document.getElementById('locationSectionTitle').innerHTML = 'LOADING ...';
+            window._ucLoadCityIndex(selectedCountryCode, function(src) {
+                _L('DATA', 'COUNTRY_CITIES_LOADED', {country: selectedCountryCode, src: src});
+                onCountryDataLoadSuccess();
+            }, function() {
+                _L('DATA', 'COUNTRY_CITIES_FAILED', {country: selectedCountryCode});
+                onCountryDataLoadError();
+            });
+        };
+    } else {
+        _L('DATA', 'WARN', {reason: 'loadCountryCitiesFunction_not_found'});
     }
 
     _L('DATA', 'INIT', {specDir: _SD, city: _startCity || '?'});
@@ -13895,12 +14026,49 @@ function selectQPTakbir() {
 
     // ── État de localisation partagé (utilisé à la fois par le filtre ville
     // en haut de la liste principale ET par la mosquée anonyme — une seule
-    // "ville courante", plus de double sélection). Défaut Tunisie/Tunis.
+    // "ville courante", plus de double sélection).
+    //
+    // Défaut = la ville REELLEMENT configurée (JS_DATA.ucNowCityCODE, celle
+    // de Paramètres > Ville), pas une valeur codée en dur (avant le
+    // 02/08/2026 : toujours "Tunisie/Tunis" ici, quelle que soit la ville
+    // choisie ailleurs dans l'app -- retour utilisateur "il faut toujours
+    // avoir le même contenu entre ucMosqueLocRow et selectCountryButton/
+    // selectCityButton"). N'écrit jamais dans JS_DATA.ucNowCityCODE en retour
+    // (ce sélecteur ne fait que filtrer/proposer des mosquées par ville, il
+    // ne doit pas changer silencieusement les horaires affichés) -- synchro
+    // à sens unique, à l'ouverture, depuis la source de vérité existante.
+    function _currentLocationDefaults() {
+        var code = (typeof JS_DATA !== 'undefined' && JS_DATA.ucNowCityCODE) ? JS_DATA.ucNowCityCODE : 'tn.tunis';
+        var parts = code.split('.');
+        var cc = (parts[0] || 'tn').toUpperCase();
+        var citySlug = parts[1] || 'tunis';
+        var countryName = cc;
+        if (typeof JS_WORLD_COUNTRIES !== 'undefined') {
+            for (var i = 0; i < JS_WORLD_COUNTRIES.length; i++) {
+                var p = JS_WORLD_COUNTRIES[i].split('|');
+                if (p[0] === cc) { countryName = p[1]; break; }
+            }
+        }
+        var cityName = citySlug.charAt(0).toUpperCase() + citySlug.slice(1);
+        var arName = _CITY_NAME_AR[cc] && _CITY_NAME_AR[cc][citySlug];
+        if (arName) cityName += '   ' + arName;
+        return {
+            countryCode: cc, countryName: countryName,
+            cityCode: cc.toLowerCase() + '.' + citySlug, cityName: cityName
+        };
+    }
     var ANON_LOC_STORAGE_KEY = 'UC_ANON_LOCATION_CODE';
-    var _selCountryCode = 'TN';
-    var _selCountryName = 'Tunisia';
-    var _selCityCode    = 'tn.tunis';
-    var _selCityName    = 'Tunis   تونس';
+    // _locDefaults (appel a _currentLocationDefaults()) est calcule PLUS BAS,
+    // apres la definition de _CITY_NAME_AR -- cette fonction en depend, et
+    // _CITY_NAME_AR n'est assigne que quelques dizaines de lignes plus loin
+    // dans ce meme IIFE. BUG REEL CONSTATE (02/08/2026) : appeler la fonction
+    // ICI (avant l'assignation) lit _CITY_NAME_AR encore a sa valeur hissee
+    // (`var` hors TDZ mais valant undefined avant l'affectation), et
+    // `_CITY_NAME_AR[cc]` levait alors une exception synchrone -- une erreur
+    // JS non interceptee en plein milieu de custom.js interrompt l'execution
+    // de TOUT LE RESTE du script (retour utilisateur : menu revenu a
+    // l'affichage brut du coeur, reglages et infos mosquee disparus, tout le
+    // code plus loin dans le fichier n'ayant alors jamais pu s'executer).
     var _remoteCache    = [];   // dernier résultat _ucFetchRemoteListByCity pour _selCityCode
     var _cityItemsCache = [];   // items {code,name,latin,ar} du dernier _renderCityList, pour le filtre de recherche
     var _citySearchInput = null;
@@ -13974,6 +14142,15 @@ function selectQPTakbir() {
             'zaouiat-djedidi': 'زاوية الجديدي', 'zarzis': 'جرجيس', 'zouila': 'زويلة'
         }
     };
+
+    // Calcule seulement maintenant (cf. commentaire plus haut, pres de
+    // ANON_LOC_STORAGE_KEY) : _currentLocationDefaults() lit _CITY_NAME_AR,
+    // qui vient tout juste d'etre assigne juste au-dessus.
+    var _locDefaults    = _currentLocationDefaults();
+    var _selCountryCode = _locDefaults.countryCode;
+    var _selCountryName = _locDefaults.countryName;
+    var _selCityCode    = _locDefaults.cityCode;
+    var _selCityName    = _locDefaults.cityName;
 
     // ── Injection de la modale (une seule fois) ───────────────────────────
     function _buildModal() {
@@ -14362,6 +14539,16 @@ function selectQPTakbir() {
             _refreshLocButtons();
             cityModal.classList.remove('ucMosqueModalOpen');
             _refreshForCity(_searchInput ? _searchInput.value : '');
+            // RÉGRESSION CONSTATÉE ET RETIRÉE (02/08/2026) : appeler ici
+            // window.selectCityFunction(_selCityCode) pour répercuter le choix
+            // sur JS_DATA.ucNowCityCODE entrait en conflit avec le rechargement
+            // de page propre au flux "choisir/ajouter une mosquée"
+            // (_finishSelectMosque, plus bas) -- constaté en conditions
+            // réelles : boucle de rechargement infinie (page qui recharge
+            // plusieurs fois par seconde, "l'application plante") en
+            // choisissant une ville ici (ex. be.namur-18). Cette liste ne sert
+            // QUE de filtre pour la recherche de mosquées ; elle ne doit pas
+            // toucher à la ville de calcul réelle de l'app.
         });
 
         // Pré-remplissage par défaut : Tunisie/Tunis, villes déjà chargées pour
@@ -14401,6 +14588,13 @@ function selectQPTakbir() {
         list.innerHTML = html;
     }
 
+    // Charge l'index des villes d'un pays via le loader generique unique
+    // (window._ucLoadCityIndex, cf. _installSpecDataOverride) -- avant ce
+    // regroupement, ce picker chargeait son propre <script> pointant
+    // uniquement vers le chemin coeur data/{CC}/{cc}.js, sans jamais passer
+    // par spec/data/ : choisir un pays custom (FR/BE) ici affichait "خطأ |
+    // Erreur" alors que le vrai selecteur de ville (Parametres > Ville)
+    // fonctionnait deja normalement (retour utilisateur 02/08/2026).
     function _loadCities(countryCode, countryName) {
         _selCountryCode = countryCode;
         _selCountryName = countryName;
@@ -14409,23 +14603,17 @@ function selectQPTakbir() {
         _citiesLoading = true;
         var list = document.getElementById('ucAnonCityList');
         if (list) list.innerHTML = '<div class="ucMosqueEmpty">…</div>';
-        var url = 'data/' + countryCode + '/' + countryCode.toLowerCase() + '.js?ev=' + Date.now();
-        var s = document.createElement('script');
-        s.type = 'text/javascript';
-        s.src  = url;
-        s.onload = function() {
+        window._ucLoadCityIndex(countryCode, function() {
             // Copie IMMEDIATE de JS_CITIES_DATA (variable globale partagée avec
             // le vrai sélecteur de ville core, cf. loadCountryCitiesFunction) —
             // avant qu'un autre chargement ne puisse l'écraser entre-temps.
             var cities = (typeof JS_CITIES_DATA !== 'undefined' && JS_CITIES_DATA) ? JS_CITIES_DATA.slice() : [];
             _citiesLoading = false;
             _renderCityList(cities);
-        };
-        s.onerror = function() {
+        }, function() {
             _citiesLoading = false;
             if (list) list.innerHTML = '<div class="ucMosqueEmpty">خطأ | Erreur</div>';
-        };
-        document.body.appendChild(s);
+        });
     }
 
     function _renderCityList(cities) {

@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.66';
+var CUSTOM_APP_VERSION = '12.67';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -7562,6 +7562,64 @@ function ucOn(type, handler) {
 window.ucOn   = ucOn;
 window.UC_EVT = UC_EVT;
 
+// ── Traces lisibles en français (complément de _L ci-dessous) ─────────────
+// Ne remplace jamais la ligne technique existante (utile pour le debug fin) :
+// ajoute une ligne SUPPLÉMENTAIRE en français simple pour les évènements les
+// plus utiles à relire après coup (mosquée/admin distant qui consulte la
+// console de debug suite à un incident), sans avoir à décoder key=val. Un
+// seul point d'entrée (_ucHumanLog, appelé depuis _L) plutôt que dupliquer
+// une phrase à chaque site d'appel _L('LIGHTS','FIRE',...) (il y en a une
+// dizaine) : garantit une couverture complète (y compris les items futurs)
+// et évite la dérive entre les deux formulations.
+var _UC_PRAYER_FR = {
+    FAJR: 'Fajr', SHRQ: 'Chourouk (Doha)', DOHR: 'Dhuhr', ASSR: 'Asr',
+    MGRB: 'Maghreb', ISHA: 'Isha', JOMOA: "Jumu'a",
+    Fajr: 'Fajr', Dhuhr: 'Dhuhr', Asr: 'Asr', Maghreb: 'Maghreb', Isha: 'Isha'
+};
+function _ucPrayerFr(p) { return _UC_PRAYER_FR[p] || p || '?'; }
+
+var _UC_LIGHT_ITEM_FR = {
+    ampliIntOn: "l'amplificateur intérieur",  ampliIntOff: "l'amplificateur intérieur",
+    ampliExtOn: "l'amplificateur extérieur",  ampliExtOff: "l'amplificateur extérieur",
+    minaretOn:  'le minaret',                 minaretOff:  'le minaret',
+    mihrabOn:   'le mihrab',                  mihrabOff:   'le mihrab',
+    rollerOpen: 'le rideau',                  rollerClose: 'le rideau',
+    minaretBlink: 'le clignotement du minaret', mihrabBlink: 'le clignotement du mihrab'
+};
+function _ucLightItemFr(key) { return _UC_LIGHT_ITEM_FR[key] || key || '?'; }
+function _ucLightActionFr(key) {
+    if (key === 'rollerOpen') return 'Ouverture de';
+    if (key === 'rollerClose') return 'Fermeture de';
+    if (/Blink$/.test(key)) return 'Clignotement de';
+    if (/Off$/.test(key)) return 'Extinction de';
+    return 'Allumage de';
+}
+var _UC_LIGHT_EVT_FR = {
+    beforeAzan: "avant l'azan", AZAN_SHOW: "à l'affichage de l'azan",
+    afterAzanHide: "après la fin de l'azan", afterBlackHide: "après l'écran noir",
+    afterBlackShow: "au début de l'écran noir", IQAMA_TIME: "à l'iqama",
+    BLACK_HIDE: "après l'écran noir", BLACK_SHOW: "au début de l'écran noir",
+    BTN_TEST: '(test manuel)'
+};
+
+function _ucHumanLog(cat, verb, ctx, ts) {
+    ctx = ctx || {};
+    var line = null;
+    if (cat === 'EVT' && verb === 'AZAN_SHOW') {
+        line = "Affichage de la page de l'azan de la prière de " + _ucPrayerFr(ctx.prayer);
+    } else if (cat === 'AZAN' && verb === 'WEBVIEW_PLAY_START') {
+        line = "Début de la lecture audio de l'azan de la prière de " + _ucPrayerFr(ctx.prayer);
+    } else if (cat === 'LIGHTS' && verb === 'FIRE' && ctx.item) {
+        var delayTxt = ctx.delay || ctx.threshold || ctx.duration || '';
+        var evtFr = _UC_LIGHT_EVT_FR[ctx.evt] || '';
+        line = _ucLightActionFr(ctx.item) + ' ' + _ucLightItemFr(ctx.item) +
+               (delayTxt ? ' (délai ' + delayTxt + ')' : '') +
+               (evtFr ? ' ' + evtFr : '') +
+               (ctx.prayer ? ' — ' + _ucPrayerFr(ctx.prayer) : '');
+    }
+    if (line) console.log('[' + ts + '][' + cat + '] ' + line);
+}
+
 // ── Log structuré commun ──────────────────────────────────────────────────
 // Format : [HH:MM:SS][CAT] VERB key=val key=val ...
 // Verbes normalisés : FIRE | SKIP | RESUME | STOP | EVT
@@ -7572,6 +7630,7 @@ function _L(cat, verb, ctx) {
               String(now.getSeconds()).padStart(2,'0');
     var parts = Object.keys(ctx || {}).map(function(k) { return k + '=' + ctx[k]; });
     console.log('[' + ts + '][' + cat + '] ' + verb + (parts.length ? ' ' + parts.join(' ') : ''));
+    _ucHumanLog(cat, verb, ctx, ts);
 }
 
 // ── Dispatcher interne ────────────────────────────────────────────────────
@@ -11150,10 +11209,28 @@ function forceHijriSyncFunction() {
                      ('0' + d.getSeconds()).slice(-2) + ']';
     }
 
+    // Même esprit que _ucHumanLog (cf. plus haut dans ce fichier) mais pour
+    // les entrées NATIVES déjà formatées en texte brut ("VERB key=val ...",
+    // cf. NativeEventLog.kt) : parsing minimal (verbe = premier mot, prayer=
+    // extrait par regex) plutôt qu'un objet ctx structuré.
+    function _ucHumanLogNative(tag, text, tsBracket) {
+        var verb = (/^(\S+)/.exec(text) || [])[1] || '';
+        var prayer = (/prayer=(\w+)/.exec(text) || [])[1] || '';
+        var line = null;
+        if (verb === 'ALARM_FIRE_AZAN') {
+            line = "Déclenchement de l'alarme azan de la prière de " + _ucPrayerFr(prayer);
+        } else if (verb === 'NATIVE_PLAY_START') {
+            line = "Début de la lecture audio (arrière-plan) de l'azan de la prière de " + _ucPrayerFr(prayer);
+        }
+        if (line) console.log(tsBracket + ' [' + tag + '] ' + line);
+    }
+
     try {
         var arr = JSON.parse(window.AndroidMobile.getNativeEventLog() || '[]');
         arr.forEach(function(entry) {
-            console.log(_fmtTs(entry.ts) + ' [' + entry.tag + '] ' + entry.text);
+            var tsBracket = _fmtTs(entry.ts);
+            console.log(tsBracket + ' [' + entry.tag + '] ' + entry.text);
+            _ucHumanLogNative(entry.tag, entry.text, tsBracket);
         });
         if (arr.length) {
             console.log('--- ' + arr.length + ' événement(s) natif(s) chargé(s) (historique complet, y compris appli fermée) ---');

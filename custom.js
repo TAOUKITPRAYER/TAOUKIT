@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.65';
+var CUSTOM_APP_VERSION = '12.66';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -408,6 +408,11 @@ const JS_CUSTOM_DEFAULTS = {
     ucMuteAfterAzanEnabled:      0,
     ucMuteAfterAzanMinutes:      5,
     ucSilentAfterAzanMinutes:    60,  // minutes après l'azan où la sonnerie est remise (jauge 1-180)
+    // ── Onglet "تعديل الأذان" : volume au maximum juste avant l'azan ─────────
+    // 1 minute avant l'azan de chaque prière, monte le volume (musique +
+    // alarme) de la box au maximum (cf. MobileJsBridge.scheduleVolumeBoostAlarms
+    // + VolumeBoostReceiver.kt). Pas de restauration ensuite (volontaire).
+    ucVolumeBoostBeforeAzan:     0,
     ucFlipToMuteAzan:            1,   // 1 = poser le téléphone écran contre la table coupe l'azan (capteur natif)
     ucAutoStartEnabled:          1,   // 1 = relance silencieuse au démarrage du téléphone (natif, cf. AutoStartPrefs) — sans effet sur boîtier Android TV
     // ── Rappel hadith avant chaque salat (notification native, 10 min avant,
@@ -17557,6 +17562,127 @@ function selectQPTakbir() {
         if (today !== _quickMuteLastScheduledDay) {
             _quickMuteLastScheduledDay = today;
             setTimeout(_ucScheduleQuickMuteAfterAzanAlarms, 2000);
+        }
+    });
+
+})();
+
+
+// ==========================================================================
+// -- VOLUME AU MAXIMUM JUSTE AVANT L'AZAN (onglet "تعديل الأذان") ---------
+//  Case à cocher (JS_CUSTOM.ucVolumeBoostBeforeAzan) : si activée, 1 minute
+//  avant l'azan de chaque prière, monte le volume (musique + alarme) de la
+//  box au maximum. Contrairement aux deux mécanismes ci-dessus, il n'y a
+//  PAS de restauration ensuite — comportement demandé ("systématiquement au
+//  maximum"), le volume reste donc au maximum après coup.
+//  Planification via AlarmManager natif (MobileJsBridge.scheduleVolumeBoostAlarms
+//  + VolumeBoostReceiver.kt), même schéma que _installSilentModeAroundAzan
+//  ci-dessus : lecture de prayerTimesMinutesObject (const globale de
+//  m1prime.js), reprogrammation quotidienne sur UC_EVT.AZAN_TIME.
+//  Injection retardée (4s) : par construction (script exécuté de haut en
+//  bas), _installAdjustmentsTabs (plus bas dans ce fichier) a déjà fini de
+//  construire l'onglet "تعديل الأذان" et son ancre #prayersAdjustmentsTitle
+//  avant que ce setTimeout ne s'exécute.
+// ==========================================================================
+(function _installVolumeBoostBeforeAzan() {
+
+    var lang = _ucLang();
+    var T = {
+        label: {
+            AR: 'رفع صوت الجهاز تلقائيًا إلى أقصاه قبل كل أذان بدقيقة',
+            FR: "Monter le volume au maximum 1 min avant chaque azan",
+            EN: 'Boost volume to max 1 min before each azan',
+            ES: 'Subir el volumen al máximo 1 min antes de cada azán',
+            DE: 'Lautstärke 1 Min. vor jedem Adhan auf Maximum stellen'
+        }
+    };
+    function t(key) {
+        var row = T[key];
+        if (!row) return key;
+        return row[lang] || row['EN'] || row['FR'] || key;
+    }
+
+    // Identique aux IIFE ci-dessus — dupliqué volontairement (blocs indépendants).
+    function _minutesToHHMM(totalMinutes) {
+        var dayOffset = Math.floor(totalMinutes / 1440);
+        var m = totalMinutes - dayOffset * 1440;
+        return { hour: Math.floor(m / 60), minute: m % 60, dayOffset: dayOffset };
+    }
+
+    function _injectCheckbox() {
+        if (document.getElementById('volumeBoostBeforeAzanCheckbox')) return;
+        var anchor = document.getElementById('prayersAdjustmentsTitle');
+        if (!anchor) return;
+        var div = document.createElement('div');
+        div.className = 'ucOptRow';
+        div.innerHTML =
+            '<input type="checkbox" id="volumeBoostBeforeAzanCheckbox"' +
+            (JS_CUSTOM.ucVolumeBoostBeforeAzan == 1 ? ' checked' : '') + '> &nbsp;' +
+            '<label for="volumeBoostBeforeAzanCheckbox">' + t('label') + '</label>';
+        anchor.insertAdjacentElement('afterend', div);
+        document.getElementById('volumeBoostBeforeAzanCheckbox').addEventListener('change', function (e) {
+            JS_CUSTOM.ucVolumeBoostBeforeAzan = e.target.checked ? 1 : 0;
+            saveCustomSettingsFunction();
+            _ucScheduleVolumeBoostAlarms();
+        });
+    }
+
+    function _ucScheduleVolumeBoostAlarms() {
+        if (!window.AndroidMobile || typeof window.AndroidMobile.scheduleVolumeBoostAlarms !== 'function') return; // pas dans l'app Android
+
+        if (JS_CUSTOM.ucVolumeBoostBeforeAzan != 1) {
+            if (typeof window.AndroidMobile.cancelVolumeBoostAlarms === 'function') window.AndroidMobile.cancelVolumeBoostAlarms();
+            return;
+        }
+
+        var obj = prayerTimesMinutesObject;
+        if (!obj || !obj.FAJR) return; // pas encore calculé
+
+        var prayerKeys = [
+            { key: 'FAJR', name: 'Fajr'    },
+            { key: 'DOHR', name: 'Dhuhr'   },
+            { key: 'ASSR', name: 'Asr'     },
+            { key: 'MGRB', name: 'Maghreb' },
+            { key: 'ISHA', name: 'Isha'    }
+        ];
+
+        var items = [];
+        prayerKeys.forEach(function(p) {
+            var azanMin = obj[p.key];
+            if (typeof azanMin !== 'number') return;
+            var boost = _minutesToHHMM(azanMin - 1);
+            items.push({
+                prayer: p.name,
+                hour: boost.hour, minute: boost.minute, dayOffset: boost.dayOffset
+            });
+        });
+        if (!items.length) return;
+
+        window.AndroidMobile.scheduleVolumeBoostAlarms(JSON.stringify(items));
+        if (typeof window.AndroidMobile.log === 'function') {
+            window.AndroidMobile.log('[Tawkit] Volume max avant azan programme: ' + items.map(function(it) {
+                return it.prayer + ' [' + String(it.hour).padStart(2,'0') + ':' + String(it.minute).padStart(2,'0') + ']';
+            }).join(', '));
+        }
+    }
+
+    window._ucRescheduleVolumeBoost = _ucScheduleVolumeBoostAlarms;
+
+    // Appel initial : attend que calculateAndDisplayTimesFunction() ait tourné
+    // ET que _installAdjustmentsTabs ait construit l'onglet (cf. commentaire
+    // d'en-tête).
+    setTimeout(function() {
+        _injectCheckbox();
+        _ucScheduleVolumeBoostAlarms();
+    }, 4000);
+
+    // Re-programmer chaque jour (les heures d'azan changent chaque jour).
+    var _volumeBoostLastScheduledDay = -1;
+    ucOn(UC_EVT.AZAN_TIME, function() {
+        var today = new Date().getDate();
+        if (today !== _volumeBoostLastScheduledDay) {
+            _volumeBoostLastScheduledDay = today;
+            setTimeout(_ucScheduleVolumeBoostAlarms, 2000);
         }
     });
 

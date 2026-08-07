@@ -145,7 +145,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
  *    - source runtime: `UC_EVT.AZAN_HIDE`
  *    - moment exact: à la fermeture de la fenêtre adhan, puis après délai
  *    - délai normal: `ucLightAmpliExtOffDelay`
- *    - délai vendredi: `ucLightAmpliExtOffDelayJomoa` si `_lastAzanPrayer === 'JOMOA'`
+ *    - délai vendredi: `ucLightAmpliExtOffDelayJomoa` si `_ucCurrentPrayerKey() === 'JOMOA'`
  *
  * 5) lightCfgBtn_minaretOn
  *    - key: `minaretOn`
@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.68';
+var CUSTOM_APP_VERSION = '12.69';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -2506,6 +2506,27 @@ function _lightPrayerAllowed(item, prayerKey) {
 
 // Dernière prière dont l'azan s'est affiché (pour afterAzanHide)
 let _lastAzanPrayer = '';
+
+// Résout la prière "courante" de façon robuste face aux rechargements de
+// page. _lastAzanPrayer n'est mise à jour QUE par le handler AZAN_SHOW (plus
+// bas) : si la page JS est (re)démarrée après l'azan d'une prière mais avant
+// celui de la suivante -- reload manuel, auto-reload de _applyMosqueConfig(),
+// redémarrage du WebView, etc. -- elle reste vide ('') pendant tout ce
+// cycle, ce qui bloque silencieusement TOUT ce qui en dépend (LIGHTS
+// beforeIqama/afterAzan dont ampliInt, minaret/mihrab, TAKBIR, AZKAR, doua
+// post-azan...) puisqu'une chaîne vide ne correspond à aucun masque/filtre.
+// Repli sur _ucPrayerNow() (plus bas dans ce fichier ; accessible ici par
+// hoisting de function), qui dérive la prière courante de
+// currentPrayerInterval -- recalculé en continu par le cœur (clockTick),
+// donc toujours à jour indépendamment de l'historique des évènements de
+// cette session. Même substitution Jumu'ah que _getUpcomingPrayerKey().
+function _ucCurrentPrayerKey() {
+    if (_lastAzanPrayer) return _lastAzanPrayer;
+    var k = (typeof _ucPrayerNow === 'function') ? _ucPrayerNow() : '';
+    if (!k || k === 'UNKNOWN') return '';
+    if (k === 'DOHR' && typeof isFriday !== 'undefined' && isFriday) return 'JOMOA';
+    return k;
+}
 
 // ── Exécution d'une commande HTTP (no-cors, fire-and-forget) ─────────────
 // silent=true : pas de trace HTTP (utilisé pour les ticks strobe intermédiaires)
@@ -4882,7 +4903,7 @@ function applyCustomIconsVisibility() {
     var _spFromTouch  = false;
 
     function _spToggleAzanPlayback() {
-        var _isFajr = (_lastAzanPrayer === 'FAJR');
+        var _isFajr = (_ucCurrentPrayerKey() === 'FAJR');
         var _ael = document.getElementById(_isFajr ? 'audioFajrElement' : 'audioAzanElement');
         if (!_ael) return;
         if (!_ael.paused) {
@@ -7796,7 +7817,7 @@ function _ucPrayerMinutes(key) {
         });
         // Trace uniquement sur jalons remarquables
         if (_prev === -1)
-            _L('CTR','START',{rem:rem+'s',display:Math.floor(rem/60)+':'+String(rem%60).padStart(2,'0'),prayer:_lastAzanPrayer});
+            _L('CTR','START',{rem:rem+'s',display:Math.floor(rem/60)+':'+String(rem%60).padStart(2,'0'),prayer:_ucCurrentPrayerKey()});
         else if (_ctrMilestones.indexOf(rem) !== -1)
             _L('CTR','TICK', {rem:rem+'s',display:String(Math.floor(rem/60)).padStart(2,'0')+':'+String(rem%60).padStart(2,'0')});
     }, 500);
@@ -7815,10 +7836,10 @@ function _ucPrayerMinutes(key) {
 
     var _prevIqamaSeq = startIqamaSequenceFunction;   // version déjà monkey-patchée
     startIqamaSequenceFunction = function() {
-        _L('EVT','IQAMA_SEQ',{prayer:_lastAzanPrayer,isFriday:isFriday,duration:prayerDurationMinutes+'min',idx:currentPrayerIndex});
-        // On se base sur _lastAzanPrayer (pas isFriday, qui est remis à false
+        _L('EVT','IQAMA_SEQ',{prayer:_ucCurrentPrayerKey(),isFriday:isFriday,duration:prayerDurationMinutes+'min',idx:currentPrayerIndex});
+        // On se base sur _ucCurrentPrayerKey() (pas isFriday, qui est remis à false
         // par clockTickFunction() avant que cette fonction soit appelée)
-        if (_lastAzanPrayer !== 'JOMOA') {
+        if (_ucCurrentPrayerKey() !== 'JOMOA') {
             _prevIqamaSeq();
             return;
         }
@@ -7949,12 +7970,12 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
     });
 
     ucOn(UC_EVT.AZAN_HIDE, function() {
-        if (_lastAzanPrayer === 'SHRQ') return;   // Doha : aucun déclenchement lumières
-        if (_lastAzanPrayer === 'JOMOA' && JS_DATA.ucJomoaOnHRscreen != 1) return; // Jumu'ah désactivée → pas de déclenchement
-        const isJomoa = (_lastAzanPrayer === 'JOMOA');
+        if (_ucCurrentPrayerKey() === 'SHRQ') return;   // Doha : aucun déclenchement lumières
+        if (_ucCurrentPrayerKey() === 'JOMOA' && JS_DATA.ucJomoaOnHRscreen != 1) return; // Jumu'ah désactivée → pas de déclenchement
+        const isJomoa = (_ucCurrentPrayerKey() === 'JOMOA');
         _lightProgramConfig.forEach(function(item) {
             if (_getItemTrigger(item) !== 'afterAzanHide') return;
-            var _ctx = { item: item.key, evt: 'AZAN_HIDE', prayer: _lastAzanPrayer };
+            var _ctx = { item: item.key, evt: 'AZAN_HIDE', prayer: _ucCurrentPrayerKey() };
 
             // Guard anti-double-fire (cooldown 5 min)
             var _msAgo = Date.now() - (_azanHideFiredMs[item.key] || 0);
@@ -7969,7 +7990,7 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
                 { _L('LIGHTS','SKIP', Object.assign({},_ctx,{reason:'disabled'})); return; }
             if (item.pairEnabledSetting && JS_CUSTOM[item.pairEnabledSetting] != 1)
                 { _L('LIGHTS','SKIP', Object.assign({},_ctx,{reason:'pair_off',pair:item.pairEnabledSetting})); return; }
-            if (!_lightPrayerAllowed(item, _lastAzanPrayer))
+            if (!_lightPrayerAllowed(item, _ucCurrentPrayerKey()))
                 { _L('LIGHTS','SKIP', Object.assign({},_ctx,{reason:'mask_blocked'})); return; }
             const url = (JS_CUSTOM[item.urlSetting] || '').trim();
             if (!url)
@@ -8014,14 +8035,14 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
 // beforeIqama : déclenché pendant le countdown iqama
 (function _installLightBeforeIqama() {
     ucOn(UC_EVT.IQAMA_SHOW, function() {
-        if (_lastAzanPrayer === 'SHRQ') return;   // Doha : aucun déclenchement lumières
+        if (_ucCurrentPrayerKey() === 'SHRQ') return;   // Doha : aucun déclenchement lumières
         _lightProgramConfig.forEach(function(item) {
             if (_getItemTrigger(item) === 'beforeIqama') _lightIqamaFiredSet[item.key] = false;
         });
     });
 
     ucOn(UC_EVT.COUNTDOWN_TICK, function(e) {
-        if (_lastAzanPrayer === 'SHRQ') return;   // Doha : aucun déclenchement lumières
+        if (_ucCurrentPrayerKey() === 'SHRQ') return;   // Doha : aucun déclenchement lumières
         _lightProgramConfig.forEach(function(item) {
             if (_getItemTrigger(item) !== 'beforeIqama') return;
             const thresholdSec = parseInt(JS_CUSTOM[item.delaySetting], 10);
@@ -8032,14 +8053,14 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
 
             // Décision unique au franchissement du seuil
             _lightIqamaFiredSet[item.key] = true;
-            var _ctx = { item: item.key, evt: 'COUNTDOWN_TICK', prayer: _lastAzanPrayer,
+            var _ctx = { item: item.key, evt: 'COUNTDOWN_TICK', prayer: _ucCurrentPrayerKey(),
                          rem: e.remainingSeconds+'s', threshold: threshold+'s' };
 
             if (JS_CUSTOM[item.enabledSetting] != 1)
                 { _L('LIGHTS','SKIP', Object.assign({},_ctx,{reason:'disabled'})); return; }
             if (item.pairEnabledSetting && JS_CUSTOM[item.pairEnabledSetting] != 1)
                 { _L('LIGHTS','SKIP', Object.assign({},_ctx,{reason:'pair_off',pair:item.pairEnabledSetting})); return; }
-            if (!_lightPrayerAllowed(item, _lastAzanPrayer))
+            if (!_lightPrayerAllowed(item, _ucCurrentPrayerKey()))
                 { _L('LIGHTS','SKIP', Object.assign({},_ctx,{reason:'mask_blocked'})); return; }
 
             if (item.isStrobe) {
@@ -8066,13 +8087,13 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
 // afterBlackHide : déclenché à la fermeture du rideau noir (fin de salat)
 (function _installLightAfterBlackHide() {
     ucOn(UC_EVT.BLACK_HIDE, function() {
-        if (_lastAzanPrayer === 'SHRQ') return;   // Doha : aucun déclenchement lumières
+        if (_ucCurrentPrayerKey() === 'SHRQ') return;   // Doha : aucun déclenchement lumières
         _lightProgramConfig.forEach(function(item) {
             if (item.trigger !== 'afterBlackHide') return;
-            var _ctx = { item: item.key, evt: 'BLACK_HIDE', prayer: _lastAzanPrayer };
+            var _ctx = { item: item.key, evt: 'BLACK_HIDE', prayer: _ucCurrentPrayerKey() };
             if (JS_CUSTOM[item.enabledSetting] != 1)
                 { _L('LIGHTS','SKIP', Object.assign({},_ctx,{reason:'disabled'})); return; }
-            if (!_lightPrayerAllowed(item, _lastAzanPrayer))
+            if (!_lightPrayerAllowed(item, _ucCurrentPrayerKey()))
                 { _L('LIGHTS','SKIP', Object.assign({},_ctx,{reason:'mask_blocked'})); return; }
             const url = (JS_CUSTOM[item.urlSetting] || '').trim();
             if (!url)
@@ -8092,15 +8113,15 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
 // afterBlackShow : déclenché à l'ouverture du rideau noir (début de salat)
 (function _installLightAfterBlackShow() {
     ucOn(UC_EVT.BLACK_SHOW, function() {
-        if (_lastAzanPrayer === 'SHRQ') return;   // Doha : aucun déclenchement lumières
+        if (_ucCurrentPrayerKey() === 'SHRQ') return;   // Doha : aucun déclenchement lumières
         _lightProgramConfig.forEach(function(item) {
             if (item.trigger !== 'afterBlackShow') return;
-            var _ctx = { item: item.key, evt: 'BLACK_SHOW', prayer: _lastAzanPrayer };
+            var _ctx = { item: item.key, evt: 'BLACK_SHOW', prayer: _ucCurrentPrayerKey() };
             if (JS_CUSTOM[item.enabledSetting] != 1)
                 { _L('LIGHTS','SKIP', Object.assign({},_ctx,{reason:'disabled'})); return; }
             if (item.pairEnabledSetting && JS_CUSTOM[item.pairEnabledSetting] != 1)
                 { _L('LIGHTS','SKIP', Object.assign({},_ctx,{reason:'pair_off',pair:item.pairEnabledSetting})); return; }
-            if (!_lightPrayerAllowed(item, _lastAzanPrayer))
+            if (!_lightPrayerAllowed(item, _ucCurrentPrayerKey()))
                 { _L('LIGHTS','SKIP', Object.assign({},_ctx,{reason:'mask_blocked'})); return; }
             const url = (JS_CUSTOM[item.urlSetting] || '').trim();
             if (!url)
@@ -8120,9 +8141,9 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
 // atIqamaZero : وميض المِأذنة / المحراب quand remainingSeconds == 0 (UC_EVT.IQAMA_TIME)
 (function _installLightAtIqamaZero() {
     ucOn(UC_EVT.IQAMA_TIME, function() {
-        if (_lastAzanPrayer === 'SHRQ') return;   // Doha : aucun déclenchement lumières
+        if (_ucCurrentPrayerKey() === 'SHRQ') return;   // Doha : aucun déclenchement lumières
         // ── Minaret ──────────────────────────────────────────────────────
-        var _ctxMin = { item: 'minaretBlink', evt: 'IQAMA_TIME', prayer: _lastAzanPrayer };
+        var _ctxMin = { item: 'minaretBlink', evt: 'IQAMA_TIME', prayer: _ucCurrentPrayerKey() };
         if (JS_CUSTOM.ucIqamaZeroMinaretBlinkEnabled != 1) {
             _L('LIGHTS','SKIP', Object.assign({},_ctxMin,{reason:'disabled'}));
         } else {
@@ -8135,23 +8156,23 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
             } else {
                 // Filtre prière : blink autorisé uniquement pour MGRB, ISHA, FAJR
                 var _minBlinkAllowed = ['MGRB', 'ISHA', 'FAJR'];
-                if (_minBlinkAllowed.indexOf(_lastAzanPrayer) === -1) {
-                    _L('LIGHTS','SKIP', Object.assign({},_ctxMin,{reason:'prayer_filter', allowed:'MGRB|ISHA|FAJR', prayer:_lastAzanPrayer}));
+                if (_minBlinkAllowed.indexOf(_ucCurrentPrayerKey()) === -1) {
+                    _L('LIGHTS','SKIP', Object.assign({},_ctxMin,{reason:'prayer_filter', allowed:'MGRB|ISHA|FAJR', prayer:_ucCurrentPrayerKey()}));
                 } else {
-                    var _minaretEndOn = (_lastAzanPrayer !== 'FAJR'); // MGRB/ISHA: fin en ON | FAJR: fin en OFF
+                    var _minaretEndOn = (_ucCurrentPrayerKey() !== 'FAJR'); // MGRB/ISHA: fin en ON | FAJR: fin en OFF
                 _L('LIGHTS','FIRE', Object.assign({},_ctxMin,{mode:'strobe', duration:durMin+'s', urlOn:urlOn, urlOff:urlOff, endState:_minaretEndOn?'ON':'OFF'}));
                     _runStrobe(urlOn, urlOff, durMin, 'minaretBlink', _minaretEndOn);
                 }
             }
         }
         // ── Mihrab ───────────────────────────────────────────────────────
-        var _ctxMih = { item: 'mihrabBlink', evt: 'IQAMA_TIME', prayer: _lastAzanPrayer };
+        var _ctxMih = { item: 'mihrabBlink', evt: 'IQAMA_TIME', prayer: _ucCurrentPrayerKey() };
         if (JS_CUSTOM.ucIqamaZeroMihrabBlinkEnabled != 1) {
             _L('LIGHTS','SKIP', Object.assign({},_ctxMih,{reason:'disabled'}));
         } else if (JS_CUSTOM.ucLightMihrabOnEnabled != 1) {
             _L('LIGHTS','SKIP', Object.assign({},_ctxMih,{reason:'mihrabOn_not_enabled'}));
-        } else if (!_lightPrayerAllowed({prayersMaskSetting:'ucLightMihrabOnPrayers'}, _lastAzanPrayer)) {
-            _L('LIGHTS','SKIP', Object.assign({},_ctxMih,{reason:'prayer_not_in_mask', prayer:_lastAzanPrayer}));
+        } else if (!_lightPrayerAllowed({prayersMaskSetting:'ucLightMihrabOnPrayers'}, _ucCurrentPrayerKey())) {
+            _L('LIGHTS','SKIP', Object.assign({},_ctxMih,{reason:'prayer_not_in_mask', prayer:_ucCurrentPrayerKey()}));
         } else {
             var urlOn2  = (JS_CUSTOM.ucLightMihrabOnUrl  || '').trim();
             var urlOff2 = (JS_CUSTOM.ucLightMihrabOffUrl || '').trim();
@@ -8454,7 +8475,7 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
 
     // ── Déclenchement principal : fermeture écran azan ────────────────────
     ucOn(UC_EVT.AZAN_HIDE, function() {
-        var prayer   = _lastAzanPrayer;
+        var prayer   = _ucCurrentPrayerKey();
         var isThur   = _isThursdayNight();
         var prayerOk = _isPrayerEnabled(prayer);
         var _ctx     = { item: 'salatNabi', prayer: prayer, isThursday: isThur };
@@ -9528,7 +9549,7 @@ function _doAudioUnlock() {
     _overlay.addEventListener('touchstart', _hide, { passive: true });
 
     ucOn(UC_EVT.AZAN_HIDE, function() {
-        if (_lastAzanPrayer !== 'JOMOA') return;
+        if (_ucCurrentPrayerKey() !== 'JOMOA') return;
         // AZAN_HIDE tardif issu du setTimeout('hideAzanPopupFunction()', ...)
         // non annulable du CORE (cf. _ucLastResyncCloseAt tout en haut du
         // fichier, _installResyncOnResume — meme bug que postAzanDoua) : si ce
@@ -9546,7 +9567,7 @@ function _doAudioUnlock() {
     window.testJomoaAdab = _show;
 
     // Test depuis la console : testJomoaAzanHide() → simule fin d'azan Jumu'ah
-    // Déclenche AZAN_HIDE avec _lastAzanPrayer='JOMOA' : overlay + lumières
+    // Déclenche AZAN_HIDE avec _ucCurrentPrayerKey()='JOMOA' : overlay + lumières
     window.testJomoaAzanHide = function() {
         _lastAzanPrayer = 'JOMOA';
         _ucFire(UC_EVT.AZAN_HIDE, {});
@@ -9609,7 +9630,7 @@ window.SIMUL = (function() {
             showElementWithTransitionFunction('azanPopupVertical');
             showElementWithTransitionFunction('azanPopupHorizontal');
         }
-        // _lastAzanPrayer sera mis à jour par le handler ucOn(AZAN_SHOW, ...)
+        // _ucCurrentPrayerKey() sera mis à jour par le handler ucOn(AZAN_SHOW, ...)
         _ucFire(UC_EVT.AZAN_SHOW, {
             prayer:        p.key,
             timeInMinutes: currentTimeInMinutes,
@@ -11658,6 +11679,20 @@ function forceHijriSyncFunction() {
         }
         if (JS_DATA.ucShortAzanActive  ==  1)   return;   // azan court : durée connue d'avance
 
+        // jomoaAzanCheckbox (JS_DATA.ucActivateJomoaAzan) : le cœur ne
+        // consulte ce flag QUE dans playAzanSoundFunction() (m2body.js
+        // L2284), jamais appelée ici -- ce handler court-circuite entièrement
+        // le cœur en mode "voix complète" (son JS direct + prise en charge
+        // native, cf. commentaire plus bas). Sans ce garde-fou, décocher la
+        // case n'empêchait donc RIEN le vendredi : ni le son JS, ni le son
+        // natif (_sendToNative ne consulte pas non plus ce flag -- cf. fix
+        // jumelé dans _sendToNative ci-dessous). Constaté en log Supabase :
+        // azan-doukali.ogg joué à l'heure de Jumu'ah malgré la case décochée.
+        if (e.prayer === 'DOHR' && isFriday && JS_DATA.ucActivateJomoaAzan != 1) {
+            _L('AZAN','WEBVIEW_AUDIO_SKIP',{prayer:e.prayer,reason:'jomoa_azan_disabled'});
+            return;
+        }
+
         var isFajr   = (e.prayer === 'FAJR');
         var audioEl  = document.getElementById(isFajr ? 'audioFajrElement' : 'audioAzanElement');
         if (!audioEl) return;
@@ -13049,8 +13084,8 @@ function forceHijriSyncFunction() {
             _L('LIGHTS','SKIP',{item:'ampliIntOff',evt:reason,reason:'url_empty'});
             return;
         }
-        if (!_lightPrayerAllowed({prayersMaskSetting:'ucLightAmpliIntOnPrayers'}, _lastAzanPrayer)) {
-            _L('LIGHTS','SKIP',{item:'ampliIntOff',evt:reason,reason:'mask_blocked',prayer:_lastAzanPrayer});
+        if (!_lightPrayerAllowed({prayersMaskSetting:'ucLightAmpliIntOnPrayers'}, _ucCurrentPrayerKey())) {
+            _L('LIGHTS','SKIP',{item:'ampliIntOff',evt:reason,reason:'mask_blocked',prayer:_ucCurrentPrayerKey()});
             return;
         }
         // _ucHttpCall déclenchera notre patch → _offSent=true + localStorage clear
@@ -13921,8 +13956,8 @@ function selectQPTakbir() {
     // ── Mode 0 : après rideau noir Maghreb (BLACK_HIDE) ─────────────────────
     ucOn(UC_EVT.BLACK_HIDE, function() {
         if (JS_CUSTOM.ucTakbirM0Enabled != 1) return;
-        if (_lastAzanPrayer !== 'MGRB') {
-            _L('TAKBIR','SKIP',{mode:'M0',reason:'not_maghreb',prayer:_lastAzanPrayer}); return;
+        if (_ucCurrentPrayerKey() !== 'MGRB') {
+            _L('TAKBIR','SKIP',{mode:'M0',reason:'not_maghreb',prayer:_ucCurrentPrayerKey()}); return;
         }
         if (!_isDhulHijjahFirst13()) {
             _L('TAKBIR','SKIP',{mode:'M0',reason:'not_dhul_hijjah_1_13',hijriMonthDay:hijriMonthDay}); return;
@@ -18256,14 +18291,14 @@ function selectQPTakbir() {
         }
         _overlay.classList.remove('ucPAD-fading');
         _overlay.classList.add('ucPAD-visible');
-        _L('PAD', 'SHOW', { item: 'postAzanDoua', prayer: _lastAzanPrayer });
+        _L('PAD', 'SHOW', { item: 'postAzanDoua', prayer: _ucCurrentPrayerKey() });
         // Fermeture automatique apres 20 s
         _fallbackTimer = setTimeout(_startFade, 20000);
     }
 
     // -- Declenchement : AZAN_HIDE pour les 5 prieres canoniques -----------
     ucOn(UC_EVT.AZAN_HIDE, function() {
-        var prayer = _lastAzanPrayer;
+        var prayer = _ucCurrentPrayerKey();
         if (!_5PRAYERS[prayer]) {
             _L('PAD', 'SKIP', { item: 'postAzanDoua', prayer: prayer, reason: 'not_5prayers' });
             return;
@@ -22769,7 +22804,7 @@ function _ucPrependTopMenuLink(a) {
     var _origPrepareAzkarDisplay = window.prepareAzkarDisplayFunction;
     if (typeof _origPrepareAzkarDisplay === 'function') {
         window.prepareAzkarDisplayFunction = function () {
-            _L('AZKAR', 'START', { prayer: (typeof _lastAzanPrayer !== 'undefined' ? _lastAzanPrayer : '') });
+            _L('AZKAR', 'START', { prayer: (typeof _ucCurrentPrayerKey() !== 'undefined' ? _ucCurrentPrayerKey() : '') });
             _origPrepareAzkarDisplay.apply(this, arguments);
             if (typeof window.hidePrayerTimesOverlayFunction === 'function') window.hidePrayerTimesOverlayFunction();
             // showPrayerTimesOverlayFunction() (coeur, appelée par l'original
@@ -23871,10 +23906,86 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         );
     }
 
+    // Calcule le Fajr de DEMAIN (minutes depuis minuit) en reappliquant les
+    // memes transformations que calculateAndDisplayTimesFunction (m2body.js
+    // ~L3271-3395) sur la ligne JS_TIMES du lendemain : reglage athan
+    // (ucAthanMinutesFAJR), heure d'ete (ucInSummerAdd1Hour, y compris les
+    // bascules dernier-dimanche-de-mars/octobre) et forcages globaux
+    // (ucForce1HourMore/Less). Necessaire car _sendToNative() ne reprogramme
+    // les 5 alarmes qu'une fois par jour, au moment ou Fajr vient justement
+    // de sonner (cf. plus bas) -- Fajr est donc la SEULE des 5 prieres deja
+    // passee "aujourd'hui" a cet instant precis, ce qui forcait jusqu'ici
+    // MobileJsBridge.scheduleSinglePrayer() a reutiliser l'heure d'aujourd'hui
+    // decalee de +1 jour (a 1-2 min pres) au lieu de la vraie valeur du
+    // lendemain -- d'ou le Fajr systematiquement ~1 min en avance quand
+    // l'heure de Fajr recule/avance d'un jour a l'autre.
+    function _computeTomorrowFajrMinutes() {
+        try {
+            if (typeof JS_TIMES === 'undefined' || typeof findIndexInArray !== 'function') return null;
+            var parts = String(currentDateString).split('-'); // "D-M-YYYY" (cf. m2body.js L3223)
+            if (parts.length !== 3) return null;
+            var baseDate = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+            var tomorrow = new Date(baseDate.getTime());
+            tomorrow.setDate(tomorrow.getDate() + 1);
+
+            var mm = ('0' + (tomorrow.getMonth() + 1)).slice(-2);
+            var dd = ('0' + tomorrow.getDate()).slice(-2);
+            var dateKey = mm + '-' + dd;
+            var idx = findIndexInArray(dateKey, JS_TIMES);
+            if (idx === -1 && dateKey === '02-29') idx = findIndexInArray('03-01', JS_TIMES);
+            if (idx === -1) return null;
+
+            var rawFajr = JS_TIMES[idx].split('~~~~~')[1].split('|')[0];
+            var fajrStr = adjustAthanTime(rawFajr, JS_DATA.ucAthanMinutesFAJR);
+
+            if (JS_DATA.ucInSummerAdd1Hour == 1) {
+                var tMonth = tomorrow.getMonth(), tYear = tomorrow.getFullYear(), tDay = tomorrow.getDate();
+                var summerMonthsArray = [3, 4, 5, 6, 7, 8, 9];
+                if (summerMonthsArray.indexOf(tMonth) !== -1) fajrStr = addOneHour(fajrStr);
+                if (tMonth === 2) {
+                    var lastSunMar = 24, dMar;
+                    for (var i = 25; i <= 31; i++) { dMar = new Date(tYear, 2, i); if (dMar.getDay() === 0) { lastSunMar = i; break; } }
+                    if (tDay >= lastSunMar) fajrStr = addOneHour(fajrStr);
+                }
+                if (tMonth === 9) {
+                    var lastSunOct = 24, dOct;
+                    for (var j = 25; j <= 31; j++) { dOct = new Date(tYear, 9, j); if (dOct.getDay() === 0) { lastSunOct = j; break; } }
+                    if (tDay >= lastSunOct) fajrStr = subtractOneHour(fajrStr);
+                }
+            }
+            if (JS_DATA.ucForce1HourMore == 1) fajrStr = addOneHour(fajrStr);
+            if (JS_DATA.ucForce1HourLess == 1) fajrStr = subtractOneHour(fajrStr);
+
+            var minutes = timeStringToMinutesFunction(fajrStr);
+            return (typeof minutes === 'number' && !isNaN(minutes)) ? minutes : null;
+        } catch (e) { return null; }
+    }
+
     function _sendToNative() {
         _syncPlaybackFlagsToNative();
         var obj = prayerTimesMinutesObject;
         if (!obj || typeof obj.FAJR !== 'number') return; // pas encore calcule
+
+        // Fajr est la seule des 5 prieres qui peut deja etre passee au moment
+        // ou cette fonction s'execute (cf. commentaire _computeTomorrowFajrMinutes
+        // ci-dessus) : si c'est le cas, on calcule directement la vraie valeur
+        // de demain en JS et on la transmet avec dayOffset=1, plutot que de
+        // laisser MobileJsBridge deviner en decalant +1 jour la valeur du jour
+        // meme (imprecis de 1-2 min).
+        var _fajrMinutesToSend = obj.FAJR;
+        var _fajrDayOffset = 0;
+        var _nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+        if (_nowMinutes >= obj.FAJR) {
+            var _tomorrowFajr = _computeTomorrowFajrMinutes();
+            if (typeof _tomorrowFajr === 'number') {
+                _fajrMinutesToSend = _tomorrowFajr;
+                _fajrDayOffset = 1;
+                if (typeof window.AndroidMobile.log === 'function') {
+                    window.AndroidMobile.log('[NativeAlarms] Fajr deja passe aujourd\'hui (' + obj.FAJR +
+                        ' min) -> lookahead demain = ' + _tomorrowFajr + ' min (dayOffset=1)');
+                }
+            }
+        }
 
         // Reglage "Afficher l'ecran Adhan" (showAzanScreenCheckbox, JS_DATA.
         // ucShowAzanWindow) : seul flag "azan on/off" expose dans l'appli. Le
@@ -23938,7 +24049,9 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
         var list = [];
         keys.forEach(function(p) {
-            var m = obj[p.k];
+            var isFajr = (p.k === 'FAJR');
+            var m = isFajr ? _fajrMinutesToSend : obj[p.k];
+            var dayOffset = isFajr ? _fajrDayOffset : 0;
             if (typeof m !== 'number') return;
             var h = Math.floor(m / 60), mi = m % 60;
 
@@ -23950,7 +24063,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 var alertTotal = m - alertMinutes;
                 if (alertTotal >= 0) {
                     var ah = Math.floor(alertTotal / 60), ami = alertTotal % 60;
-                    list.push({ prayer: p.name, hour: ah, minute: ami, prayerHour: h, prayerMinute: mi, minutesBefore: alertMinutes });
+                    list.push({ prayer: p.name, hour: ah, minute: ami, prayerHour: h, prayerMinute: mi, minutesBefore: alertMinutes, dayOffset: dayOffset });
                 }
             }
 
@@ -23960,10 +24073,31 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             // s'il doit jouer TOUJOURS (mode "voix complete" -> source audio
             // unique, cf. audioEl.muted plus haut) ou seulement en arriere-plan
             // comme avant (azan court / mode bip -> non geres nativement).
+            // jomoaAzanCheckbox (JS_DATA.ucActivateJomoaAzan) : sur DOHR le
+            // vendredi, prayerTimesMinutesObject.DOHR contient deja l'heure de
+            // Jumu'ah (dohrTimeStr ecrase par jomoaFixedTime, cf. m2body.js
+            // "if(isFriday){...dohrTimeStr = jomoaFixedTime;...}") -- sans ce
+            // garde-fou, l'alarme native EXACTE (audio reel via
+            // AzanPlaybackService) etait programmee pour Jumu'ah quel que soit
+            // ce reglage, ce reglage n'etant jamais lu nulle part cote natif.
+            // Le rappel "N min avant" (bloc alertEnabled ci-dessus) reste
+            // envoye tel quel : simple notification, pas d'audio azan.
+            if (p.k === 'DOHR' && isFriday && JS_DATA.ucActivateJomoaAzan != 1) {
+                if (typeof window.AndroidMobile.log === 'function') {
+                    window.AndroidMobile.log('[NativeAlarms] Jumu\'ah desactivee (ucActivateJomoaAzan=0) -> alarme audio DOHR non programmee');
+                }
+                return;
+            }
+
+            // dayOffset : 1 uniquement pour Fajr quand elle est deja passee
+            // aujourd'hui (cf. _computeTomorrowFajrMinutes ci-dessus) -- indique
+            // explicitement a MobileJsBridge.scheduleSinglePrayer() de viser
+            // demain plutot que de deviner via son fallback "deja passe -> +1j".
             list.push({
                 prayer: p.name, hour: h, minute: mi, prayerHour: h, prayerMinute: mi, minutesBefore: 0,
                 shortAzan: (JS_DATA.ucShortAzanActive == 1) ? 1 : 0,
-                voiceMode: (JS_DATA.ucAzanIqamaByVoice == 1) ? 1 : 0
+                voiceMode: (JS_DATA.ucAzanIqamaByVoice == 1) ? 1 : 0,
+                dayOffset: dayOffset
             });
         });
         if (!list.length) return;
@@ -24011,6 +24145,23 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var _origToggleAzanScreen = window.toggleAzanScreenFunction;
         window.toggleAzanScreenFunction = function() {
             var ret = _origToggleAzanScreen.apply(this, arguments);
+            _sendToNative();
+            return ret;
+        };
+    }
+
+    // Meme raisonnement, applique a jomoaAzanCheckbox (toggleJomoaAzanFunction,
+    // core -> JS_DATA.ucActivateJomoaAzan) : sans ce hook, decocher la case un
+    // vendredi APRES le reprogrammation quotidienne du matin (cf. plus haut,
+    // declenchee par le premier AZAN_TIME du jour) laissait l'alarme audio de
+    // Jumu'ah deja armee -- le garde-fou ajoute dans la boucle keys.forEach
+    // ci-dessus n'aurait alors ete pris en compte qu'au prochain changement de
+    // jour calendaire, potentiellement APRES l'heure de Jumu'ah du jour meme.
+    if (typeof window.toggleJomoaAzanFunction === 'function') {
+        var _origToggleJomoaAzan = window.toggleJomoaAzanFunction;
+        window.toggleJomoaAzanFunction = function() {
+            var ret = _origToggleJomoaAzan.apply(this, arguments);
+            _L('AZAN', 'RESCHEDULE', { reason: 'jomoa_azan_toggled', jomoaAzan: JS_DATA.ucActivateJomoaAzan });
             _sendToNative();
             return ret;
         };
@@ -24640,6 +24791,23 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         return null;
     }
 
+    // ── 1bis) Fichier azan personnalisé (choisi par l'utilisateur) ───────
+    // Réutilise le même stockage disque que le catalogue (AzanCatalogManager,
+    // id réservé custom_fajr/custom_general) sous la forme d'un "item virtuel"
+    // {id, downloadUrl:''} : _acApplyAzanToPlayer / AzanPlaybackService n'ont
+    // besoin d'aucune distinction particulière, ils ne font qu'un lookup par
+    // id sur le disque -- cf. MobileJsBridge.pickCustomAzanFile/AzanCatalogManager.
+    function _acCustomId(groupKey) { return (groupKey === 'fajr') ? 'custom_fajr' : 'custom_general'; }
+    function _acIsCustomId(id) { return id === 'custom_fajr' || id === 'custom_general'; }
+    function _acVirtualCustomItem(groupKey) { return { id: _acCustomId(groupKey), downloadUrl: '' }; }
+    // Résout un id sélectionné (JS_CUSTOM.ucAzanFajrSelected/ucAzanGeneralSelected)
+    // vers l'item à appliquer, qu'il vienne du catalogue en ligne ou d'un
+    // import personnalisé -- point d'entrée unique utilisé par _acReapplySelections.
+    function _acResolveItem(id, groupKey) {
+        if (_acIsCustomId(id)) return _acVirtualCustomItem(groupKey);
+        return _acFindItem(id);
+    }
+
     // ── 2) Application au lecteur azan réel ─────────────────────────────
     // (audioFajrElement / audioAzanElement — mêmes éléments que playAzanSoundFunction
     // dans m2body.js ; ce fichier ne fait que réécrire leur .src, comme le fait déjà
@@ -24696,11 +24864,11 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _acLoadCatalog().then(function () {
             _acSyncSelectionToNative();
             if (JS_CUSTOM.ucAzanFajrSelected) {
-                var f = _acFindItem(JS_CUSTOM.ucAzanFajrSelected);
+                var f = _acResolveItem(JS_CUSTOM.ucAzanFajrSelected, 'fajr');
                 if (f) _acApplyAzanToPlayer('fajr', f);
             }
             if (JS_CUSTOM.ucAzanGeneralSelected) {
-                var g = _acFindItem(JS_CUSTOM.ucAzanGeneralSelected);
+                var g = _acResolveItem(JS_CUSTOM.ucAzanGeneralSelected, 'general');
                 if (g) _acApplyAzanToPlayer('general', g);
             }
         });
@@ -24907,6 +25075,96 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _L('AZANCAT', 'FIRE', { action: 'deselect', group: groupKey });
     }
 
+    // ── 5bis) Fichier azan personnalisé : sélection/import/suppression ───
+    function _acSelectCustomCommit(groupKey) {
+        var key = (groupKey === 'fajr') ? 'ucAzanFajrSelected' : 'ucAzanGeneralSelected';
+        JS_CUSTOM[key] = _acCustomId(groupKey);
+        saveCustomSettingsFunction();
+        _acApplyAzanToPlayer(groupKey, _acVirtualCustomItem(groupKey));
+        _acSyncSelectionToNative();
+        _acRenderAll();
+        _L('AZANCAT', 'FIRE', { action: 'custom_select', group: groupKey });
+    }
+
+    // Délai avant abandon du polling si l'utilisateur annule le sélecteur
+    // système (aucun callback natif dans ce cas, cf. MainActivity
+    // pickAudioLauncher -- uri == null n'écrit jamais de statut) : pas
+    // d'erreur affichée, une annulation est un cas normal, pas un échec.
+    var _AC_CUSTOM_PICK_TIMEOUT_MS = 180000;
+    var _acCustomPickPolling = {};   // groupKey -> {interval, timeout}
+
+    function _acPickCustomFile(groupKey) {
+        if (!_ucHasNative('pickCustomAzanFile')) {
+            if (window._ucToast) window._ucToast('غير متاح على هذا الجهاز | Non disponible ici', 'error');
+            return;
+        }
+        var prev = _acCustomPickPolling[groupKey];
+        if (prev) { clearInterval(prev.interval); clearTimeout(prev.timeout); }
+
+        window.AndroidMobile.pickCustomAzanFile(groupKey);
+        _L('AZANCAT', 'FIRE', { action: 'custom_pick_start', group: groupKey });
+
+        var entry = { interval: null, timeout: null };
+        entry.interval = setInterval(function () {
+            var st;
+            try { st = JSON.parse(window.AndroidMobile.getCustomAzanImportStatus(groupKey)); }
+            catch (e) { return; }
+            if (st.status === 'copying' || st.status === 'idle') return;
+            clearInterval(entry.interval);
+            clearTimeout(entry.timeout);
+            delete _acCustomPickPolling[groupKey];
+            if (st.status === 'done') {
+                _L('AZANCAT', 'FIRE', { action: 'custom_pick_done', group: groupKey });
+                if (window._ucToast) window._ucToast('تم اختيار الملف بنجاح | Fichier appliqué', 'success');
+                _acSelectCustomCommit(groupKey);
+            } else if (st.status === 'error') {
+                _L('AZANCAT', 'SKIP', { action: 'custom_pick_error', group: groupKey, error: st.message });
+                if (window._ucToast) window._ucToast('خطأ في الملف | Erreur' + (st.message ? ' — ' + st.message : ''), 'error');
+                _acRenderAll();
+            }
+        }, 500);
+        entry.timeout = setTimeout(function () {
+            clearInterval(entry.interval);
+            delete _acCustomPickPolling[groupKey];
+        }, _AC_CUSTOM_PICK_TIMEOUT_MS);
+        _acCustomPickPolling[groupKey] = entry;
+    }
+
+    function _acClearCustomFile(groupKey) {
+        if (_ucHasNative('clearCustomAzanFile')) window.AndroidMobile.clearCustomAzanFile(groupKey);
+        var key = (groupKey === 'fajr') ? 'ucAzanFajrSelected' : 'ucAzanGeneralSelected';
+        if (JS_CUSTOM[key] === _acCustomId(groupKey)) {
+            _acDeselect(groupKey);   // remet le son par défaut + sync natif + re-rendu
+        } else {
+            _acRenderAll();
+        }
+        _L('AZANCAT', 'FIRE', { action: 'custom_clear', group: groupKey });
+    }
+
+    function _acToggleCustomPreview(groupKey, btn) {
+        var customId = _acCustomId(groupKey);
+        if (!_acPreviewEl) {
+            _acPreviewEl = new Audio();
+            _acPreviewEl.addEventListener('ended', _acStopPreviewUI);
+            _acPreviewEl.addEventListener('error', _acStopPreviewUI);
+        }
+        if (_acPreviewId === customId && !_acPreviewEl.paused) {
+            _acPreviewEl.pause();
+            _acStopPreviewUI();
+            return;
+        }
+        _acPreviewEl.pause();
+        _acStopPreviewUI();
+        var url = _ucHasNative('getAzanCatalogFileUrl') ? window.AndroidMobile.getAzanCatalogFileUrl(customId) : '';
+        if (!url) return;
+        _acPreviewEl.src = url;
+        _acPreviewEl.currentTime = 0;
+        _acPreviewEl.play().catch(function () {});
+        _acPreviewId = customId;
+        if (btn) { btn.classList.add('acPlaying'); btn.innerHTML = '&#9208;'; }
+        _L('AZANCAT', 'FIRE', { action: 'custom_preview', group: groupKey });
+    }
+
     // ── 6) Rendu ─────────────────────────────────────────────────────────
     function _acFmtDuration(sec) {
         if (!sec && sec !== 0) return '';
@@ -24979,6 +25237,71 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         return row;
     }
 
+    // Bloc "en tête de liste" pour un fichier azan personnalisé (un par
+    // groupe : fajr / general) — même vocabulaire visuel que _acRenderItemRow
+    // (acItemRow/acSelected/acBadge) mais source = disque local uniquement,
+    // jamais le catalogue en ligne. Clic sur la ligne : lance le sélecteur si
+    // aucun fichier n'est encore choisi, sinon bascule sélection/désélection.
+    function _acRenderCustomBlock(groupKey) {
+        var wrap = document.createElement('div');
+        wrap.className = 'acGroupBlock';
+        var title = document.createElement('div');
+        title.className = 'acGroupTitle';
+        title.textContent = (groupKey === 'fajr') ? 'أذان الفجر' : 'أذان (باقي الصلوات)';
+        wrap.appendChild(title);
+
+        var info = { hasFile: false, fileName: '' };
+        if (_ucHasNative('getCustomAzanFileInfo')) {
+            try { info = JSON.parse(window.AndroidMobile.getCustomAzanFileInfo(groupKey)) || info; } catch (e) {}
+        }
+        var selKey   = (groupKey === 'fajr') ? 'ucAzanFajrSelected' : 'ucAzanGeneralSelected';
+        var customId = _acCustomId(groupKey);
+        var isSel    = info.hasFile && (JS_CUSTOM[selKey] === customId);
+        var isPrev   = (_acPreviewId === customId && _acPreviewEl && !_acPreviewEl.paused);
+
+        var row = document.createElement('div');
+        row.className = 'acItemRow' + (isSel ? ' acSelected' : '');
+
+        row.innerHTML =
+            '<div class="acItemRadio"></div>' +
+            '<div class="acItemInfo">' +
+                '<div class="acItemName">' + (info.hasFile ? info.fileName : 'لم يتم اختيار ملف بعد | Aucun fichier choisi') + '</div>' +
+                '<div class="acItemMeta">' +
+                    (info.hasFile
+                        ? '<span class="acBadge acBadgeOffline">&#10004; ملف من جهازك | Fichier local</span>'
+                        : '<span class="acBadge acBadgeStream">اضغط لاختيار ملف (USB/تخزين) — mp3, ogg, mp4</span>') +
+                '</div>' +
+            '</div>' +
+            '<div class="acItemActions">' +
+                (info.hasFile ? '<div class="acIconBtn acPlayBtn' + (isPrev ? ' acPlaying' : '') + '" data-id="' + customId + '">' + (isPrev ? '&#9208;' : '&#9654;') + '</div>' : '') +
+                '<div class="acIconBtn acPickCustomBtn" title="اختيار من الجهاز">&#128193;</div>' +
+                (info.hasFile ? '<div class="acIconBtn acTrashCustomBtn" title="حذف">&#128465;</div>' : '') +
+            '</div>';
+
+        row.addEventListener('click', function (e) {
+            if (e.target.closest('.acPickCustomBtn') || e.target.closest('.acTrashCustomBtn') || e.target.closest('.acPlayBtn')) return;
+            if (!info.hasFile) { _acPickCustomFile(groupKey); return; }
+            if (isSel) { _acDeselect(groupKey); } else { _acSelectCustomCommit(groupKey); }
+        });
+        var pickBtn = row.querySelector('.acPickCustomBtn');
+        if (pickBtn) pickBtn.addEventListener('click', function (e) { e.stopPropagation(); _acPickCustomFile(groupKey); });
+        var trashBtn = row.querySelector('.acTrashCustomBtn');
+        if (trashBtn) trashBtn.addEventListener('click', function (e) { e.stopPropagation(); _acClearCustomFile(groupKey); });
+        var playBtn = row.querySelector('.acPlayBtn');
+        if (playBtn) playBtn.addEventListener('click', function (e) { e.stopPropagation(); _acToggleCustomPreview(groupKey, playBtn); });
+
+        wrap.appendChild(row);
+        return wrap;
+    }
+
+    function _acRenderCustomBlocks() {
+        var host = document.getElementById('acCustomHost');
+        if (!host) return;
+        host.innerHTML = '';
+        host.appendChild(_acRenderCustomBlock('fajr'));
+        host.appendChild(_acRenderCustomBlock('general'));
+    }
+
     function _acRenderGroup(group, selectedId) {
         var wrap = document.createElement('div');
         wrap.className = 'acGroupBlock';
@@ -24993,6 +25316,11 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     }
 
     function _acRenderAll() {
+        // Indépendant du chargement du catalogue en ligne (_acCatalog) : un
+        // fichier personnalisé doit rester sélectionnable même si le
+        // catalogue distant/local a échoué à charger.
+        _acRenderCustomBlocks();
+
         if (!_acCatalog) return;
 
         var sw = document.getElementById('acEnableSwitch');
@@ -25025,6 +25353,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                     '<div id="acEnableLabel">تفعيل الأذان الصوتي</div>' +
                     '<div id="acEnableSwitch" class="acSwitch"></div>' +
                 '</div>' +
+                '<div id="acCustomHost"></div>' +
                 '<div id="acGroupsHost"></div>' +
             '</div>' +
         '</div>';

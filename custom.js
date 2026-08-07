@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.67';
+var CUSTOM_APP_VERSION = '12.68';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -7616,6 +7616,24 @@ function _ucHumanLog(cat, verb, ctx, ts) {
                (delayTxt ? ' (délai ' + delayTxt + ')' : '') +
                (evtFr ? ' ' + evtFr : '') +
                (ctx.prayer ? ' — ' + _ucPrayerFr(ctx.prayer) : '');
+    } else if (cat === 'AUDIO' && verb === 'FIRE' && ctx.action === 'autoStart') {
+        line = "Début de la lecture du Coran avant l'azan de la prière de " + _ucPrayerFr(ctx.prayer);
+    } else if (cat === 'AUDIO' && verb === 'STOP' && ctx.action === 'stopBeforeAzan' && ctx.result === 'stopped') {
+        line = "Arrêt de la lecture du Coran avant l'azan de la prière de " + _ucPrayerFr(ctx.prayer);
+    } else if (cat === 'AUDIO' && verb === 'FIRE' && ctx.action === 'fin_mp3') {
+        line = "Lecture du son de fin de récitation (fin.ogg)";
+    } else if (cat === 'POPUP' && verb === 'SHOW' && ctx.item === 'hadith_iqama') {
+        line = "Affichage du hadith avant l'iqama (58s-40s)";
+    } else if (cat === 'POPUP' && verb === 'HIDE' && ctx.item === 'hadith_iqama') {
+        line = "Fermeture du hadith avant l'iqama";
+    } else if (cat === 'POPUP' && verb === 'SHOW' && ctx.item === 'hadith_15s') {
+        line = "Affichage du second hadith avant l'iqama (15s-7s)";
+    } else if (cat === 'POPUP' && verb === 'HIDE' && ctx.item === 'hadith_15s') {
+        line = "Fermeture du second hadith avant l'iqama";
+    } else if (cat === 'AZKAR' && verb === 'START') {
+        line = "Début de l'affichage des azkar" + (ctx.prayer ? ' — après ' + _ucPrayerFr(ctx.prayer) : '');
+    } else if (cat === 'AZKAR' && verb === 'END') {
+        line = "Fin de l'affichage des azkar" + (ctx.reason ? ' (' + ctx.reason + ')' : '');
     }
     if (line) console.log('[' + ts + '][' + cat + '] ' + line);
 }
@@ -22688,6 +22706,7 @@ function _ucPrependTopMenuLink(a) {
     if (typeof _origStopAzkarDisplay === 'function') {
         window.stopAzkarDisplayFunction = function () {
             _cancelPendingInterlude('stop_azkar_display');
+            _L('AZKAR', 'END', { reason: 'stop_azkar_display' });
             return _origStopAzkarDisplay.apply(this, arguments);
         };
     }
@@ -22708,6 +22727,7 @@ function _ucPrependTopMenuLink(a) {
     if (typeof _origHideAzkarDisplay === 'function') {
         window.hideAzkarDisplayFunction = function () {
             _cancelPendingInterlude('hide_azkar_display');
+            _L('AZKAR', 'END', { reason: 'hide_azkar_display' });
             return _origHideAzkarDisplay.apply(this, arguments);
         };
     }
@@ -22749,6 +22769,7 @@ function _ucPrependTopMenuLink(a) {
     var _origPrepareAzkarDisplay = window.prepareAzkarDisplayFunction;
     if (typeof _origPrepareAzkarDisplay === 'function') {
         window.prepareAzkarDisplayFunction = function () {
+            _L('AZKAR', 'START', { prayer: (typeof _lastAzanPrayer !== 'undefined' ? _lastAzanPrayer : '') });
             _origPrepareAzkarDisplay.apply(this, arguments);
             if (typeof window.hidePrayerTimesOverlayFunction === 'function') window.hidePrayerTimesOverlayFunction();
             // showPrayerTimesOverlayFunction() (coeur, appelée par l'original

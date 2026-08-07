@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.69';
+var CUSTOM_APP_VERSION = '12.70';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -2523,7 +2523,10 @@ let _lastAzanPrayer = '';
 function _ucCurrentPrayerKey() {
     if (_lastAzanPrayer) return _lastAzanPrayer;
     var k = (typeof _ucPrayerNow === 'function') ? _ucPrayerNow() : '';
-    if (!k || k === 'UNKNOWN') return '';
+    if (!k || k === 'UNKNOWN') {
+        k = (typeof _ucComputeCurrentPrayerFromClock === 'function') ? _ucComputeCurrentPrayerFromClock() : '';
+    }
+    if (!k) return '';
     if (k === 'DOHR' && typeof isFriday !== 'undefined' && isFriday) return 'JOMOA';
     return k;
 }
@@ -7706,6 +7709,41 @@ function _ucPrayerNow() {
     catch (e) { return 'UNKNOWN'; }
 }
 
+// Repli de dernier recours pour _ucCurrentPrayerKey() : recalcule la prière
+// courante DIRECTEMENT depuis l'horloge et les variables globales du cœur
+// (fajrTimeInMinutes...ishaTimeInMinutes, déjà écrites par
+// calculateAndDisplayTimesFunction()), sans dépendre de currentPrayerInterval.
+// Constaté en conditions réelles (07/08/2026, mosquée Nour Chaker, reprise
+// mi-cycle après reboot pendant l'iqama Maghreb) : currentPrayerInterval est
+// resté à sa valeur initiale ('') pendant toute la session (18+ minutes,
+// plusieurs ticks minute passés) alors que le vrai azan Maghreb avait bien
+// sonné à l'heure calculée -- la seule explication compatible est qu'aucun
+// des chemins du cœur qui écrivent currentPrayerInterval
+// (updateNextPrayerDisplayFunction(), appelée uniquement depuis
+// updateTimeAndPrayersFunction(false) -- jamais avec skipPrayerTimeChecks=
+// true, cf. resync-on-resume/onfocus) n'a fini par s'exécuter avec succès
+// dans ce cycle de reprise. Résultat : _ucPrayerNow() retombait sur
+// 'UNKNOWN', _ucCurrentPrayerKey() sur '', et ampliInt (et tout ce qui
+// dépend du masque prière) restait bloqué avec reason=mask_blocked même
+// pendant une prière explicitement autorisée par le masque. Reproduit
+// exactement la même logique d'intervalle que updateNextPrayerDisplayFunction
+// (m2body.js) mais localement, sans dépendance à une variable partagée
+// pouvant rester périmée.
+function _ucComputeCurrentPrayerFromClock() {
+    try {
+        if (typeof fajrTimeInMinutes !== 'number' || typeof ishaTimeInMinutes !== 'number') return '';
+        var now = new Date();
+        var mins = now.getHours() * 60 + now.getMinutes();
+        if (mins <= fajrTimeInMinutes)    return 'ISHA';   // nuit precedente, avant Fajr
+        if (mins <= shuruqTimeInMinutes)  return 'FAJR';
+        if (mins <= dohrTimeInMinutes)    return 'SHRQ';
+        if (mins <= asrTimeInMinutes)     return 'DOHR';
+        if (mins <= maghribTimeInMinutes) return 'ASSR';
+        if (mins <= ishaTimeInMinutes)    return 'MGRB';
+        return 'ISHA';
+    } catch (e) { return ''; }
+}
+
 // Identification de la prière par son heure exacte
 function _ucPrayerAtMinutes(t) {
     if (t === fajrTimeInMinutes)    return 'FAJR';
@@ -11044,6 +11082,19 @@ function forceHijriSyncFunction() {
         var mosqueId = '';
         try { mosqueId = localStorage.getItem('UC_MOSQUE_ID') || ''; } catch(e) {}
 
+        // Trace AVANT l'envoi : un envoi peut réussir (HTTP 2xx, badge "envoyé"
+        // affiché) tout en étant *inexploitable* si mosque_id est vide ou
+        // générique -- ce n'était visible nulle part avant ce correctif (cas
+        // reel constate 07/08/2026 : rapport insere avec mosque_id=
+        // 'anonymous.generic', introuvable par la requete filtree sur le vrai
+        // id, alors que l'envoi avait techniquement reussi cote client).
+        if (!mosqueId || mosqueId === 'anonymous.generic') {
+            _L('DIAG', 'SEND_REPORT_WARN', {
+                reason: 'mosque_id vide ou generique au moment de l\'envoi',
+                mosqueId: mosqueId || '(vide)'
+            });
+        }
+
         var payload = {
             mosque_id: mosqueId,
             log_text: _dbgLogs.map(function(e) { return e.text; }).join('\n'),
@@ -11056,6 +11107,19 @@ function forceHijriSyncFunction() {
             }
         };
 
+        // Timeout client explicite : fetch() n'en a pas nativement -- sans
+        // ceci, un reseau qui ne repond jamais (boitier hors-ligne, DNS
+        // capricieux) laisse le bouton bloque sur "... جارٍ الإرسال"
+        // indefiniment, sans jamais atteindre ni .then() ni .catch() -- une
+        // autre forme d'echec silencieux, cf. meme pattern deja utilise dans
+        // _acLoadCatalogFrom (catalogue azan) pour la meme raison.
+        var _controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var _timeoutMs = 15000;
+        var _timer = _controller ? setTimeout(function () {
+            _L('DIAG', 'SEND_REPORT_TIMEOUT', { mosqueId: mosqueId || '(vide)', timeoutMs: _timeoutMs });
+            _controller.abort();
+        }, _timeoutMs) : null;
+
         fetch(_SB_URL + '/rest/v1/debug_reports', {
             method: 'POST',
             headers: {
@@ -11063,14 +11127,21 @@ function forceHijriSyncFunction() {
                 'apikey': _SB_KEY,
                 'Authorization': 'Bearer ' + _SB_KEY
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: _controller ? _controller.signal : undefined
         }).then(function(r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            _reset('✓ تم الإرسال');
-            var _L_SENT = { AR: 'تم إرسال التقرير', FR: 'Rapport envoyé', EN: 'Report sent' };
-            if (window._ucToast) window._ucToast(_L_SENT[_ucLang()] || _L_SENT.EN, 'ok');
+            if (_timer) clearTimeout(_timer);
+            return r.text().then(function (bodyText) {
+                if (!r.ok) throw new Error('HTTP ' + r.status + (bodyText ? ' - ' + bodyText : ''));
+                _reset('✓ تم الإرسال');
+                _L('DIAG', 'SEND_REPORT_OK', { mosqueId: mosqueId || '(vide)', status: r.status, chars: payload.log_text.length });
+                var _L_SENT = { AR: 'تم إرسال التقرير', FR: 'Rapport envoyé', EN: 'Report sent' };
+                if (window._ucToast) window._ucToast(_L_SENT[_ucLang()] || _L_SENT.EN, 'ok');
+            });
         }).catch(function(err) {
+            if (_timer) clearTimeout(_timer);
             _reset('✗ فشل الإرسال');
+            _L('DIAG', 'SEND_REPORT_FAIL', { mosqueId: mosqueId || '(vide)', error: (err && err.message) || String(err) });
             var _L_FAILED = { AR: 'فشل إرسال التقرير', FR: 'Échec envoi rapport', EN: 'Report send failed' };
             if (window._ucToast) window._ucToast(_L_FAILED[_ucLang()] || _L_FAILED.EN, 'err');
             console.error('[DIAG] send report failed', err.message || String(err));
@@ -14850,6 +14921,25 @@ function selectQPTakbir() {
     // mosqueNameDisplayVertical / ucSelectMosqueButton. Reload unique
     // (ne se reproduit plus une fois UC_MOSQUE_ID posé).
     if (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG._NO_MOSQUE_SELECTED) {
+        // Trace AVANT l'ecrasement + reload (constate 07/08/2026, mosquee Nour
+        // Chaker : UC_MOSQUE_ID absent a un demarrage -- reset silencieux vers
+        // 'anonymous.generic', aucune preuve nulle part, rapport de debug
+        // suivant envoye/insere sous ce faux id sans que rien ne le signale).
+        // _L() seul ne suffit PAS ici : location.reload() juste apres vide
+        // _dbgLogs (memoire JS) avant que quiconque ait pu le lire -- la copie
+        // native (NativeEventLog, persistante) est donc indispensable pour que
+        // cette trace survive au reload et soit fusionnee au prochain
+        // chargement de la console debug (cf. _mergeNativeAzanLog).
+        var _diagStorageLen = -1;
+        try { _diagStorageLen = localStorage.length; } catch (e) {}
+        var _diagHadJsData = false;
+        try { _diagHadJsData = !!localStorage.getItem('JS_DATA'); } catch (e) {}
+        var _diagMsg = '[MOSQUE_SEL] ANON_FALLBACK_RESET reason=UC_MOSQUE_ID_absent storageKeys=' +
+            _diagStorageLen + ' hadJsData=' + _diagHadJsData;
+        _L('MOSQUE_SEL', 'ANON_FALLBACK_RESET', { storageKeys: _diagStorageLen, hadJsData: _diagHadJsData });
+        if (window.AndroidMobile && typeof window.AndroidMobile.log === 'function') {
+            window.AndroidMobile.log(_diagMsg);
+        }
         try { localStorage.setItem('UC_MOSQUE_ID', 'anonymous.generic'); } catch (e) {}
         location.reload();
     }
@@ -24163,6 +24253,32 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             var ret = _origToggleJomoaAzan.apply(this, arguments);
             _L('AZAN', 'RESCHEDULE', { reason: 'jomoa_azan_toggled', jomoaAzan: JS_DATA.ucActivateJomoaAzan });
             _sendToNative();
+            return ret;
+        };
+    }
+
+    // Meme raisonnement, applique a selectCityFunction (core, changement de
+    // ville depuis l'onglet reglages) : contrairement aux toggles ci-dessus,
+    // ce n'etait couvert par AUCUN hook -- constate en conditions reelles
+    // (07/08/2026, mosquee Nour Chaker, tn.tunis -> tn.tunis_, Maghreb
+    // 19:22 -> 19:23) : le son natif a quand meme joue a 19:22 (ancienne
+    // valeur), car selectCityFunction() charge le nouveau wtimes-*.js et
+    // rappelle calculateAndDisplayTimesFunction() SANS jamais recharger la
+    // page ni appeler _sendToNative() -- l'alarme native restait donc armee
+    // avec la valeur de la ville precedente jusqu'au prochain cycle
+    // quotidien (lendemain matin). Le chargement du script + recalcul etant
+    // asynchrones (onload du <script> injecte dynamiquement, cf. core),
+    // 1.5s de marge avant de relire prayerTimesMinutesObject -- meme
+    // principe que les delais 2s/4.5s deja utilises ailleurs dans ce
+    // fichier pour la meme raison (cf. _installNativeAzanAlarms/appel initial).
+    if (typeof window.selectCityFunction === 'function') {
+        var _origSelectCity = window.selectCityFunction;
+        window.selectCityFunction = function(selectedCityCode) {
+            var ret = _origSelectCity.apply(this, arguments);
+            setTimeout(function() {
+                _L('AZAN', 'RESCHEDULE', { reason: 'city_changed', city: selectedCityCode });
+                _sendToNative();
+            }, 1500);
             return ret;
         };
     }

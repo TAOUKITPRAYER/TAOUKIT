@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.71';
+var CUSTOM_APP_VERSION = '12.72';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -4898,83 +4898,40 @@ function applyCustomIconsVisibility() {
         speakerEl.classList.toggle('customIconActive', JS_DATA.ucAzanIqamaByVoice == 1);
     }
 
-    // ── Clicks + Long press ────────────────────────────────────────
+    // ── Clicks ───────────────────────────────────────────────────────────
     // Touch (Android/GeckoView) : touchstart + preventDefault() bloque menu contextuel
-    //   - Appui court  : toggle voix azan
-    //   - Long press (>=500 ms) : lecture / arret direct de l'audio azan
-    // Pointer (desktop) : meme logique via pointerdown/pointerup
-    var _spLongFired  = false;
-    var _spPressTimer = null;
-    var _spFromTouch  = false;
-
-    function _spToggleAzanPlayback() {
-        var _isFajr = (_ucCurrentPrayerKey() === 'FAJR');
-        var _ael = document.getElementById(_isFajr ? 'audioFajrElement' : 'audioAzanElement');
-        if (!_ael) return;
-        if (!_ael.paused) {
-            _ael.pause();
-            _ael.currentTime = 0;
-            _L('AUDIO','MANUAL_STOP',{action:'speaker_longpress'});
-        } else {
-            _ael.currentTime = 0;
-            _ael.play().catch(function() {});
-            _L('AUDIO','MANUAL_PLAY',{action:'speaker_longpress'});
-        }
-    }
+    // Pointer (desktop) : onclick suffit.
+    // Le long-press (lecture/arret manuel direct de l'audio azan reel) a ete
+    // retire volontairement (audit 10/08/2026) : c'etait le seul chemin de
+    // lecture manuelle en dehors de l'heure reelle de la priere -- supprime
+    // pour ne laisser QUE les deux cas voulus : heure reelle de la priere, ou
+    // apercu explicite dans le catalogue d'azan (objet Audio() separe,
+    // n'affecte jamais audioAzanElement/audioFajrElement, cf. section "AZAN
+    // CATALOG" plus bas).
+    var _spFromTouch = false;
 
     // Touch (Android / GeckoView)
     speakerEl.addEventListener('touchstart', function(e) {
         _spFromTouch = true;
-        _spLongFired = false;
         e.preventDefault();
-        _spPressTimer = setTimeout(function() {
-            _spLongFired = true;
-            _spToggleAzanPlayback();
-        }, 500);
     }, { passive: false });
 
     speakerEl.addEventListener('touchend', function() {
-        if (_spPressTimer) { clearTimeout(_spPressTimer); _spPressTimer = null; }
-        if (!_spLongFired) {
-            // Appui court tactile (Android) : ouvre la modale de choix du son de
-            // l'azan (cf. section "AZAN CATALOG" plus bas) au lieu de basculer
-            // directement ucAzanIqamaByVoice — la bascule reste disponible en
-            // premier item de cette modale.
-            if (typeof window.openAzanCatalogModal === 'function') {
-                window.openAzanCatalogModal();
-            } else {
-                toggleAzanVoiceFunction();
-                updateCustomIconColors();
-            }
+        // Ouvre la modale de choix du son de l'azan (cf. section "AZAN CATALOG"
+        // plus bas) au lieu de basculer directement ucAzanIqamaByVoice — la
+        // bascule reste disponible en premier item de cette modale.
+        if (typeof window.openAzanCatalogModal === 'function') {
+            window.openAzanCatalogModal();
+        } else {
+            toggleAzanVoiceFunction();
+            updateCustomIconColors();
         }
-        _spLongFired = false;
     });
 
-    speakerEl.addEventListener('touchmove', function() {
-        if (_spPressTimer) { clearTimeout(_spPressTimer); _spPressTimer = null; }
-    });
     speakerEl.addEventListener('touchcancel', function() {
-        if (_spPressTimer) { clearTimeout(_spPressTimer); _spPressTimer = null; }
-        _spLongFired = false; _spFromTouch = false;
+        _spFromTouch = false;
     });
 
-    // Pointer / souris (desktop uniquement)
-    speakerEl.addEventListener('pointerdown', function(e) {
-        if (e.pointerType === 'touch') return;
-        _spLongFired = false;
-        _spPressTimer = setTimeout(function() {
-            _spLongFired = true;
-            _spToggleAzanPlayback();
-        }, 500);
-    });
-    speakerEl.addEventListener('pointerup', function(e) {
-        if (e.pointerType === 'touch') return;
-        if (_spPressTimer) { clearTimeout(_spPressTimer); _spPressTimer = null; }
-    });
-    speakerEl.addEventListener('pointerleave', function(e) {
-        if (e.pointerType === 'touch') return;
-        if (_spPressTimer) { clearTimeout(_spPressTimer); _spPressTimer = null; }
-    });
     speakerEl.addEventListener('contextmenu', function(e) { e.preventDefault(); });
 
     // onclick : pointeur/souris/télécommande (touch géré via touchend ci-dessus).
@@ -4984,12 +4941,11 @@ function applyCustomIconsVisibility() {
     // la souris/télécommande) — ce chemin est donc le seul déclenché sur ces
     // appareils, et l'utilisateur n'avait jamais accès à la modale de choix
     // du son de l'azan, contrairement au tactile (vertical, téléphone).
-    // Alignement sur le comportement tactile : un appui court ouvre la même
-    // modale ; le repli sur le simple toggle ne sert plus qu'au cas où la
-    // modale n'est pas encore chargée.
+    // Alignement sur le comportement tactile : un clic ouvre la même modale ;
+    // le repli sur le simple toggle ne sert plus qu'au cas où la modale n'est
+    // pas encore chargée.
     speakerEl.onclick = function() {
         if (_spFromTouch) { _spFromTouch = false; return; }
-        if (_spLongFired) { _spLongFired = false; return; }
         if (typeof window.openAzanCatalogModal === 'function') {
             window.openAzanCatalogModal();
         } else {
@@ -10110,6 +10066,36 @@ window.SIMUL = (function() {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
+// CIBLE DÉDIÉE POUR LE TAP SYNTHÉTIQUE NATIF (boîtiers uniquement)
+// ─────────────────────────────────────────────────────────────────────────────
+// MainActivity.kt::dispatchSyntheticUnlockTap() delivre un vrai MotionEvent au
+// coin haut-droit (x = largeur vue - 1, y = 1) pour debloquer la politique
+// autoplay au chargement (cf. commentaire Kotlin). Choisir une coordonnee
+// d'ecran "vide" est fragile par nature : n'importe quel element futur (ou
+// une modale deja ouverte au moment du tap, ex. azanCatalogOverlay) peut finir
+// par occuper ce pixel et absorber le tap a sa place -- exactement le bug
+// vecu deux fois de suite (coin (1,1) ouvrait le menu hamburger, 10/08/2026 ;
+// puis le coin haut-droit choisi en remplacement fermait azanCatalogOverlay
+// -- et n'importe quelle autre modale a fond cliquable, cf. mapLocatorOverlay/
+// qiblaOverlay/qrCodeOverlay/quranPlayerOverlay -- si elle etait ouverte au
+// moment du tap, 1.5s apres un rechargement de page pendant que la box etait
+// en cours d'utilisation).
+// Solution durable : un element dedie, TOUJOURS present, avec le z-index le
+// plus eleve possible (au-dessus de n'importe quelle modale future, meme
+// celles a 999999999) et sans aucun gestionnaire de clic -- le tap natif
+// atterrit systematiquement dessus, quoi qu'il y ait en dessous, sans jamais
+// interagir avec le contenu reel de la page.
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installSyntheticUnlockTapTarget() {
+    var el = document.createElement('div');
+    el.id = 'ucSyntheticUnlockTarget';
+    el.style.cssText = 'position:fixed;top:0;right:0;width:4px;height:4px;' +
+        'z-index:2147483647;pointer-events:auto;background:transparent;';
+    document.documentElement.appendChild(el);
+})();
+
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LIBELLÉS AZAN / IQAMA – cellule Fajr (mode fullIqamaTimes)
 // Affiche "Azan" et "Iqama" à droite de la 1ère cellule quand les iqamas
 // sont affichées en hh:mm, pour éviter toute confusion chez les fidèles.
@@ -11234,6 +11220,10 @@ function forceHijriSyncFunction() {
         // Filtrer : on veut les erreurs sur des éléments (pas les erreurs JS globales)
         var t = evt.target;
         if (!t || t === window) return;
+        // Sondes d'override optionnel (_probeAndLoad, _ucLoadCityIndex) : un 404
+        // y est un résultat NORMAL (pas d'override pour cette ville/pays), déjà
+        // géré par leur propre onerror/onMiss -> ne pas polluer la console rouge.
+        if (t.dataset && t.dataset.ucOptionalProbe) return;
         var tag = (t.tagName || '?').toLowerCase();
         var src = t.src || t.href || t.currentSrc || '?';
         var msg = '🔴 [RES] ' + tag.toUpperCase() + ' load failed: ' + src;
@@ -12057,9 +12047,15 @@ function forceHijriSyncFunction() {
         var _lastStopLogAt = 0;
         var _STOP_DEDUP_MS = 500;
 
-        function _stopAzanAudio(reason) {
+        // source : transmis tel quel a AndroidMobile.stopAzanPlayback (2e
+        // parametre, cf. commentaire Kotlin) -- distingue dans NATIVE_STOP_USER
+        // QUI a coupe (fermeture popup, bouton notification, ou desactivation
+        // du switch "تفعيل الأذان الصوتي" dans le catalogue, cf.
+        // _acEnableRowEl plus bas). 'webview_popup_close' par defaut pour ne
+        // rien changer aux appelants existants (chemins 1 et 2 ci-dessous).
+        function _stopAzanAudio(reason, source) {
             var stoppedEls = [];
-            ['audioAzanElement', 'audioFajrElement'].forEach(function(id) {
+            ['audioAzanElement', 'audioFajrElement', 'audioShortAzanElement'].forEach(function(id) {
                 var el = document.getElementById(id);
                 if (el && !el.paused) {
                     try { el.pause(); el.currentTime = 0; } catch(e) {}
@@ -12075,7 +12071,7 @@ function forceHijriSyncFunction() {
             // bouton "Arreter" de la notification (cf. AzanPlaybackService.kt).
             var nativeStopIssued = false;
             if (window.AndroidMobile && typeof window.AndroidMobile.stopAzanPlayback === 'function') {
-                window.AndroidMobile.stopAzanPlayback(_ucPrayerAtMinutes(currentTimeInMinutes), 'webview_popup_close');
+                window.AndroidMobile.stopAzanPlayback(_ucPrayerAtMinutes(currentTimeInMinutes), source || 'webview_popup_close');
                 nativeStopIssued = true;
             }
             // Nettoyer l'etat du bloc pour eviter un blocage futur
@@ -12096,6 +12092,12 @@ function forceHijriSyncFunction() {
                 });
             }
         }
+
+        // Expose : _acEnableRowEl (section "AZAN CATALOG" plus bas) doit
+        // pouvoir couper tout azan en cours (core ET spec, WebView ET natif)
+        // des que l'utilisateur desactive "تفعيل الأذان الصوتي" -- meme
+        // fonction que les chemins 1/2 ci-dessous, jamais dupliquee.
+        window._ucStopAllAzanAudio = _stopAzanAudio;
 
         // Chemin 1 : AZAN_HIDE emis par hideAzanPopupFunction (flux normal)
         ucOn(UC_EVT.AZAN_HIDE, function() {
@@ -13235,6 +13237,7 @@ function forceHijriSyncFunction() {
         var src = _SD + _country + '/wtimes-' + cityCode + '.js';
         var s = document.createElement('script');
         s.src = src + '?_sd=' + Date.now();
+        s.dataset.ucOptionalProbe = '1';  // 404 attendu si pas d'override -> pas une vraie erreur (cf. listener 'error' global)
         s.onload  = function() { onFound(src); };
         s.onerror = function() {
             if (s.parentNode) s.parentNode.removeChild(s);
@@ -13308,6 +13311,7 @@ function forceHijriSyncFunction() {
         function _tryLoad(src, onload, onerror) {
             var s = document.createElement('script');
             s.src = src + '?_ucli=' + Date.now();
+            s.dataset.ucOptionalProbe = '1';  // 404 attendu si pas d'override -> pas une vraie erreur (cf. listener 'error' global)
             s.onload  = onload;
             s.onerror = function() {
                 if (s.parentNode) s.parentNode.removeChild(s);
@@ -25512,6 +25516,15 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     var _acEnableRowEl = document.getElementById('acEnableRow');
     if (_acEnableRowEl) _acEnableRowEl.addEventListener('click', function () {
         toggleAzanVoiceFunction();
+        // Desactivation explicite de la voix : coupe systematiquement tout
+        // azan en cours, quelle qu'en soit l'origine (core m2body.js OU les
+        // patches spec/custom.js, WebView OU lecture native AzanPlaybackService
+        // -- cf. _ucStopAllAzanAudio, meme fonction que la fermeture de popup).
+        // toggleAzanVoiceFunction() est synchrone : JS_DATA.ucAzanIqamaByVoice
+        // reflete deja le nouvel etat a ce point.
+        if (JS_DATA.ucAzanIqamaByVoice != 1 && typeof window._ucStopAllAzanAudio === 'function') {
+            window._ucStopAllAzanAudio('azan_voice_disabled', 'enable_switch_disabled');
+        }
         if (typeof updateCustomIconColors === 'function') updateCustomIconColors();
         _acRenderAll();
     });

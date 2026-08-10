@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.70';
+var CUSTOM_APP_VERSION = '12.71';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -397,7 +397,7 @@ const JS_CUSTOM_DEFAULTS = {
     ucAlertByVoiceDelay:          12,
     // ── Onglet "الأذان والإشعارات" (modale Réglages) : alerte avant azan ────
 
-    ucAzanAlertEnabled:          0,   // 1 = bandeau visuel affiché avant l'azan de la prochaine prière
+    ucAzanAlertEnabled:          1,   // 1 = bandeau visuel affiché avant l'azan de la prochaine prière
     ucAzanAlertMinutes:          5,   // minutes avant l'azan (jauge 1-30 dans la modale Réglages)
     // ── Onglet "الأذان والإشعارات" : silencieux après l'azan (2 jauges, 1 toggle) ─
     // ucMuteAfterAzanEnabled gouverne les DEUX jauges : coupure pile à l'azan,
@@ -405,9 +405,9 @@ const JS_CUSTOM_DEFAULTS = {
     // (1-180) programment chacune leur propre fenêtre (reason-count natif dans
     // SilentModeReceiver.kt) — la reprise réelle a lieu à azan + max(silencieux,
     // reprise), jamais avant la fin de la fenêtre silencieuse.
-    ucMuteAfterAzanEnabled:      0,
+    ucMuteAfterAzanEnabled:      1,
     ucMuteAfterAzanMinutes:      5,
-    ucSilentAfterAzanMinutes:    60,  // minutes après l'azan où la sonnerie est remise (jauge 1-180)
+    ucSilentAfterAzanMinutes:    30,  // minutes après l'azan où la sonnerie est remise (jauge 1-180)
     // ── Onglet "تعديل الأذان" : volume au maximum juste avant l'azan ─────────
     // 1 minute avant l'azan de chaque prière, monte le volume (musique +
     // alarme) de la box au maximum (cf. MobileJsBridge.scheduleVolumeBoostAlarms
@@ -419,7 +419,7 @@ const JS_CUSTOM_DEFAULTS = {
     // cf. _installHadithReminder plus bas + HadithAlarmReceiver.kt) : un
     // hadith authentique différent chaque jour par prière (rotation, cf.
     // ucHadithIdx{PRAYER} ci-dessous), toujours en arabe.
-    ucHadithReminderEnabled:     0,
+    ucHadithReminderEnabled:     1,
     // Vérification automatique quotidienne (heure réglable, ucAutoDailyUpdateTime)
     // de mise à jour silencieuse (box uniquement, cf. ucMosqueInfoAdminSection /
     // MainActivity.setAutoDailyUpdateEnabled) -- remplace le push OneSignal
@@ -436,10 +436,12 @@ const JS_CUSTOM_DEFAULTS = {
     ucHadithLastRotationDay:     -1,  // jour du mois (1-31) de la dernière rotation -- évite d'avancer 2x le même jour
     // ── Suggestion de mosquée proche quand le GPS s'éloigne de la mosquée
     // configurée (téléphone uniquement, cf. _installMosqueProximityCheck) :
-    // désactivée par défaut -- on ne veut jamais déclencher la demande de
-    // permission de localisation sans que l'utilisateur ait explicitement
-    // activé ce réglage (cf. discussion 25/07/2026).
-    ucMosqueProximityEnabled:    0,
+    // activée par défaut (demande utilisateur 10/08/2026) -- remplace le choix
+    // initial de désactivation par défaut (cf. discussion 25/07/2026, qui
+    // voulait éviter de déclencher la demande de permission de localisation
+    // sans action explicite) : la demande de permission au premier lancement
+    // est désormais acceptée comme comportement voulu.
+    ucMosqueProximityEnabled:    1,
     ucMosqueProximitySnoozeUntil: 0,  // epoch ms -- pas de nouvelle proposition avant cette date ("Rester ici"/"Ne plus demander")
     ucMosqueConfigVersion:       '',  // version de la config APK déjà appliquée (comparée à MOSQUE_CONFIG.VERSION)
     ucReciters: [
@@ -22008,7 +22010,30 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     var row = document.getElementById('ucAdminBtnRow');
     if (!row) return;
 
-    window._ucAdminUnlocked = false;
+    // Persistance du déverrouillage admin (demande utilisateur 09/08/2026) :
+    // survit au reload/redémarrage box ou téléphone, jusqu'au prochain RESET
+    // (ClearSETTINGS/resetAppOnMultipleClicks -- localStorage.clear(), efface
+    // donc cette clé avec tout le reste, aucun hook supplémentaire requis) ou
+    // changement de mosquée. Le flag est lié à la valeur COURANTE de
+    // UC_MOSQUE_ID (pas juste "1"/"0") : comparer à chaque lecture plutôt que
+    // d'intercepter tous les points d'entrée qui changent de mosquée
+    // (_finishSelectMosque, _restoreFromJson, import distant, proposition...)
+    // -- bien plus robuste qu'une liste de hooks qu'il faudrait tenir à jour.
+    var PERSIST_KEY = 'UC_ADMIN_UNLOCKED_FOR';
+    function _persistedUnlockValid() {
+        var mid = (typeof window._ucCurrentMosqueId === 'function') ? window._ucCurrentMosqueId() : '';
+        if (!mid) return false;
+        try { return localStorage.getItem(PERSIST_KEY) === mid; } catch (e) { return false; }
+    }
+    function _persistUnlock() {
+        var mid = (typeof window._ucCurrentMosqueId === 'function') ? window._ucCurrentMosqueId() : '';
+        try { if (mid) localStorage.setItem(PERSIST_KEY, mid); } catch (e) {}
+    }
+    function _clearPersistedUnlock() {
+        try { localStorage.removeItem(PERSIST_KEY); } catch (e) {}
+    }
+
+    window._ucAdminUnlocked = _persistedUnlockValid();
 
     // ── Cadenas : remplace visuellement la rangée tant que verrouillé ──────
     var lockBtn = document.createElement('span');
@@ -22097,6 +22122,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     window._ucToggleAdminLock = function() {
         if (window._ucAdminUnlocked) {
             window._ucAdminUnlocked = false;
+            _clearPersistedUnlock();
             _refreshUI();
         } else {
             window._ucOpenAdminUnlockOverlay();
@@ -22117,6 +22143,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         }
         window._ucPinGuard && window._ucPinGuard.success();
         window._ucAdminUnlocked = true;
+        _persistUnlock();
         ov.style.display = 'none';
         _refreshUI();
     });

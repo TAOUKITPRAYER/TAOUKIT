@@ -213,7 +213,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.72';
+var CUSTOM_APP_VERSION = '12.73';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -18648,6 +18648,27 @@ function selectQPTakbir() {
         'JS_QP_POSITION', 'JS_QP_POSITION_SRC', 'JS_QP_POSITION_TIME'
     ];
 
+    // Sous-ensemble de JS_DATA_CUSTOM propre à CET appareil (modale "Réglages
+    // du téléphone", cf. _installSettingsModal) : préférences personnelles de
+    // l'utilisateur, PAS de la config de la mosquée -- ne doivent jamais être
+    // écrasées par une restauration de sauvegarde distante (_restoreFromJson
+    // ci-dessous), qui exporte/importe JS_DATA_CUSTOM en bloc. Sans cette
+    // exclusion, choisir/réimporter une mosquée réinitialise silencieusement
+    // ces réglages perso à la valeur qu'avait l'appareil qui a créé CETTE
+    // sauvegarde -- bug constaté 11/08/2026 (alerte azan / silencieux après
+    // azan / rappel hadith / suggestion mosquée proche coupés sans action de
+    // l'utilisateur, alors que flip-to-mute et démarrage auto restaient actifs
+    // -- ces deux derniers avaient juste la même valeur par coïncidence dans
+    // la sauvegarde en cause). Seul canal de changement légitime désormais :
+    // les handlers _ucToggleXxx de _installSettingsModal.
+    var _PHONE_LOCAL_KEYS = [
+        'ucAzanAlertEnabled', 'ucAzanAlertMinutes',
+        'ucMuteAfterAzanEnabled', 'ucMuteAfterAzanMinutes', 'ucSilentAfterAzanMinutes',
+        'ucFlipToMuteAzan', 'ucHadithReminderEnabled',
+        'ucMosqueProximityEnabled', 'ucMosqueProximitySnoozeUntil',
+        'ucAutoStartEnabled'
+    ];
+
     // ── Sauvegarde distante (Supabase, table mosque_config_backups) ─────────
     // Même blob que la sauvegarde locale (_buildBackup), stocké sous un
     // mosque_id — sert à la fois de backup personnel, de répertoire pour la
@@ -18867,6 +18888,26 @@ function selectQPTakbir() {
             var backup = JSON.parse(jsonStr);
             if (!backup || typeof backup.data !== 'object')
                 throw new Error('Format invalide (data manquant)');
+
+            // Préserver les réglages perso de CET appareil (cf. _PHONE_LOCAL_KEYS
+            // plus haut) avant d'écraser JS_DATA_CUSTOM avec le blob distant : si
+            // la valeur locale existe déjà, elle prime sur celle de la sauvegarde ;
+            // sinon (tout premier restore sur cet appareil) on retire la clé pour
+            // laisser JS_CUSTOM_DEFAULTS s'appliquer normalement au prochain chargement.
+            if (backup.data.JS_DATA_CUSTOM) {
+                try {
+                    var _incomingCustom = JSON.parse(backup.data.JS_DATA_CUSTOM);
+                    var _currentCustom  = JSON.parse(localStorage.getItem('JS_DATA_CUSTOM') || '{}');
+                    _PHONE_LOCAL_KEYS.forEach(function(k) {
+                        if (Object.prototype.hasOwnProperty.call(_currentCustom, k)) {
+                            _incomingCustom[k] = _currentCustom[k];
+                        } else {
+                            delete _incomingCustom[k];
+                        }
+                    });
+                    backup.data.JS_DATA_CUSTOM = JSON.stringify(_incomingCustom);
+                } catch(e) {}
+            }
 
             var count = 0; var errors = [];
             Object.keys(backup.data).forEach(function(k) {

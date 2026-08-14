@@ -839,7 +839,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.75';
+var CUSTOM_APP_VERSION = '12.76';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -18990,16 +18990,26 @@ function selectQPTakbir() {
 
 
 // ==========================================================================
-// -- VOLUME AU MAXIMUM JUSTE AVANT L'AZAN (onglet "تعديل الأذان") ---------
-//  Case à cocher (JS_CUSTOM.ucVolumeBoostBeforeAzan) : si activée, 1 minute
-//  avant l'azan de chaque prière, monte le volume (musique + alarme) de la
-//  box au maximum. Contrairement aux deux mécanismes ci-dessus, il n'y a
-//  PAS de restauration ensuite — comportement demandé ("systématiquement au
-//  maximum"), le volume reste donc au maximum après coup.
+// -- VOLUME AU MAXIMUM AVANT CHAQUE ÉCHÉANCE SONORE (onglet "تعديل الأذان")
+//  Case à cocher (JS_CUSTOM.ucVolumeBoostBeforeAzan) : si activée, 2 minutes
+//  (VOLUME_BOOST_LEAD_MIN) avant CHAQUE échéance sonore -- l'azan de chaque
+//  prière, MAIS AUSSI la récitation du Coran avant l'azan (si activée) et le
+//  takbir avant l'azan du Maghreb (si activé) -- monte le volume (musique +
+//  alarme) de la box au maximum (demande explicite du 14/08/2026 : délai
+//  porté de 1 à 2 min, et portée élargie à toutes ces échéances, pas
+//  seulement l'azan lui-même). Le takbir "mode 0" (après la prière, pas
+//  avant une échéance future connue à l'avance) est volontairement exclu --
+//  cf. _ucScheduleVolumeBoostAlarms ci-dessous. Contrairement aux deux
+//  mécanismes ci-dessus, il n'y a PAS de restauration ensuite — comportement
+//  demandé ("systématiquement au maximum"), le volume reste donc au maximum
+//  après coup.
 //  Planification via AlarmManager natif (MobileJsBridge.scheduleVolumeBoostAlarms
 //  + VolumeBoostReceiver.kt), même schéma que _installSilentModeAroundAzan
 //  ci-dessus : lecture de prayerTimesMinutesObject (const globale de
-//  m1prime.js), reprogrammation quotidienne sur UC_EVT.AZAN_TIME.
+//  m1prime.js), reprogrammation quotidienne sur UC_EVT.AZAN_TIME. Jusqu'à
+//  MAX_VOLUME_BOOST_SLOTS (11 = 5 azan + 5 Coran + 1 takbir) échéances par
+//  jour -- cf. MobileJsBridge.kt, cancelVolumeBoostAlarms doit couvrir le
+//  même nombre de requestCodes.
 //  Injection retardée (4s) : par construction (script exécuté de haut en
 //  bas), _installAdjustmentsTabs (plus bas dans ce fichier) a déjà fini de
 //  construire l'onglet "تعديل الأذان" et son ancre #prayersAdjustmentsTitle
@@ -19007,14 +19017,16 @@ function selectQPTakbir() {
 // ==========================================================================
 (function _installVolumeBoostBeforeAzan() {
 
+    var VOLUME_BOOST_LEAD_MIN = 2;
+
     var lang = _ucLang();
     var T = {
         label: {
-            AR: 'رفع صوت الجهاز تلقائيًا إلى أقصاه قبل كل أذان بدقيقة',
-            FR: "Monter le volume au maximum 1 min avant chaque azan",
-            EN: 'Boost volume to max 1 min before each azan',
-            ES: 'Subir el volumen al máximo 1 min antes de cada azán',
-            DE: 'Lautstärke 1 Min. vor jedem Adhan auf Maximum stellen'
+            AR: 'رفع صوت الجهاز تلقائيًا إلى أقصاه قبل دقيقتين',
+            FR: "Monter le volume au maximum 2 min avant chaque azan, récitation du Coran et takbir",
+            EN: 'Boost volume to max 2 min before each azan, Quran recitation and takbir',
+            ES: 'Subir el volumen al máximo 2 min antes de cada azán, recitación del Corán y takbir',
+            DE: 'Lautstärke 2 Min. vor jedem Adhan, Koranrezitation und Takbir auf Maximum stellen'
         }
     };
     function t(key) {
@@ -19073,20 +19085,64 @@ function selectQPTakbir() {
         ];
 
         var items = [];
+
+        // ── Azan (échéance d'origine) ────────────────────────────────────
         prayerKeys.forEach(function(p) {
             var azanMin = obj[p.key];
             if (typeof azanMin !== 'number') return;
-            var boost = _minutesToHHMM(azanMin - 1);
+            var boost = _minutesToHHMM(azanMin - VOLUME_BOOST_LEAD_MIN);
             items.push({
-                prayer: p.name,
+                prayer: p.name + ' (azan)',
                 hour: boost.hour, minute: boost.minute, dayOffset: boost.dayOffset
             });
         });
+
+        // ── Récitation du Coran avant l'azan (demande explicite du
+        // 14/08/2026 : étend le boost à toutes les échéances sonores, pas
+        // seulement l'azan). Réutilise les mêmes réglages/helpers que le
+        // vrai déclencheur JS (_quranAutoStartConfig/_isAutoStartEnabledForPrayer*,
+        // plus haut dans ce fichier) pour rester rigoureusement cohérent avec
+        // ce qui va réellement se jouer. JOMOA exclu volontairement : même
+        // réglage/horaire que DOHR (_quranAutoStartConfig.JOMOA fusionné
+        // avec DOHR, cf. commentaire sur cet objet) -- créerait une alarme
+        // strictement redondante avec celle de DOHR.
+        if (JS_CUSTOM.ucStartQuranBeforeAzan == 1) {
+            var _dayIdx = _getCurrentWeekDayIndex();
+            prayerKeys.forEach(function(p) {
+                var azanMin = obj[p.key];
+                if (typeof azanMin !== 'number') return;
+                if (!_isAutoStartEnabledForPrayer(p.key)) return;
+                if (!_isAutoStartEnabledForPrayerDay(p.key, _dayIdx)) return;
+                var quranStartMin = azanMin - _getAutoStartDelayMinutes(p.key);
+                var boost = _minutesToHHMM(quranStartMin - VOLUME_BOOST_LEAD_MIN);
+                items.push({
+                    prayer: p.name + ' (Coran)',
+                    hour: boost.hour, minute: boost.minute, dayOffset: boost.dayOffset
+                });
+            });
+        }
+
+        // ── Takbir avant l'azan du Maghreb (mode 1 uniquement) ────────────
+        // Le mode 0 (ucTakbirM0Enabled, démarre APRÈS la prière/rideau noir
+        // Maghreb, cf. tête de fichier JS_CUSTOM_DEFAULTS) n'est PAS une
+        // échéance future connue à l'avance de la même façon qu'un azan/
+        // Coran -- son délai (60s par défaut) est d'ailleurs plus court que
+        // VOLUME_BOOST_LEAD_MIN, ce qui rendrait "2 min avant" incohérent.
+        // Volontairement exclu.
+        if (JS_CUSTOM.ucTakbirM1Enabled == 1 && typeof obj.MGRB === 'number') {
+            var takbirStartMin = obj.MGRB - Math.round((JS_CUSTOM.ucTakbirM1Delay || 0) / 60);
+            var boostT = _minutesToHHMM(takbirStartMin - VOLUME_BOOST_LEAD_MIN);
+            items.push({
+                prayer: 'Maghreb (takbir)',
+                hour: boostT.hour, minute: boostT.minute, dayOffset: boostT.dayOffset
+            });
+        }
+
         if (!items.length) return;
 
         window.AndroidMobile.scheduleVolumeBoostAlarms(JSON.stringify(items));
         if (typeof window.AndroidMobile.log === 'function') {
-            window.AndroidMobile.log('[Tawkit] Volume max avant azan programme: ' + items.map(function(it) {
+            window.AndroidMobile.log('[Tawkit] Volume max programme (' + items.length + ' echeance(s)): ' + items.map(function(it) {
                 return it.prayer + ' [' + String(it.hour).padStart(2,'0') + ':' + String(it.minute).padStart(2,'0') + ']';
             }).join(', '));
         }
@@ -29251,9 +29307,9 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                  'boost volume before azan', 'max volume azan', 'increase volume before azan'],
             chip: { AR: 'كيف أرفع صوت الجهاز تلقائيًا قبل كل أذان؟', FR: 'Comment monter automatiquement le volume avant chaque azan ?', EN: 'How to automatically boost the volume before each azan?' },
             answer: {
-                AR: 'من "الإعدادات > الخيارات" اختر تبويب "الأذان": فعّل "رفع صوت الجهاز تلقائيًا إلى أقصاه قبل كل أذان بدقيقة".',
-                FR: 'Depuis "Réglages > Options", onglet "Azan voice" : activez "Monter le volume au maximum 1 min avant chaque azan".',
-                EN: 'From "Settings > Options", tab "Azan voice": enable "Boost volume to max 1 min before each azan".'
+                AR: 'من "الإعدادات > الخيارات" اختر تبويب "الأذان": فعّل "رفع صوت الجهاز تلقائيًا إلى أقصاه قبل دقيقتين".',
+                FR: 'Depuis "Réglages > Options", onglet "Azan voice" : activez "Monter le volume au maximum 2 min avant chaque azan, récitation du Coran et takbir".',
+                EN: 'From "Settings > Options", tab "Azan voice": enable "Boost volume to max 2 min before each azan, Quran recitation and takbir".'
             },
             action: function () { _openOptionsTab('azan'); }
         },

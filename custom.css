@@ -10008,3 +10008,19 @@ select.ucRATextInput { text-align: start; }
    synchro a été retirée de custom.js ; ce sélecteur reste donc affiché ici
    aussi, tant qu'une solution plus sûre n'est pas conçue -- mieux vaut une
    UI un peu redondante qu'une fonctionnalité de changement de ville perdue. */
+
+/* ── Icône météo "ciel dégagé / jour" (soleil jaune, images/meteo/
+   i_clearDay.png) des icônes par prière (HmtALT0-5 horizontale,
+   VmtALT0-5 verticale, ex. à côté de Dohr/Jomoa) -> blanche (demande
+   explicite du 14/08/2026). Ciblage par contenu de l'attribut style : ces
+   icônes sont posées en background inline par refreshWeatherDisplay()
+   (m2body.js), pas de classe dédiée par icône. filter:brightness(0)
+   invert(1) transforme n'importe quel pixel non transparent en blanc pur,
+   quelle que soit la couleur source. Scope volontairement limité au soleil
+   de jour : ne touche ni l'icône météo principale (zone horloge,
+   weatherIconHorizontal/Vertical, <img src=...>, pas de background inline)
+   ni les autres icônes météo (pluie/nuages/etc.). */
+.weatherIconHorizontalClass[style*="i_clearDay.png"],
+.weatherIconClass[style*="i_clearDay.png"] {
+    filter: brightness(0) invert(1);
+}

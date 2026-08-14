@@ -92,6 +92,150 @@ function _ucFitTabBarOneLine(bar, chipSelector) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SAISIE ASSISTÉE — champs heure (HH:MM/AUTO) et champs numériques ──────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Demande explicite du 14/08/2026 :
+//   1) les champs heure (HH:MM ou le mot AUTO) doivent GUIDER la saisie dans
+//      le format autorisé (pas seulement la valider après coup) -- plusieurs
+//      n'avaient jusqu'ici AUCUN contrôle réel (editEidFitrTimeFunction/
+//      editEidAdhaTimeFunction, m2body.js : `JS_DATA.ucTimeOfEidFITR =
+//      inputDialogValue` sans aucune vérification ; ucRAJumua,
+//      _installRemoteMosqueAdmin : n'importe quelle chaîne était acceptée
+//      telle quelle comme horaire de jumua).
+//   2) tous ces champs (heure/AUTO ET numériques -- durées, décalages,
+//      coordonnées GPS...) doivent se saisir de gauche à droite, quelle que
+//      soit la langue de l'interface -- certains héritent silencieusement du
+//      RTL de leur conteneur en arabe (#ucRemoteAdminModal a `dir="rtl"`
+//      dynamique, ucMPELat/ucMPELng n'ont aucune direction explicite).
+//
+// _UC_GUIDED_MASKERS + _ucBindGuidedInput() sont utilisés ci-dessous sur les
+// champs autonomes (ucRAJumua, ucMPELat/ucMPELng, ucRAAzan_*/ucRAIqama_*) ET
+// par le monkey-patch d'openInputDialogFunction juste après, qui couvre tous
+// les champs heure/numériques passant par la boîte de dialogue générique du
+// coeur (un seul champ <input> physique réutilisé à chaque ouverture,
+// #inputDialogTextField) -- un seul jeu de règles, deux points d'application.
+var _UC_GUIDED_MASKERS = {
+    // HH:MM ou AUTO : lettres acceptées seulement si elles forment un préfixe
+    // valide de "AUTO" (une fois une lettre détectée, les chiffres déjà tapés
+    // sont abandonnés -- le champ est SOIT une heure SOIT "AUTO", jamais un
+    // mélange) ; sinon chiffres seuls, 4 max, ':' inséré automatiquement
+    // après les 2 premiers (assistance à la saisie, pas juste un filtre).
+    // Chaque chiffre est en plus validé PROGRESSIVEMENT contre les bornes
+    // réelles d'une heure (00-23) / minute (00-59) -- un simple filtrage de
+    // caractères (chiffres + ':') laissait passer des valeurs structurel-
+    // lement valides mais aberrantes comme "45:46" (retour utilisateur du
+    // 14/08/2026, bug réel constaté) : un chiffre qui rendrait l'heure ou la
+    // minute impossible est rejeté au moment même de la frappe plutôt que
+    // détecté après coup.
+    time: function (raw) {
+        var v = String(raw || '').toUpperCase();
+        var letters = v.replace(/[^A-Z]/g, '');
+        if (letters && 'AUTO'.indexOf(letters) === 0) return letters.slice(0, 4);
+        var digits = v.replace(/[^0-9]/g, '').slice(0, 4);
+        var out = '';
+        for (var i = 0; i < digits.length; i++) {
+            var d = digits[i];
+            if (i === 0 && d > '2') break;                      // heure : 1er chiffre 0-2
+            if (i === 1 && out === '2' && d > '3') break;        // heure 20-23 seulement
+            if (i === 2 && d > '5') break;                       // minute : 1er chiffre 0-5
+            out += d;
+        }
+        return (out.length <= 2) ? out : out.slice(0, 2) + ':' + out.slice(2);
+    },
+    // Entier positif (durées, délais, index...).
+    int: function (raw) {
+        return String(raw || '').replace(/[^0-9]/g, '');
+    },
+    // Entier signé (ex. ajustement horaire ou décalage azan, -N..+N).
+    intSigned: function (raw) {
+        var v = String(raw || '');
+        var neg = v.trim().charAt(0) === '-';
+        return (neg ? '-' : '') + v.replace(/[^0-9]/g, '');
+    },
+    // Liste d'entiers séparés par virgule (ex. liste de thèmes aléatoires).
+    list: function (raw) {
+        return String(raw || '').replace(/[^0-9,]/g, '');
+    },
+    // Coordonnées GPS ("lat,lng" ou champ séparé) : chiffres, point, virgule,
+    // signe moins (latitude/longitude négatives valides).
+    gps: function (raw) {
+        return String(raw || '').replace(/[^0-9.,\-]/g, '');
+    },
+    // Index de thème (0-39) OU le caractère "." seul, sentinelle "aucun
+    // thème" acceptée par editThemeForSalatFunction/editThemeForDayFunction
+    // (m2body.js : `inputDialogValue !== '.'`) -- un simple filtre chiffres
+    // supprimerait ce "." et rendrait cette valeur impossible à saisir.
+    intOrDot: function (raw) {
+        var v = String(raw || '');
+        if (v.indexOf('.') !== -1) return '.';
+        return v.replace(/[^0-9]/g, '');
+    }
+};
+
+// Force LTR (style direct, gagne quel que soit le dir hérité d'un parent
+// RTL) + masque en direct (évènement 'input') sur un champ AUTONOME (hors
+// boîte de dialogue générique du coeur, cf. plus bas pour celle-ci).
+function _ucBindGuidedInput(el, type) {
+    if (!el || !_UC_GUIDED_MASKERS[type]) return;
+    el.dir = 'ltr';
+    el.style.direction = 'ltr';
+    el.style.textAlign = 'left';
+    el.addEventListener('input', function () {
+        var before = el.value, after = _UC_GUIDED_MASKERS[type](before);
+        if (after !== before) el.value = after;
+    });
+}
+
+// ── Boîte de dialogue générique du coeur (openInputDialogFunction) ─────────
+// Classification par nom de fonction de rappel (callbackFunction) : identifie
+// sans ambiguïté le champ édité, quel que soit le site d'appel (coeur ou
+// custom.js) -- évite de modifier chacun des ~30 sites d'appel existants.
+(function _installGuidedDialogMasking() {
+    if (typeof window.openInputDialogFunction !== 'function') return;
+
+    var CLASSIFIERS = [
+        [/editJomoaFixedTimeFunction|editFixedIqama(Fajr|Dohr|Asr|Isha)Function|editEidFitrTimeFunction|editEidAdhaTimeFunction|_ucEditAutoDailyUpdateTime/, 'time'],
+        [/setGpsManuallyFunction/, 'gps'],
+        [/editThemeRandomListFunction/, 'list'],
+        [/editClockAdjustFunction/, 'intSigned'],
+        // index de thème (0-39) OU "." seul (sentinelle "aucun thème") --
+        // cf. commentaire sur intOrDot dans _UC_GUIDED_MASKERS plus haut.
+        [/editThemeFor(Salat|Day)Function/, 'intOrDot'],
+        [/editBlinkingSecondsFunction|editTakbirM[01](Delay|Duration)Function|editIqamaZeroBlinkDurFunction|editStopQuranBeforeAzanDelayFunction|editStartQuranBeforeAzanDelayFunction|editLightProgramming(Delay|JomaDelay|Extra)Function|editNMRIntervalFunction|editNMRDurationFunction|_ucEditAlertVoiceDelay|editRAQuranDelayFunction|editSlidesViewTimeFunction|editTawkitViewTimeFunction|editDohrXminAsrFunction|editPrimaryAzanFunction/, 'int']
+    ];
+    function _classify(cb) {
+        cb = String(cb || '');
+        for (var i = 0; i < CLASSIFIERS.length; i++) { if (CLASSIFIERS[i][0].test(cb)) return CLASSIFIERS[i][1]; }
+        return null;
+    }
+
+    // Type actif mémorisé à l'ouverture (open phase), relu à chaque frappe
+    // par le listener 'input' ci-dessous (persistant, jamais réattaché) --
+    // reste valable pendant tout le cycle de vie de CETTE ouverture (la
+    // confirmation rappelle directement la fonction editXxx, jamais
+    // openInputDialogFunction) et se réinitialise correctement à la
+    // prochaine ouverture, classifiée ou non.
+    var _activeType = null;
+    var _origOpen = window.openInputDialogFunction;
+    window.openInputDialogFunction = function (dialogTitle, defaultValue, callbackFunction, isLtrInput) {
+        _activeType = _classify(callbackFunction);
+        _origOpen(dialogTitle, defaultValue, callbackFunction, _activeType ? true : isLtrInput);
+    };
+
+    function _installListener() {
+        var field = document.getElementById('inputDialogTextField');
+        if (!field) { setTimeout(_installListener, 300); return; }
+        field.addEventListener('input', function () {
+            if (!_activeType) return;
+            var masker = _UC_GUIDED_MASKERS[_activeType];
+            var before = field.value, after = masker(before);
+            if (after !== before) field.value = after;
+        });
+    }
+    _installListener();
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
 // HORLOGE SYSTEME INCOHERENTE + REPRISE WI-FI (boitiers TV uniquement)
 // ─────────────────────────────────────────────────────────────────────────────
 // Certains boitiers Android TV bas de gamme (ex. KM22) n'ont pas de RTC a
@@ -16774,6 +16918,13 @@ function selectQPTakbir() {
 
             var dateSpan = document.createElement('span');
             dateSpan.className = 'ucCalHolidayDate';
+            // Sens de lecture selon la langue courante (demande explicite du
+            // 14/08/2026) : ordre logique "jour mois" inchangé (identique en
+            // FR/EN/AR, ex. "5 يناير" comme "5 janvier") -- seul dir='rtl'
+            // manquait pour qu'en arabe le jour soit bien rencontré en
+            // premier en lisant de droite à gauche (même idiome que le coeur,
+            // cf. m2body.js `dirAttribute` sur gregorianDateSpan).
+            dateSpan.dir = _ucIsRtl() ? 'rtl' : 'ltr';
             dateSpan.textContent = item.date.getDate() + ' ' + (monthNames[item.date.getMonth()] || '');
 
             var nameSpan = document.createElement('span');
@@ -16840,6 +16991,8 @@ function selectQPTakbir() {
 
             var dateSpan = document.createElement('span');
             dateSpan.className = 'ucCalHolidayDate';
+            // cf. commentaire identique dans _calRenderHolidaysList plus haut.
+            dateSpan.dir = _ucIsRtl() ? 'rtl' : 'ltr';
             dateSpan.textContent = item.date.getDate() + ' ' + (monthNames[item.date.getMonth()] || '');
 
             var nameSpan = document.createElement('span');
@@ -17620,6 +17773,12 @@ function selectQPTakbir() {
             '</div>';
         document.body.appendChild(ov);
         _profileEditOv = ov;
+
+        // Coordonnées GPS : saisie assistée LTR (demande explicite du
+        // 14/08/2026) -- ces deux champs n'avaient aucune direction/masque
+        // explicite (cf. _ucBindGuidedInput plus haut dans ce fichier).
+        _ucBindGuidedInput(document.getElementById('ucMPELat'), 'gps');
+        _ucBindGuidedInput(document.getElementById('ucMPELng'), 'gps');
 
         // ── En-tête figé (titre + X), même fonctionnement que
         // ucMosqueInfoHeader/ucMosqueInfoClose (_installMosqueInfoModal) :
@@ -25323,8 +25482,27 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         }
     }
 
-    // Appel initial (laisser 4.5 s a calculateAndDisplayTimesFunction, meme delai que le widget)
-    setTimeout(_sendToNative, 4500);
+    // Appel initial : retente tant que prayerTimesMinutesObject n'est pas
+    // encore rempli, au lieu d'un unique essai a 4.5s qui echouait
+    // SILENCIEUSEMENT (cf. _sendToNative ci-dessus, `if (!obj...) return`) si
+    // le calcul des horaires prenait plus longtemps que prevu ce jour-la --
+    // constate en pratique (rapport de debug du 14/08/2026, vendredi : aucune
+    // alarme Dhuhr/Jomoa programmee de toute la journee apres un rechargement
+    // de la box ; cf. BootReceiver.kt, desormais journalise via
+    // NativeEventLog pour confirmer si un redemarrage reel en etait la
+    // cause). Reessaie toutes les 1.5s, 20 tentatives max (~30s) avant
+    // d'abandonner explicitement (trace, plutot qu'un silence total).
+    function _sendToNativeWithRetry(attempt) {
+        attempt = attempt || 1;
+        var obj = prayerTimesMinutesObject;
+        if (obj && typeof obj.FAJR === 'number') { _sendToNative(); return; }
+        if (attempt >= 20) {
+            _L('AZAN', 'RESCHEDULE_GIVEUP', { reason: 'prayerTimesMinutesObject_never_ready', attempts: attempt });
+            return;
+        }
+        setTimeout(function() { _sendToNativeWithRetry(attempt + 1); }, 1500);
+    }
+    setTimeout(_sendToNativeWithRetry, 1500);
 
     // Reprogrammation quotidienne des 5 alarmes, des que le jour calendaire change
     var _nativeAzanLastDay = -1;
@@ -27478,6 +27656,17 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             '</div>';
         document.documentElement.appendChild(overlay);
         _modal = overlay;
+
+        // Champs heure/numériques : saisie assistée LTR forcée (demande
+        // explicite du 14/08/2026) -- #ucRemoteAdminModal pose dir="rtl" en
+        // arabe (cf. plus haut), hérité silencieusement par ces champs sans
+        // ce correctif ; ucRAJumua n'avait par ailleurs AUCUNE validation de
+        // format (cf. _ucBindGuidedInput plus haut dans ce fichier).
+        _ucBindGuidedInput(document.getElementById('ucRAJumua'), 'time');
+        PRAYERS.forEach(function (p) {
+            _ucBindGuidedInput(document.getElementById('ucRAAzan_' + p), 'intSigned');
+            _ucBindGuidedInput(document.getElementById('ucRAIqama_' + p), 'int');
+        });
 
         document.getElementById('ucRemoteAdminClose').addEventListener('click', _close);
         overlay.addEventListener('click', function (e) { if (e.target === overlay) _close(); });

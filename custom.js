@@ -38,6 +38,488 @@ function _ucIsRtl(lang) {
     return (lang === 'AR' || lang === 'UR' || lang === 'FA' || lang === 'KU' || lang === 'PS' || lang === 'AF');
 }
 
+// Réduit progressivement la taille des chips d'une barre d'onglets
+// (#ucSectionsTabBar / .ucOptionsTabBar / .ucOptionsSubTabBar) tant que son
+// contenu déborde de sa largeur visible -- jamais de retour à la ligne, ni
+// de défilement horizontal (demande explicite du 12/08/2026). Ces barres
+// n'ont aucune scrollbar visible (scrollbar-width:none) et, au boîtier TV,
+// aucun geste de défilement horizontal n'est simulable (tvPointerImage/
+// simulateClick, m2body.js ~8561, déplace un curseur virtuel sur des
+// coordonnées écran fixes, sans wheel/drag) : un onglet scrollé hors champ y
+// est DÉFINITIVEMENT inatteignable, pas seulement moins pratique -- constaté
+// aussi sous Windows (déploiement "kiosque" navigateur, pas de scrollbar
+// visible ni d'affordance de défilement évidente non plus). Repart de la
+// taille CSS d'origine à chaque appel (comme _installMosqueNameFit plus
+// bas) : un rétrécissement précédent ne doit pas rester figé si le contenu
+// change (langue) ou si plus de place devient disponible (resize/rotation).
+function _ucFitTabBarOneLine(bar, chipSelector) {
+    if (!bar) return;
+    var MIN_PCT = 55, STEP_PCT = 5;
+
+    function _fit() {
+        var chips = bar.querySelectorAll(chipSelector);
+        if (!chips.length) return;
+        var i, base = [];
+        for (i = 0; i < chips.length; i++) {
+            chips[i].style.fontSize = '';
+            chips[i].style.padding  = '';
+        }
+        for (i = 0; i < chips.length; i++) {
+            var cs = getComputedStyle(chips[i]);
+            base.push({ el: chips[i], fontPx: parseFloat(cs.fontSize),
+                        padTB: parseFloat(cs.paddingTop), padLR: parseFloat(cs.paddingLeft) });
+        }
+        var pct = 100, guard = 0;
+        while (bar.scrollWidth > bar.clientWidth && pct > MIN_PCT && guard < 20) {
+            pct -= STEP_PCT;
+            base.forEach(function (b) {
+                b.el.style.fontSize = (b.fontPx * pct / 100) + 'px';
+                b.el.style.padding  = (b.padTB * pct / 100) + 'px ' + (b.padLR * pct / 100) + 'px';
+            });
+            guard++;
+        }
+    }
+
+    requestAnimationFrame(_fit);
+    window.addEventListener('resize', function () { requestAnimationFrame(_fit); });
+    // characterData/childList (pas attributes) : capte les changements de
+    // texte (_refreshLabels) sans se redéclencher sur nos propres
+    // changements de style.fontSize/padding ci-dessus.
+    if (typeof MutationObserver === 'function') {
+        var mo = new MutationObserver(function () { requestAnimationFrame(_fit); });
+        mo.observe(bar, { characterData: true, childList: true, subtree: true });
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HORLOGE SYSTEME INCOHERENTE + REPRISE WI-FI (boitiers TV uniquement)
+// ─────────────────────────────────────────────────────────────────────────────
+// Certains boitiers Android TV bas de gamme (ex. KM22) n'ont pas de RTC a
+// batterie fiable : l'horloge systeme repart d'une valeur fausse a chaque
+// demarrage tant que le reseau (NTP) ne l'a pas resynchronisee -- deja a
+// l'origine d'un bug reel (plusieurs azans natifs superposes, 11/08/2026,
+// cf. AzanPlaybackService/TimeChangeReceiver). Ici : detection proactive a
+// CHAQUE chargement (demarrage/reload/reset -- ce fichier s'execute au
+// complet a chaque fois, rien de special a faire pour couvrir ces 3 cas) +
+// tentative de reprise reseau + overlay bloquant tant que ce n'est pas
+// resolu, puisque des horaires de priere faux sont pires qu'une appli qui
+// refuse temporairement de s'utiliser.
+//
+// isSystemClockPlausible()/startWifiRecovery()/getWifiRecoveryStatus()/
+// openWifiSettings() : cf. WifiRecoveryHelper.kt (natif). Le cyclage des
+// reseaux Wi-Fi deja enregistres ne fonctionne que si l'appli est Device
+// Owner (API deprecated Android 10+, cf. commentaire Kotlin) -- sinon
+// getWifiRecoveryStatus() retombe directement sur "unsupported" et ce code
+// bascule vers le message d'invitation a connecter manuellement.
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installSystemClockGuard() {
+    var isTv = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv());
+    if (!isTv) return;
+    if (!window.AndroidMobile || typeof window.AndroidMobile.isSystemClockPlausible !== 'function') return;
+
+    var L_CLOCK = {
+        trying: {
+            AR: 'تاريخ ووقت الجهاز غير صحيحين. التطبيق يحاول الاتصال بشبكة واي فاي معروفة لمزامنة التاريخ والوقت تلقائيًا…',
+            FR: "La date/heure du boîtier est incohérente. L'application tente de le connecter à un réseau Wi-Fi connu pour synchroniser automatiquement la date et l'heure…",
+            EN: "The box's date/time is incorrect. The app is trying to connect it to a known Wi-Fi network to sync the date and time automatically…"
+        },
+        tryingSsid: {
+            AR: 'جارٍ تجربة شبكة واي فاي: {ssid}…',
+            FR: 'Tentative de connexion au réseau Wi-Fi : {ssid}…',
+            EN: 'Trying Wi-Fi network: {ssid}…'
+        },
+        connectedSsid: {
+            AR: '✅ تم الاتصال بشبكة {ssid} — جارٍ مزامنة التاريخ والوقت…',
+            FR: '✅ Connecté au réseau {ssid} — synchronisation de la date et de l\'heure en cours…',
+            EN: '✅ Connected to {ssid} — syncing date and time…'
+        },
+        failed: {
+            AR: 'تعذّرت مزامنة التاريخ والوقت تلقائيًا. يرجى توصيل الجهاز بالإنترنت لمزامنة التاريخ والوقت مع المشغّل، وإلا فلن يتمكن التطبيق من العمل بشكل صحيح.',
+            FR: "Impossible de synchroniser automatiquement la date et l'heure. Veuillez connecter le boîtier à internet pour synchroniser la date et l'heure, sinon l'application ne pourra pas fonctionner correctement.",
+            EN: 'Automatic date/time sync failed. Please connect the box to the internet to sync the date and time, otherwise the app will not be able to work correctly.'
+        },
+        wifiBtn: { AR: 'فتح إعدادات واي فاي', FR: 'Ouvrir les réglages Wi-Fi', EN: 'Open Wi-Fi settings' }
+    };
+    function _clkT(key, ssid) {
+        var row = L_CLOCK[key];
+        if (!row) return key;
+        var s = row[_ucLang()] || row.EN;
+        return ssid ? s.replace('{ssid}', ssid) : s;
+    }
+
+    // top/right/bottom/left explicites plutot que le raccourci "inset:0" :
+    // silencieusement ignore par le moteur WebView de certains boitiers plus
+    // anciens (Chromium < 87) -- constate en test reel 11/08/2026 (boitier
+    // S905W2/Droidlogic) : la declaration entiere disparaissait du style
+    // applique, l'overlay se repliait alors sur la taille de son contenu au
+    // lieu de couvrir tout l'ecran, au lieu d'etre juste mal centre.
+    var OV  = 'display:none;position:fixed;top:0;right:0;bottom:0;left:0;'
+            + 'background:rgba(0,0,0,0.85);'
+            + 'z-index:2147483647;align-items:center;justify-content:center;';
+    var BOX = 'background:#1a1a2e;border:1px solid #555;border-radius:10px;'
+            + 'padding:28px;max-width:86vw;width:460px;text-align:center;color:#fff;'
+            + 'font-family:inherit;box-sizing:border-box;line-height:1.5;';
+    var BTN = 'display:inline-block;margin-top:16px;padding:10px 22px;'
+            + 'background:#3a6ea5;color:#fff;border-radius:6px;cursor:pointer;'
+            + 'font-size:0.95em;';
+
+    var _ov = null, _msgEl = null, _btnEl = null, _pollTimer = null;
+
+    function _buildOverlay() {
+        if (_ov) return;
+        _ov = document.createElement('div');
+        _ov.id = 'ucClockGuardOverlay';
+        _ov.style.cssText = OV;
+        _ov.innerHTML =
+            '<div style="' + BOX + '" dir="' + (_ucIsRtl() ? 'rtl' : 'ltr') + '">' +
+                '<div style="font-size:2em;margin-bottom:10px;">&#9200;</div>' +
+                '<p id="ucClockGuardMsg" style="margin:0;"></p>' +
+                '<span id="ucClockGuardWifiBtn" style="' + BTN + 'display:none;">' + _clkT('wifiBtn') + '</span>' +
+            '</div>';
+        // Appendé à <html> (pas <body>) : le body porte un transform pour la
+        // rotation horizontal/vertical (vrRIGHT/vrLEFT) qui casse position:fixed
+        // sur ses descendants (l'ancêtre transformé devient le bloc conteneur au
+        // lieu du vrai viewport -- overlay confiné en haut-gauche au lieu de
+        // centré plein écran, constaté en test réel 11/08/2026). Même pattern
+        // déjà utilisé par _injectAutoplayUnlockModal/_installMosqueProximityCheck.
+        document.documentElement.appendChild(_ov);
+        _msgEl = document.getElementById('ucClockGuardMsg');
+        _btnEl = document.getElementById('ucClockGuardWifiBtn');
+        _btnEl.addEventListener('click', function() {
+            if (window.AndroidMobile && typeof window.AndroidMobile.openWifiSettings === 'function') {
+                window.AndroidMobile.openWifiSettings();
+            }
+        });
+    }
+
+    function _show() { _buildOverlay(); _ov.style.display = 'flex'; }
+    function _hide() { if (_ov) _ov.style.display = 'none'; }
+
+    // ssid fourni -> affiche "tentative : XXX" (défile réseau par réseau à
+    // mesure que le natif avance dans la liste, cf. _poll) ; sinon message
+    // générique (pas encore de tentative Wi-Fi en cours, ex. sonde initiale
+    // ou déjà connecté par un autre moyen).
+    function _renderTrying(ssid) {
+        _buildOverlay();
+        _msgEl.style.color = '#fff';
+        _msgEl.textContent = ssid ? _clkT('tryingSsid', ssid) : _clkT('trying');
+        _btnEl.style.display = 'none';
+    }
+    function _renderConnected(ssid) {
+        _buildOverlay();
+        _msgEl.style.color = '#4caf50';
+        _msgEl.textContent = _clkT('connectedSsid', ssid);
+        _btnEl.style.display = 'none';
+    }
+    function _renderFailed() {
+        _buildOverlay();
+        _msgEl.style.color = '#ff5555';
+        _msgEl.textContent = _clkT('failed');
+        _btnEl.style.display = 'inline-block';
+    }
+
+    function _poll() {
+        if (window.AndroidMobile.isSystemClockPlausible()) {
+            _hide();
+            clearInterval(_pollTimer);
+            _pollTimer = null;
+            _L('SYS', 'CLOCK_GUARD_RESOLVED', {});
+            return;
+        }
+        var status = (typeof window.AndroidMobile.getWifiRecoveryStatus === 'function')
+            ? window.AndroidMobile.getWifiRecoveryStatus() : 'unsupported';
+        if (status === 'failed' || status === 'unsupported') {
+            _renderFailed();
+        } else if (status === 'connected') {
+            var connSsid = (typeof window.AndroidMobile.getWifiRecoveryConnectedSsid === 'function')
+                ? window.AndroidMobile.getWifiRecoveryConnectedSsid() : '';
+            // Vide : connexion déjà présente au démarrage (Ethernet ou Wi-Fi
+            // déjà actif) -- pas de réseau spécifique "reconquis" à afficher,
+            // on reste sur le message générique en attendant la sync réelle.
+            if (connSsid) _renderConnected(connSsid);
+            else _renderTrying();
+        } else {
+            var trySsid = (typeof window.AndroidMobile.getWifiRecoveryCurrentSsid === 'function')
+                ? window.AndroidMobile.getWifiRecoveryCurrentSsid() : '';
+            _renderTrying(trySsid);
+        }
+    }
+
+    if (window.AndroidMobile.isSystemClockPlausible()) return;   // rien a faire
+
+    _L('SYS', 'CLOCK_GUARD_TRIGGERED', {});
+    _renderTrying();
+    _show();
+    if (typeof window.AndroidMobile.startWifiRecovery === 'function') {
+        window.AndroidMobile.startWifiRecovery();
+    }
+    _pollTimer = setInterval(_poll, 3000);
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FUSEAU HORAIRE FORCÉ POUR LA TUNISIE (boîtiers TV uniquement)
+// ─────────────────────────────────────────────────────────────────────────────
+// Le tzdata Android embarqué sur certains boîtiers bas de gamme applique à
+// tort une règle de changement d'heure (DST) à Africa/Tunis, ce qui décale
+// l'heure affichée d'une heure une partie de l'année -- alors que la Tunisie
+// n'observe plus aucun changement d'heure (UTC+1 fixe) depuis son abandon.
+// Africa/Brazzaville (Congo) est le même UTC+1 fixe, sans aucune règle DST
+// dans le tzdata : on épingle donc ce fuseau plutôt qu'Africa/Tunis, ce qui
+// donne la bonne heure civile tunisienne réelle sans dépendre de la version
+// de tzdata du boîtier. Demande explicite du 11/08/2026 : "systématiquement"
+// -> vérifié à CHAQUE démarrage/reload (pas seulement à l'install), pour se
+// corriger tout seul si le fuseau dérive plus tard (reset usine, changement
+// manuel...). Pays déterminé via MOSQUE_CONFIG.LOCATION_CODE (même détection
+// que _holIsTunisia() plus bas dans ce fichier, dupliquée ici car ce bloc
+// s'exécute avant sa définition).
+//
+// applyTimeZoneOverride() (WifiRecoveryHelper.kt) ne fait rien (retourne
+// false) si l'appli n'est pas Device Owner -- comme pour la reprise Wi-Fi
+// ci-dessus, ceci ne peut donc fonctionner que sur les boîtiers provisionnés
+// en Device Owner, jamais sur un téléphone. Le fuseau système n'est de toute
+// façon accessible en écriture à aucune app tierce ordinaire sous Android.
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installTunisiaTimezoneOverride() {
+    var isTv = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv());
+    if (!isTv) return;
+    if (!window.AndroidMobile || typeof window.AndroidMobile.applyTimeZoneOverride !== 'function') return;
+
+    var loc = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.LOCATION_CODE) || '';
+    var isTunisia = loc.split('.')[0].toUpperCase() === 'TN';
+    if (!isTunisia) return;
+
+    try {
+        window.AndroidMobile.applyTimeZoneOverride('Africa/Brazzaville');
+    } catch (e) {
+        _L('SYS', 'TZ_OVERRIDE_CALL_FAILED', {error: String(e)});
+    }
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ICÔNE STATUT INTERNET — remplace l'étoile "٭" du cœur (internetStatusIndicator
+// Vertical/Horizontal, index.html) par une icône Wi-Fi (barrée si déconnecté)
+// + clic → petite fenêtre d'infos réseau (SSID + IP). Réutilise le signal de
+// connectivité déjà calculé par le cœur (setInternetStatus(bool), appelé
+// périodiquement par checkInternetConnectionFunction() -- vraie vérification
+// HTTP, pas seulement navigator.onLine) : on n'y réimplémente aucune
+// détection, on enrichit juste l'affichage + ajoute l'interactivité.
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installNetworkStatusIcon() {
+    var vEl = document.getElementById('internetStatusIndicatorVertical');
+    var hEl = document.getElementById('internetStatusIndicatorHorizontal');
+    if (!vEl && !hEl) return;
+
+    // SVG inline (pas d'emoji) : rendu fiable quel que soit le jeu de polices
+    // système du boîtier -- même raison que le reste des icônes custom de ce
+    // fichier. fill="currentColor" hérite la couleur déjà posée par le cœur
+    // (setInternetStatus, vert/rouge) sans rien dupliquer.
+    var ICON_ON =
+        '<svg viewBox="0 0 24 24" width="1em" height="1em" style="vertical-align:-0.15em;">' +
+        '<path fill="currentColor" d="M12 20.5a1.6 1.6 0 100-3.2 1.6 1.6 0 000 3.2zM8.11 14.11a5.5 5.5 0 017.78 0l-1.6 1.6a3.2 3.2 0 00-4.58 0l-1.6-1.6zM4.6 10.6a10.5 10.5 0 0114.8 0l-1.6 1.6a8.2 8.2 0 00-11.6 0L4.6 10.6z"/>' +
+        '</svg>';
+    var ICON_OFF =
+        '<svg viewBox="0 0 24 24" width="1em" height="1em" style="vertical-align:-0.15em;">' +
+        '<path fill="currentColor" opacity="0.55" d="M12 20.5a1.6 1.6 0 100-3.2 1.6 1.6 0 000 3.2zM8.11 14.11a5.5 5.5 0 017.78 0l-1.6 1.6a3.2 3.2 0 00-4.58 0l-1.6-1.6zM4.6 10.6a10.5 10.5 0 0114.8 0l-1.6 1.6a8.2 8.2 0 00-11.6 0L4.6 10.6z"/>' +
+        '<line x1="2.5" y1="21.5" x2="21.5" y2="2.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>' +
+        '</svg>';
+
+    var L_NET = {
+        title:         { AR: 'حالة الشبكة', FR: 'État du réseau', EN: 'Network status' },
+        connected:     { AR: 'متصل', FR: 'Connecté', EN: 'Connected' },
+        disconnected:  { AR: 'غير متصل', FR: 'Non connecté', EN: 'Disconnected' },
+        ssid:          { AR: 'الشبكة', FR: 'Réseau', EN: 'Network' },
+        ip:            { AR: 'عنوان IP', FR: 'Adresse IP', EN: 'IP address' },
+        typeWifi:      { AR: 'واي فاي', FR: 'Wi-Fi', EN: 'Wi-Fi' },
+        typeEthernet:  { AR: 'سلكي (إيثرنت)', FR: 'Filaire (Ethernet)', EN: 'Wired (Ethernet)' }
+    };
+    function _netT(key) {
+        var row = L_NET[key];
+        if (!row) return key;
+        return row[_ucLang()] || row.EN;
+    }
+
+    function _setIcon(el, isOn) { if (el) el.innerHTML = isOn ? ICON_ON : ICON_OFF; }
+
+    // État initial : interroge l'état RÉEL via le bridge natif (getNetworkInfo,
+    // synchrone) plutôt qu'un défaut codé en dur -- un défaut fixe pouvait
+    // écraser à tort une couleur déjà posée par le cœur si sa propre vérif
+    // (checkInternetConnectionFunction, asynchrone) s'était déclenchée avant
+    // ce script (constaté en test réel 11/08/2026 : icône verte mais barrée,
+    // le défaut "false" avait écrasé la forme après coup).
+    var _initConnected = false;
+    if (window.AndroidMobile && typeof window.AndroidMobile.getNetworkInfo === 'function') {
+        try { _initConnected = !!JSON.parse(window.AndroidMobile.getNetworkInfo()).connected; } catch (e) {}
+    }
+    _setIcon(vEl, _initConnected);
+    _setIcon(hEl, _initConnected);
+
+    // setInternetStatus(bool) : fonction cœur (m2body.js), appelée depuis
+    // checkInternetConnectionFunction(). On l'enrichit pour swapper aussi la
+    // FORME de l'icône (le cœur ne gère que sa couleur) -- monkey-patch
+    // standard de ce fichier : appelle l'original, puis complète.
+    var _origSetInternetStatus = window.setInternetStatus;
+    if (typeof _origSetInternetStatus === 'function') {
+        window.setInternetStatus = function(isConnected) {
+            _origSetInternetStatus(isConnected);
+            _setIcon(vEl, !!isConnected);
+            _setIcon(hEl, !!isConnected);
+        };
+    }
+
+    // ── Popup infos réseau (SSID + IP), au clic sur l'icône ────────────────
+    // Appendée à <html> (pas <body>) : même raison que ucClockGuardOverlay
+    // plus haut (le body porte un transform de rotation qui casse
+    // position:fixed sur ses descendants si on l'attache à <body>).
+    var _ov = null, _bodyEl = null;
+    function _buildOverlay() {
+        if (_ov) return;
+        // top/right/bottom/left explicites : cf. commentaire ucClockGuardOverlay
+        // plus haut (raccourci "inset:0" silencieusement ignore sur certains
+        // boitiers, moteur WebView trop ancien).
+        var OV  = 'display:none;position:fixed;top:0;right:0;bottom:0;left:0;'
+                + 'background:rgba(0,0,0,0.7);'
+                + 'z-index:999999;align-items:center;justify-content:center;';
+        var BOX = 'background:#1a1a2e;border:1px solid #555;border-radius:10px;'
+                + 'padding:22px 26px;min-width:240px;max-width:86vw;text-align:center;'
+                + 'color:#fff;font-family:inherit;box-sizing:border-box;line-height:1.7;';
+        _ov = document.createElement('div');
+        _ov.id = 'ucNetInfoOverlay';
+        _ov.style.cssText = OV;
+        _ov.innerHTML =
+            '<div style="' + BOX + '" dir="' + (_ucIsRtl() ? 'rtl' : 'ltr') + '">' +
+                '<div style="font-weight:bold;margin-bottom:10px;">' + _netT('title') + '</div>' +
+                '<div id="ucNetInfoBody" style="font-size:0.95em;"></div>' +
+            '</div>';
+        document.documentElement.appendChild(_ov);
+        _bodyEl = document.getElementById('ucNetInfoBody');
+        // Tap n'importe où sur l'overlay (fond ou carte) pour fermer -- pas
+        // de bouton dédié, cohérent avec la simplicité de cette info-bulle.
+        _ov.addEventListener('click', function() { _ov.style.display = 'none'; });
+    }
+
+    function _showNetInfo(e) {
+        if (e) e.stopPropagation();
+        _buildOverlay();
+        var info = { connected: false, type: 'none', ssid: '', ip: '' };
+        if (window.AndroidMobile && typeof window.AndroidMobile.getNetworkInfo === 'function') {
+            try { info = JSON.parse(window.AndroidMobile.getNetworkInfo()); } catch (ex) {}
+        }
+        var dotColor = info.connected ? '#4caf50' : '#ff5555';
+        var lines = ['<span style="color:' + dotColor + ';">&#9679;</span> ' +
+            _netT(info.connected ? 'connected' : 'disconnected')];
+        if (info.connected) {
+            if (info.type === 'wifi' && info.ssid) {
+                lines.push(_netT('ssid') + ' : ' + info.ssid);
+            } else {
+                lines.push(_netT('ssid') + ' : ' +
+                    (info.type === 'wifi' ? _netT('typeWifi')
+                        : info.type === 'ethernet' ? _netT('typeEthernet') : info.type));
+            }
+            if (info.ip) lines.push(_netT('ip') + ' : ' + info.ip);
+        }
+        _bodyEl.innerHTML = lines.join('<br>');
+        _ov.style.display = 'flex';
+    }
+
+    [vEl, hEl].forEach(function(el) {
+        if (!el) return;
+        el.style.cursor = 'pointer';
+        el.addEventListener('click', _showNetInfo);
+    });
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COUPER/COPIER/COLLER/TOUT SÉLECTIONNER — boîte de dialogue de saisie cœur
+// (#inputDialogContainer/#inputDialogTextField, index.html, openInputDialogFunction
+// dans m2body.js -- partagée par TOUTES les saisies techniques : délais,
+// secondes, ET urls d'automatisation lumière/mosquée). Sur boîtier TV
+// (télécommande, pas d'écran tactile), le menu contextuel natif Android
+// couper/copier/coller/tout sélectionner ne se déclenche qu'au appui-long
+// TACTILE -- absent sans écran tactile, rendant impossible de coller une
+// URL longue (retour utilisateur 11/08/2026). Coller passe par le
+// presse-papiers NATIF (AndroidMobile.getClipboardText) : document.
+// execCommand('paste') est bloqué par la politique de sécurité des
+// navigateurs modernes, contrairement à copy/cut/select qui restent gérés
+// correctement en JS.
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installInputDialogClipboardButtons() {
+    var container = document.getElementById('inputDialogContainer');
+    var inputEl   = document.getElementById('inputDialogTextField');
+    if (!container || !inputEl) return;
+
+    var L_CLIP = {
+        copy:      { AR: 'نسخ', FR: 'Copier', EN: 'Copy' },
+        cut:       { AR: 'قص', FR: 'Couper', EN: 'Cut' },
+        paste:     { AR: 'لصق', FR: 'Coller', EN: 'Paste' },
+        selectAll: { AR: 'تحديد الكل', FR: 'Tout sélectionner', EN: 'Select all' }
+    };
+    function _clipT(key) {
+        var row = L_CLIP[key];
+        if (!row) return key;
+        return row[_ucLang()] || row.EN;
+    }
+
+    function _btn(labelKey, handler) {
+        var b = document.createElement('span');
+        b.className = 'ucModalBtn ucModalBtn--secondary';
+        b.style.cssText = 'font-size:0.8em;padding:4px 10px;cursor:pointer;display:inline-block;';
+        b.textContent = _clipT(labelKey);
+        b.addEventListener('click', function(e) { e.stopPropagation(); handler(); });
+        return b;
+    }
+
+    var row = document.createElement('div');
+    row.id = 'ucInputDialogClipRow';
+    row.style.cssText = 'display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin:8px 0;';
+
+    row.appendChild(_btn('selectAll', function() {
+        inputEl.focus();
+        inputEl.select();
+    }));
+
+    row.appendChild(_btn('copy', function() {
+        inputEl.focus();
+        inputEl.select();
+        try { document.execCommand('copy'); } catch (e) {}
+        if (window.AndroidMobile && typeof window.AndroidMobile.setClipboardText === 'function') {
+            var sel = inputEl.value.substring(inputEl.selectionStart, inputEl.selectionEnd) || inputEl.value;
+            window.AndroidMobile.setClipboardText(sel);
+        }
+    }));
+
+    row.appendChild(_btn('cut', function() {
+        inputEl.focus();
+        inputEl.select();
+        var full = inputEl.value;
+        try { document.execCommand('cut'); } catch (e) {}
+        if (window.AndroidMobile && typeof window.AndroidMobile.setClipboardText === 'function') {
+            window.AndroidMobile.setClipboardText(full);
+        }
+        inputEl.value = '';
+    }));
+
+    row.appendChild(_btn('paste', function() {
+        inputEl.focus();
+        var text = (window.AndroidMobile && typeof window.AndroidMobile.getClipboardText === 'function')
+            ? (window.AndroidMobile.getClipboardText() || '') : '';
+        if (!text) return;
+        var start = (inputEl.selectionStart != null) ? inputEl.selectionStart : inputEl.value.length;
+        var end   = (inputEl.selectionEnd   != null) ? inputEl.selectionEnd   : inputEl.value.length;
+        if (typeof inputEl.setRangeText === 'function') {
+            inputEl.setRangeText(text, start, end, 'end');
+        } else {
+            inputEl.value = inputEl.value.slice(0, start) + text + inputEl.value.slice(end);
+        }
+    }));
+
+    // Inséré juste avant les boutons Annuler/OK du cœur (.inputDialogButtonClass).
+    var firstBtn = container.querySelector('.inputDialogButtonClass');
+    if (firstBtn) container.insertBefore(row, firstBtn);
+    else container.appendChild(row);
+})();
+
 // Distance orthodromique (Haversine) entre deux points GPS, en km. Point
 // d'entrée générique réutilisable partout dans ce fichier -- injectQiblaFeature
 // garde sa propre implémentation privée ciblée uniquement sur la Kaaba (pas
@@ -213,7 +695,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.73';
+var CUSTOM_APP_VERSION = '12.74';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -301,6 +783,34 @@ const JS_CUSTOM_DEFAULTS = {
     ucStartPrayerBlinking:  60,
     ucShowSpeakerIcon:      1,
     ucShowQuranIcon:        1,
+    // Rotation des versets/ayats (#ayaTextDisplayVertical/Horizontal) --
+    // désactivée par défaut (demande explicite du 11/08/2026). Les rappels
+    // ponctuels (10 derniers jours Ramadan, 10 premières nuits Dhoul Hijja,
+    // jours blancs, Takbir -- repérés via le wrapper 'specialAyaClass' que
+    // le coeur applique lui-même) continuent de s'afficher quel que soit ce
+    // réglage : cf. monkey-patch de displayRandomAyaFunction plus bas.
+    ucAyaRotationEnabled:   0,
+    // Affichage du nom de la mosquée (#mosqueNameDisplayVertical/Horizontal)
+    // -- réglage réservé au boîtier/Windows-PC (checkbox jamais injectée sur
+    // téléphone, cf. _injectShowMosqueNameCheckbox). Défaut = affiché
+    // (comportement inchangé pour qui ne touche jamais ce réglage).
+    ucShowMosqueName:       1,
+    // Affichage du mini-tableau des horaires (miniPrayerTimesTable) pendant
+    // le compteur plein écran -- décoché par défaut (demande explicite du
+    // 12/08/2026). Cf. _installMiniPrayerTimesToggle plus bas : le coeur
+    // réaffiche ce tableau lui-même à chaque activation du grand compteur
+    // (showPrayerTimesOverlayFunction, m2body.js ~1242), d'où l'usage d'un
+    // MutationObserver plutôt qu'une simple application ponctuelle.
+    ucShowMiniPrayerTimesTable: 0,
+    // Fond de l'écran d'appel à l'azan (onglet "الأذان") : 1 = images
+    // dome_xxx.webp (dôme doré visible, défaut -- comportement inchangé),
+    // 0 = variantes sansdome_xxx.webp (dôme retiré, ciel continu -- fournies
+    // par l'utilisateur, demande explicite du 12/08/2026). Cf.
+    // _installAzanDynamicBackground/_patchApplyThemeForDome plus bas.
+    ucAzanBgUseDome:             1,
+    // Indicateur one-shot (pas un réglage utilisateur) -- cf.
+    // _forceNightPrayersDefaultOff plus bas dans ce fichier.
+    ucNightPrayersDefaultApplied: 0,
     ucStartQuranBeforeAzan:      1,
     // Depuis le relookage en tableau (grille jours x prières), il n'y a plus
     // de case "actif" séparée : 0 = désactivé, toute autre valeur (en
@@ -466,6 +976,271 @@ const _TAKBIR_LEGACY_KEYS = ['ucTakbirEnabled', 'ucTakbirMode', 'ucTakbirDelay',
 _TAKBIR_LEGACY_KEYS.forEach(function(key) {
     delete JS_CUSTOM[key];
 });
+
+// verifyInternetLabel (JS_eLang.cx_VerifNET, m2body.js) : retire la partie
+// entre parenthèses dans TOUTES les langues (demande explicite du
+// 13/08/2026) -- générique plutôt que traduit langue par langue : couvre
+// aussi bien "(...)" que "（...）" (parenthèses pleine chasse, ex. lang-ZH).
+// initUILabels() a déjà écrit le DOM avant que custom.js ne s'exécute (cf.
+// piège JS_eLang connu) donc patch JS_eLang ET le DOM directement ; comme
+// changeLanguageFunction() recharge la page (m2body.js), pas besoin de
+// ré-appliquer sur un changement de langue à chaud.
+(function _stripParenFromVerifyInternetLabel() {
+    function _strip(s) { return s ? s.replace(/\s*[\(（][^)）]*[\)）]\s*/g, '').trim() : s; }
+    if (typeof JS_eLang !== 'undefined' && JS_eLang.cx_VerifNET) {
+        JS_eLang.cx_VerifNET = _strip(JS_eLang.cx_VerifNET);
+    }
+    var el = document.getElementById('verifyInternetLabel');
+    if (el) el.innerHTML = _strip(el.innerHTML);
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MINI-TABLEAU DES HORAIRES (miniPrayerTimesTable) — option d'affichage +
+// repositionnement de fullScreenCounterLabel (demande explicite du
+// 12/08/2026)
+// ─────────────────────────────────────────────────────────────────────────────
+// Vérification demandée explicitement : le coeur réaffiche lui-même
+// miniPrayerTimesVertical/Horizontal à chaque activation du compteur plein
+// écran/azkar -- showPrayerTimesOverlayFunction (m2body.js ~1242, appelée
+// depuis showAzkarDisplayFunction/l'activation du grand compteur) fait
+// `setTimeout(showElementWithTransitionFunction, 1000, 'miniPrayerTimesXxx')`,
+// et showElementWithTransitionFunction (m2body.js ~2927) écrit directement
+// `className = "visibleTransitionClass"`, écrasant tout état qu'on aurait pu
+// poser avant. Comme pour _fixAyaRecursionErrorFlash plus bas : impossible de
+// patcher proprement un setTimeout interne à une fonction core, donc on
+// observe le DOM et on reprend la main immédiatement à chaque tentative du
+// coeur de le réafficher, plutôt que d'appliquer notre état une seule fois.
+//
+// fullScreenCounterLabelVertical/Horizontal, en revanche : aucune trace dans
+// m2body.js d'un `.style.top` écrit à l'exécution (uniquement la déclaration
+// const + un set innerHTML sans rapport, ligne ~7899) -- pas de MutationObserver
+// nécessaire ici, une simple application suffit.
+(function _installMiniPrayerTimesToggle() {
+    var vEl = document.getElementById('miniPrayerTimesVertical');
+    var hEl = document.getElementById('miniPrayerTimesHorizontal');
+    if (!vEl && !hEl) return;
+
+    function _enforce(el) {
+        if (!el) return;
+        if (JS_CUSTOM.ucShowMiniPrayerTimesTable == 1) return;   // réglage ON : laisser faire le coeur normalement
+        if (el.className !== 'hiddenClass') el.className = 'hiddenClass';
+    }
+
+    var mo = new MutationObserver(function (mutations) {
+        mutations.forEach(function (m) { _enforce(m.target); });
+    });
+    [vEl, hEl].forEach(function (el) {
+        if (el) mo.observe(el, { attributes: true, attributeFilter: ['class'] });
+    });
+
+    window._ucEnforceMiniPrayerTimesVisibility = function () { _enforce(vEl); _enforce(hEl); };
+    _enforce(vEl);
+    _enforce(hEl);
+})();
+
+var UC_MINI_TABLE_LABEL_SHIFT = 4;   // points de %, ajustable -- "descend un peu plus"
+function _applyFullScreenCounterLabelShift() {
+    var show = (JS_CUSTOM.ucShowMiniPrayerTimesTable == 1);
+    var v = document.getElementById('fullScreenCounterLabelVertical');
+    var h = document.getElementById('fullScreenCounterLabelHorizontal');
+    // '' : revient à la valeur CSS d'origine (top:70%/65%, style1/2.css) --
+    // "retrouve sa place actuelle" au sens littéral, pas une valeur dupliquée.
+    if (v) v.style.top = show ? '' : (70 + UC_MINI_TABLE_LABEL_SHIFT) + '%';
+    if (h) h.style.top = show ? '' : (65 + UC_MINI_TABLE_LABEL_SHIFT) + '%';
+}
+_applyFullScreenCounterLabelShift();
+
+function toggleShowMiniPrayerTimesTableFunction() {
+    JS_CUSTOM.ucShowMiniPrayerTimesTable = +(!JS_CUSTOM.ucShowMiniPrayerTimesTable);
+    saveCustomSettingsFunction();
+    var cb = document.getElementById('showMiniPrayerTimesTableCheckbox');
+    if (cb) cb.checked = (JS_CUSTOM.ucShowMiniPrayerTimesTable == 1);
+    if (typeof window._ucEnforceMiniPrayerTimesVisibility === 'function') window._ucEnforceMiniPrayerTimesVisibility();
+    _applyFullScreenCounterLabelShift();
+}
+
+// Injectée directement dans #optionsContentContainer (élément CORE statique,
+// déjà présent au chargement) -- AVANT que _installOptionsTabs (plus bas
+// dans ce fichier) ne réorganise tout en onglets : son id est ajouté à
+// GENERAL_GROUPS['counter'].ids là-bas, donc récupérée automatiquement à sa
+// place dans l'onglet "العدّ والشاشات" sans rien coder de spécifique ici sur
+// le placement final.
+(function _injectShowMiniPrayerTimesTableCheckbox() {
+    var host = document.getElementById('optionsContentContainer');
+    if (!host) return;
+    var row = document.createElement('div');
+    row.innerHTML = '<input type="checkbox" id="showMiniPrayerTimesTableCheckbox" onchange="toggleShowMiniPrayerTimesTableFunction();">'
+        + ' &nbsp;<label for="showMiniPrayerTimesTableCheckbox">إظهار الجدول المصغر لأوقات الصلاة أثناء العدّ التنازلي لكامل الشاشة</label>';
+    host.appendChild(row);
+    document.getElementById('showMiniPrayerTimesTableCheckbox').checked = (JS_CUSTOM.ucShowMiniPrayerTimesTable == 1);
+})();
+
+// Option : fond dôme/sans-dôme de l'écran d'appel azan (onglet "الأذان",
+// demande explicite du 12/08/2026) -- même pattern d'injection que
+// showMiniPrayerTimesTableCheckbox ci-dessus (id ajouté à AZAN_CORE_IDS,
+// _installOptionsTabs plus bas relocalise la ligne automatiquement).
+(function _injectAzanBgUseDomeCheckbox() {
+    var host = document.getElementById('optionsContentContainer');
+    if (!host) return;
+    var row = document.createElement('div');
+    row.innerHTML = '<input type="checkbox" id="azanBgUseDomeCheckbox" onchange="toggleAzanBgUseDomeFunction();">'
+        + ' &nbsp;<label for="azanBgUseDomeCheckbox">إظهار القبّة في خلفية شاشة الأذان (بدلاً من السماء فقط)</label>';
+    host.appendChild(row);
+    document.getElementById('azanBgUseDomeCheckbox').checked = (JS_CUSTOM.ucAzanBgUseDome == 1);
+})();
+
+function toggleAzanBgUseDomeFunction() {
+    JS_CUSTOM.ucAzanBgUseDome = +(!JS_CUSTOM.ucAzanBgUseDome);
+    saveCustomSettingsFunction();
+    var cb = document.getElementById('azanBgUseDomeCheckbox');
+    if (cb) cb.checked = (JS_CUSTOM.ucAzanBgUseDome == 1);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REPOSITIONNEMENT HORIZONTAL QUAND LA ROTATION DES AYATS EST DÉSACTIVÉE
+// (demande explicite du 12/08/2026, mode horizontal uniquement)
+// ─────────────────────────────────────────────────────────────────────────────
+// Vérification demandée explicitement : applyHrLayoutFunction() (m2body.js
+// ~7237) écrit directement prayerTimesContainerHorizontalElement.style.top à
+// CHAQUE appel (58.3% si JS_DATA.ucHr5BoxesOnly==1, sinon 61.0%) -- appelée à
+// l'init (m2body.js ~8766) ET à chaque bascule de fiveBoxesOnlyCheckbox/
+// jomoaOnHrCheckbox (toggleHr5BoxesFunction/toggleJomoaOnHrScreenFunction).
+// Sans monkey-patch, ces bascules écraseraient silencieusement notre
+// décalage. On duplique donc son calcul de base (58.3/61.0) -- plus fiable
+// qu'une valeur inline capturée une fois, qui peut changer sous nos pieds --
+// et on repatche applyHrLayoutFunction pour réappliquer notre décalage juste
+// après l'original. ayaDisplayContainerHorizontal, lui, n'est jamais touché
+// par le coeur à l'exécution (aucune occurrence de `.style.top` dans
+// m2body.js pour cet id) : pas de monkey-patch nécessaire pour celui-là.
+function _hrAyaBaseTop() {
+    return (typeof JS_DATA !== 'undefined' && JS_DATA.ucHr5BoxesOnly == 1) ? 58.3 : 61.0;
+}
+var UC_AYA_HR_SHIFT_UP = 4;   // points de %, ajustable
+// Écran 720p plein écran (box bas de gamme, window.innerHeight == hauteur
+// réelle de l'écran en WebView plein écran) : décalage supplémentaire
+// (demande explicite du 13/08/2026) -- s'ajoute à UC_AYA_HR_SHIFT_UP
+// uniquement quand la rotation des ayats est déjà désactivée (shift != 0).
+//
+// Calibré le 13/08/2026 par mesure empirique réelle sur la box (pas deviné) :
+// un bug caché (cf. commentaire de _applyHrAyaRotationLayout ci-dessous --
+// certains modes ont leur propre `top: ...% !important` qui battait notre
+// style inline) faisait qu'AUCUN décalage n'avait jamais d'effet visuel réel
+// avant le correctif "setProperty(...,'important')". Une fois corrigé, un
+// 1er calibrage (extra=3, 7% total) mesuré contre #marqueeTextHorizontal
+// donnait +17.5px -- mais cet élément était VIDE (largeur/hauteur 0) au
+// moment du test : le texte réellement affiché en bas est
+// #hadithDisplayHorizontal (même ancre bottom:1.9%, mais height:auto au lieu
+// d'une hauteur fixe -- style1.css core -- donc son bord haut n'est PAS à la
+// même position que celui, fixe, de marqueeContainerHorizontal). Contre le
+// bon élément, 7% ne laissait que +14.0px, jugé encore trop juste (chevauchement
+// perçu réel signalé par l'utilisateur). Nouveau balayage contre
+// #hadithDisplayHorizontal :
+//   0% → -36.4px   4% → -7.6px   6% → +6.8px   7% → +14.0px
+//   8% → +21.2px   9% → +28.4px (retenu)   10% → +35.6px   14% → +64.4px
+// 9% total retenu (marge confortable) → extra = 9 - 4(base) = 5.
+var UC_AYA_HR_SHIFT_UP_720P_EXTRA = 5;
+// window.isHorizontalOrientation n'existe PAS (vérifié en test réel sur
+// boîtier, 12/08/2026 : typeof window.isHorizontalOrientation === 'undefined')
+// -- la variable du coeur (m2body.js ~4050, assignation sans var/let/const)
+// vit dans une fermeture qui n'expose rien sur window, même piège que les
+// `const` documentés dans Common Pitfalls (CLAUDE.md). On reproduit donc
+// exactement le calcul du coeur plutôt que de dépendre de cette variable.
+function _ucIsHorizontalOrientation() {
+    var h = (window.innerHeight < window.innerWidth);
+    if (h && typeof JS_DATA !== 'undefined' && JS_DATA.ucForcedVertical > 0) h = false;
+    return h;
+}
+function _applyHrAyaRotationLayout() {
+    if (!_ucIsHorizontalOrientation()) return;
+    var aya = document.getElementById('ayaDisplayContainerHorizontal');
+    var msg = document.getElementById('messageDisplayContainerHorizontal');
+    var tbl = document.getElementById('prayerTimesContainerHorizontal');
+    var shift = (JS_CUSTOM.ucAyaRotationEnabled == 1) ? 0 : UC_AYA_HR_SHIFT_UP;
+    if (shift && window.innerHeight <= 720) shift += UC_AYA_HR_SHIFT_UP_720P_EXTRA;
+    // BUG RÉEL TROUVÉ EN TEST (13/08/2026, sur box réelle -- vérifié via
+    // getComputedStyle/getBoundingClientRect, pas juste le style inline) :
+    // certains modes (au moins 4 et 6) ont leur PROPRE règle
+    // `#mainHorizontalContainer[data-layout-mode="X"] #prayerTimesContainerHorizontal/
+    // #ayaDisplayContainerHorizontal { top: ...% !important; }` (custom.css).
+    // Un `!important` de feuille de style bat un style inline SANS
+    // !important, quel que soit son ordre d'application -- notre décalage ne
+    // s'appliquait donc JAMAIS visuellement sur ces modes, ni aujourd'hui ni
+    // avant (bug préexistant au 12/08/2026, pas introduit aujourd'hui).
+    // Fix : poser notre style inline EN !important aussi (gagne alors sur la
+    // spécificité, seule départageuse une fois les deux à égalité
+    // d'importance) ; le retirer entièrement (au lieu d'une chaîne vide) au
+    // repos pour laisser la règle de mode reprendre la main normalement.
+    if (aya) {
+        if (shift) aya.style.setProperty('top', (40.5 - shift) + '%', 'important');
+        else aya.style.removeProperty('top');
+    }
+    // messageDisplayContainerHorizontal (annonces admin) partage la même
+    // position de base que ayaDisplayContainerHorizontal (40.5%, style1.css
+    // core) -- les deux occupent le même emplacement en alternance (verset OU
+    // message, jamais les deux). Oublié dans le 1er passage (13/08/2026) :
+    // ayaDisplayContainerHorizontal se décalait mais pas lui. Un simple même-
+    // décalage-que-aya ne suffit PAS ici (vérifié par calcul géométrique
+    // réel, 13/08/2026, demande explicite : "au milieu entre l'horloge et le
+    // tableau") : appliquer le même % laisse le message notablement plus
+    // proche de l'horloge que du tableau, pas centré. Calcul dynamique donc,
+    // à partir des positions réellement mesurées (robuste à la résolution,
+    // contrairement à un pourcentage fixe deviné) : centre le conteneur
+    // message au milieu du vrai espace vertical entre le bas de l'horloge
+    // (fullClockContainerHorizontal) et le haut du tableau déjà décalé.
+    // messageContainerVertical (nom core trompeur, pointe sur ce même id)
+    // est aussi réinitialisé en dur à '40.5%' par closeFullScreenCounterFunction
+    // (déjà patché plus bas) -- recalculé à chaque appel, pas figé une fois.
+    if (msg) {
+        if (shift) {
+            var clockEl = document.getElementById('fullClockContainerHorizontal');
+            var clockBottomPx = clockEl ? clockEl.getBoundingClientRect().bottom : null;
+            var tblTopPx = (_hrAyaBaseTop() - shift) / 100 * window.innerHeight;
+            if (clockBottomPx != null) {
+                var msgHeightPx = msg.getBoundingClientRect().height || (0.24 * window.innerHeight);
+                var midPx = (clockBottomPx + tblTopPx) / 2;
+                var msgTopPct = (midPx - msgHeightPx / 2) / window.innerHeight * 100;
+                msg.style.setProperty('top', msgTopPct + '%', 'important');
+            } else {
+                msg.style.setProperty('top', (40.5 - shift) + '%', 'important');
+            }
+        } else {
+            msg.style.removeProperty('top');
+        }
+    }
+    if (tbl) {
+        if (shift) tbl.style.setProperty('top', (_hrAyaBaseTop() - shift) + '%', 'important');
+        else tbl.style.removeProperty('top');
+    }
+}
+(function _patchApplyHrLayoutForAyaRotation() {
+    var _orig = window.applyHrLayoutFunction;
+    if (typeof _orig !== 'function') return;
+    window.applyHrLayoutFunction = function () {
+        _orig.apply(this, arguments);
+        _applyHrAyaRotationLayout();
+    };
+})();
+// closeFullScreenCounterFunction() (m2body.js ~1836, via la variable
+// core mal nommée ayaContainerVertical qui pointe en fait sur
+// ayaDisplayContainerHorizontal) écrit en dur `.style.top = '40.5%'` à
+// chaque fermeture du compteur plein écran -- appelé très régulièrement
+// (fin de chaque compte à rebours iqama), ça écrasait silencieusement notre
+// décalage à chaque cycle. Trouvé en vérifiant explicitement TOUS les writers
+// core de `.style.top` sur ces éléments (grep ciblé, 13/08/2026) : le tableau
+// (prayerTimesContainerHorizontalElement) n'a qu'UN SEUL writer (déjà patché
+// ci-dessus), mais ce second writer sur le conteneur ayats n'était pas
+// couvert. showIqamaCounter() (m2body.js ~2980) pose aussi '11%' sur ce même
+// élément, mais volontairement -- position dédiée au mode plein écran actif,
+// non touchée ici.
+(function _patchCloseFullScreenCounterForAyaRotation() {
+    var _orig = window.closeFullScreenCounterFunction;
+    if (typeof _orig !== 'function') return;
+    window.closeFullScreenCounterFunction = function () {
+        _orig.apply(this, arguments);
+        _applyHrAyaRotationLayout();
+    };
+})();
+_applyHrAyaRotationLayout();
 
 // Garantit 10 slots récitateurs même si le cache est ancien ou incomplet
 // (format ajouté ici : backfill 'mp3' pour les configs déjà stockées avant
@@ -641,6 +1416,23 @@ _syncDeviceReciters('page_load');
         localStorage.setItem('JS_DATA_CUSTOM', JSON.stringify(obj));
         console.log('[QURAN_AUTOSTART] Migration Enabled -> 0=désactivé effectuée');
     }
+})();
+
+// ── Nouveau défaut "prières de nuit" désactivées (demande explicite du
+// 11/08/2026) : ucShowNightPrayers est une clé CORE (settings-defaults.js,
+// jamais modifiable ici, défaut usine = 1) -- on ne peut pas changer sa
+// valeur d'usine sans toucher au fichier core. On force donc 0 UNE SEULE FOIS
+// par installation, via un indicateur one-shot dans JS_DATA_CUSTOM (comme
+// les migrations ci-dessus) : n'importe quel choix fait ENSUITE par
+// l'utilisateur via showNightPrayersCheckbox reste ensuite intouché pour
+// toujours -- ce n'est un nouveau défaut, pas un verrouillage permanent.
+(function _forceNightPrayersDefaultOff() {
+    if (JS_CUSTOM.ucNightPrayersDefaultApplied == 1) return;   // déjà fait, ne plus jamais retoucher
+    JS_DATA.ucShowNightPrayers = 0;
+    if (typeof saveSettingsToStorageFunction === 'function') saveSettingsToStorageFunction();
+    if (typeof updateNightPrayersVisibilityFunction === 'function') updateNightPrayersVisibilityFunction();
+    JS_CUSTOM.ucNightPrayersDefaultApplied = 1;
+    saveCustomSettingsFunction();
 })();
 
 function saveCustomSettingsFunction() {
@@ -1318,6 +2110,45 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
     [vEl, hEl].forEach(function(el) {
         if (el) _ayaObserver.observe(el, { childList: true, characterData: true, subtree: true });
     });
+})();
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Rotation des versets/ayats : réglage ON/OFF (ucAyaRotationEnabled) ───────
+// Coupe l'affichage rotatif des versets coraniques génériques quand le
+// réglage est désactivé, TOUT EN laissant passer les rappels ponctuels
+// (10 derniers jours de Ramadan, 10 premières nuits de Dhoul Hijja, jours
+// blancs, Takbir) que le coeur repère lui-même via le wrapper
+// 'specialAyaClass' (m2body.js, displayRandomAyaFunction).
+// Même contrainte que _fixAyaRecursionErrorFlash ci-dessus : impossible de
+// monkey-patcher displayRandomAyaFunction directement -- ses propres retries
+// internes s'appellent par leur nom global bare (`displayRandomAyaFunction()`),
+// qui résoudrait alors vers NOTRE wrapper (functions au global scope, lookup
+// dynamique par nom, pas par référence capturée) au lieu de l'original,
+// causant une explosion récursive. On observe donc le DOM, comme le fait déjà
+// le correctif ci-dessus, plutôt que de patcher la fonction.
+(function _installAyaRotationFilter() {
+    var vEl = document.getElementById('ayaTextDisplayVertical');
+    var hEl = document.getElementById('ayaTextDisplayHorizontal');
+    if (!vEl && !hEl) return;
+
+    function _checkAndFilter(el) {
+        if (el && el.nodeType !== 1) el = el.parentElement;
+        if (!el || typeof el.innerHTML !== 'string') return;
+        if (JS_CUSTOM.ucAyaRotationEnabled == 1) return;               // rotation classique, ne rien changer
+        if (el.innerHTML === '') return;                               // déjà vide, rien à faire
+        if (el.innerHTML.indexOf('specialAyaClass') > -1) return;      // rappel ponctuel : laisser passer
+        el.innerHTML = '';
+    }
+
+    var _filterObserver = new MutationObserver(function(mutations) {
+        mutations.forEach(function(m) { _checkAndFilter(m.target); });
+    });
+    [vEl, hEl].forEach(function(el) {
+        if (el) _filterObserver.observe(el, { childList: true, characterData: true, subtree: true });
+    });
+    // Applique aussi immédiatement à l'état déjà présent au chargement.
+    _checkAndFilter(vEl);
+    _checkAndFilter(hEl);
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -3301,16 +4132,6 @@ function _rmSetDownloadActive(id, active) {
 
 (function injectTechOptionsUI() {
 
-    // ── Bouton « Lecteur du Coran » ───────────────────────────────────────────
-    // Accès direct depuis le menu principal — fait exactement ce que fait
-    // customQuranIcon (ouvre la modale du lecteur Coran). L'édition du nom de
-    // la mosquée reste accessible via Options → label (mosqueNameOptionLabel).
-    const quranMenuBtn = document.createElement('div');
-    quranMenuBtn.id = 'quranPlayerMenuButton';
-    quranMenuBtn.innerHTML = '📖 مشغل القرآن';
-    quranMenuBtn.onclick = function() { closeMenuFunction(); openQuranPlayerModal(); };
-    document.getElementById('menuSectionsContainer').appendChild(quranMenuBtn);
-
     // Bouton dans le menu
     const techBtn = document.createElement('div');
     techBtn.id = 'techOptionsButton';
@@ -3447,6 +4268,30 @@ function _rmSetDownloadActive(id, active) {
         </div>`;
     document.body.appendChild(modal);
 
+    // ── Bouton « Lecteur du Coran » ───────────────────────────────────────────
+    // Déplacé ici (13/08/2026, demande explicite) : 1ère ligne DANS cette
+    // modale, au-dessus de la case "تفعيل وميض الأذان" -- vivait auparavant
+    // dans le menu principal. Un essai précédent avec closeModalFunction(modal)
+    // a cassé l'écran (closeModalFunction attend l'élément "✕", 2 niveaux
+    // sous la modale, pas la modale elle-même ; lui passer `modal` cachait un
+    // ancêtre bien plus haut dans le DOM, faisant disparaître des éléments de
+    // l'écran principal). Un second essai (juste openQuranPlayerModal(), sans
+    // rien fermer, calqué sur #customQuranIcon qui n'a rien à fermer) laissait
+    // techOptionsSectionId ouverte en dessous -- pas ce qui est voulu ici,
+    // contrairement à customQuranIcon. Fix : fermer modal DIRECTEMENT (même
+    // idiome que _closeAllMenuSections plus haut dans ce fichier), sans passer
+    // par closeModalFunction.
+    const quranMenuBtn = document.createElement('div');
+    quranMenuBtn.id = 'quranPlayerMenuButton';
+    quranMenuBtn.innerHTML = '📖 مشغل القرآن';
+    quranMenuBtn.onclick = function() { modal.style.visibility = 'hidden'; openQuranPlayerModal(); };
+    const techContentEl = document.getElementById('techOptionsContentContainer');
+    if (techContentEl) {
+        var quranBtnSep = document.createElement('hr');
+        techContentEl.insertBefore(quranBtnSep, techContentEl.firstChild);
+        techContentEl.insertBefore(quranMenuBtn, quranBtnSep);
+    }
+
     const lightModal = document.createElement('div');
     lightModal.id = 'lightProgrammingSectionId';
     lightModal.className = 'modalPopupClass';
@@ -3471,6 +4316,69 @@ function _rmSetDownloadActive(id, active) {
     document.getElementById('stopQuranBeforeAzanButton').innerHTML     = JS_CUSTOM.ucStopQuranBeforeAzanDelay + 's';
     document.getElementById('stopQuranBeforeAzanCheckbox').checked     = (JS_CUSTOM.ucStopQuranBeforeAzan == 1);
     document.getElementById('startQuranBeforeAzanCheckbox').checked    = (JS_CUSTOM.ucStartQuranBeforeAzan == 1);
+
+    // -- Checkbox : rotation des versets/ayats --
+    // Déplacée dans #azkarSettingsContent (onglet "الأذكار", demande explicite
+    // du 12/08/2026) -- rattachée thématiquement aux rappels/azkar plutôt
+    // qu'à la programmation Coran. #azkarSettingsContent est un élément CORE
+    // (index.html) déjà présent au chargement, donc disponible ici quel que
+    // soit l'ordre d'exécution des IIFE de ce fichier.
+    (function _injectAyaRotationCheckbox() {
+        var host = document.getElementById('azkarSettingsContent');
+        if (!host) return;
+        var hr = host.querySelector('hr');
+        var row = document.createElement('input');
+        row.type = 'checkbox';
+        row.id = 'ayaRotationEnabledCheckbox';
+        row.setAttribute('onchange', 'toggleAyaRotationEnabledFunction();');
+        var label = document.createElement('label');
+        label.setAttribute('for', 'ayaRotationEnabledCheckbox');
+        label.innerHTML = '&nbsp;تفعيل عرض الآيات المتناوب (الأذكار المناسباتية تبقى تُعرض)';
+        var br = document.createElement('br');
+        if (hr) {
+            host.insertBefore(row, hr);
+            host.insertBefore(label, hr);
+            host.insertBefore(br, hr);
+        } else {
+            host.appendChild(row);
+            host.appendChild(label);
+            host.appendChild(br);
+        }
+        row.checked = (JS_CUSTOM.ucAyaRotationEnabled == 1);
+    })();
+
+    // -- Checkbox : afficher le nom de la mosquée --
+    // Rattachée directement sur la ligne de mosqueNameOptionLabel (onglet
+    // "المسجد والساعة", demande explicite du 12/08/2026) plutôt qu'une ligne
+    // séparée -- décochée, mosqueNameOptionLabel devient inaccessible (grisé
+    // + pointer-events:none, même traitement que _installIqamaBlinkGuard/
+    // _setRowState plus bas dans ce fichier) : éditer le nom d'une mosquée
+    // qui n'est plus affichée n'a pas de sens. Réservé aux boîtiers -- pas de
+    // sens sur téléphone (mosqueNameDisplayVertical/Horizontal y reste
+    // toujours affiché, cf. _applyShowMosqueName ci-dessous qui ne masque
+    // rien côté téléphone puisque cette checkbox n'y existe simplement pas).
+    (function _injectShowMosqueNameCheckbox() {
+        // Élargi de "boîtier uniquement" à "pas téléphone" (demande explicite
+        // du 12/08/2026, même choix que _installTvTabWrap/
+        // _hideQuranServerCheckboxOnPhone) : les déploiements "kiosque"
+        // Windows/PC (navigateur, pas de bridge natif) ont les mêmes
+        // contraintes que les boîtiers pour ce genre de réglage. Ne masque
+        // QUE si le bridge natif confirme explicitement "téléphone"
+        // (isAndroidTv() === false) ; en l'absence du bridge (navigateur/PC),
+        // on considère l'environnement comme "boîtier/kiosque" et on injecte.
+        var isPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && !window.AndroidMobile.isAndroidTv());
+        if (isPhone) return;
+        var label = document.getElementById('mosqueNameOptionLabel');
+        var row = label && label.parentElement;
+        if (!row) return;
+        row.insertAdjacentHTML('afterbegin',
+            '<input type="checkbox" id="showMosqueNameCheckbox" onchange="toggleShowMosqueNameFunction();" '
+            + 'style="vertical-align:middle;margin-inline-end:6px;"> ');
+        document.getElementById('showMosqueNameCheckbox').checked = (JS_CUSTOM.ucShowMosqueName == 1);
+        _applyShowMosqueName();
+    })();
+
     refreshStartQuranBeforeAzanButtonsUI();
     refreshSalatNabiUI();
     refreshTakbirUI();
@@ -3532,6 +4440,46 @@ function toggleBlinkingEnabledFunction() {
     JS_CUSTOM.ucBlinkingEnabled = +(!JS_CUSTOM.ucBlinkingEnabled);
     saveCustomSettingsFunction();
     document.getElementById('blinkingEnabledCheckbox').checked = (JS_CUSTOM.ucBlinkingEnabled == 1);
+}
+
+function toggleAyaRotationEnabledFunction() {
+    JS_CUSTOM.ucAyaRotationEnabled = +(!JS_CUSTOM.ucAyaRotationEnabled);
+    saveCustomSettingsFunction();
+    document.getElementById('ayaRotationEnabledCheckbox').checked = (JS_CUSTOM.ucAyaRotationEnabled == 1);
+    if (typeof displayRandomAyaFunction === 'function') displayRandomAyaFunction();
+    if (typeof _applyHrAyaRotationLayout === 'function') _applyHrAyaRotationLayout();
+}
+
+// Réservé aux boîtiers (checkbox masquée sur téléphone, cf.
+// _hideShowMosqueNameCheckboxOnPhone) -- _applyShowMosqueName() reste
+// néanmoins inoffensive si jamais appelée côté téléphone : elle ne fait
+// qu'appliquer JS_CUSTOM.ucShowMosqueName, qui reste à sa valeur par défaut
+// (1 = affiché) tant que la checkbox correspondante n'est pas accessible.
+function _applyShowMosqueName() {
+    var show = (JS_CUSTOM.ucShowMosqueName == 1);
+    var v = document.getElementById('mosqueNameDisplayVertical');
+    var h = document.getElementById('mosqueNameDisplayHorizontal');
+    if (v) v.style.display = show ? '' : 'none';
+    if (h) h.style.display = show ? '' : 'none';
+
+    // mosqueNameOptionLabel (bouton d'édition du nom, onglet "المسجد والساعة") :
+    // inaccessible quand le nom n'est plus affiché -- même traitement que
+    // _setRowState (_installIqamaBlinkGuard plus bas) : opacité réduite +
+    // pointer-events:none. Ne touche jamais showMosqueNameCheckbox lui-même
+    // (sibling dans la même ligne) : il doit rester cliquable pour pouvoir
+    // réactiver l'affichage.
+    var label = document.getElementById('mosqueNameOptionLabel');
+    if (label) {
+        label.style.opacity       = show ? '' : '0.38';
+        label.style.pointerEvents = show ? '' : 'none';
+    }
+}
+
+function toggleShowMosqueNameFunction() {
+    JS_CUSTOM.ucShowMosqueName = +(!JS_CUSTOM.ucShowMosqueName);
+    saveCustomSettingsFunction();
+    document.getElementById('showMosqueNameCheckbox').checked = (JS_CUSTOM.ucShowMosqueName == 1);
+    _applyShowMosqueName();
 }
 
 function editBlinkingSecondsFunction() {
@@ -9655,7 +10603,7 @@ window.SIMUL = (function() {
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LAYOUT TOGGLE – 6 MODES
+// LAYOUT TOGGLE – 7 MODES
 // Override de toggleHrNamesMiddleFunction + updateHrNamesPositionFunction
 // pour ajouter des présentations visuelles supplémentaires au cycle.
 //
@@ -9667,12 +10615,15 @@ window.SIMUL = (function() {
 //  5 – Ornement Élégant : mêmes positions que mode 1, cadre arc or/émeraude
 //      + motif géométrique islamique (cf. _ucSetHrLayoutMode plus bas pour
 //      le sélecteur nommé qui remplace le cycle "à l'aveugle" de la case).
+//  6 – Classique (fin)  : mêmes positions que mode 4, fond pb6/pbc6/pp6.webp
+//      (variantes de pbbis/pbc/pp.webp sans le contour épais extérieur ni la
+//      marge -- demande explicite du 12/08/2026, cf. custom.css "MODE 6").
 // ═══════════════════════════════════════════════════════════════════════════
 (function _installLayoutModes() {
 
     window.toggleHrNamesMiddleFunction = function () {
         if (typeof isBigCounterActive !== 'undefined' && isBigCounterActive) return;
-        JS_DATA.ucHrNamesInMiddle = (JS_DATA.ucHrNamesInMiddle + 1) % 6;
+        JS_DATA.ucHrNamesInMiddle = (JS_DATA.ucHrNamesInMiddle + 1) % 7;
         saveSettingsToStorageFunction();
         updateHrNamesPositionFunction(true);
     };
@@ -9745,6 +10696,19 @@ window.SIMUL = (function() {
             rootElement.style.setProperty('--mt7',        '30%');
             hmc.setAttribute('data-layout-mode', '5');
 
+        } else if (JS_DATA.ucHrNamesInMiddle == 6) {
+            // Mode 6 – Classique (fin) : positions identiques au mode 4, seules
+            // les images changent (pb6/pbc6/pp6.webp -- contour épais + marge
+            // retirés, cf. custom.css "MODE 6" et spec/images/, demande
+            // explicite du 12/08/2026).
+            rootElement.style.setProperty('--jnamTOP',    '36%');
+            rootElement.style.setProperty('--j6hourTOP',  '64%');
+            rootElement.style.setProperty('--j6iqamaTOP', hrIqamaTopVariant);
+            rootElement.style.setProperty('--j5hourTOP',  '60%');
+            rootElement.style.setProperty('--j5iqamaTOP', hrIqamaTopVariant);
+            rootElement.style.setProperty('--mt7',        '30%');
+            hmc.setAttribute('data-layout-mode', '6');
+
         } else {
             // Mode 0 STD – noms en haut
             rootElement.style.setProperty('--jnamTOP',    '4%');
@@ -9767,7 +10731,7 @@ window.SIMUL = (function() {
     // un mode sans avoir a cliquer sur la case a cocher N fois. Partage la
     // meme logique que toggleHrNamesMiddleFunction (sauvegarde + re-render).
     window._ucSetHrLayoutMode = function (mode) {
-        var m = ((mode % 6) + 6) % 6; // toujours positif meme si mode < 0
+        var m = ((mode % 7) + 7) % 7; // toujours positif meme si mode < 0
         JS_DATA.ucHrNamesInMiddle = m;
         saveSettingsToStorageFunction();
         updateHrNamesPositionFunction(true);
@@ -9783,7 +10747,7 @@ window.SIMUL = (function() {
 // pattern que _hideOldQrCheckboxRow un peu plus haut dans ce fichier) et on
 // injecte le nouveau controle juste apres.
 (function _installLayoutModeSelector() {
-    var MODE_NAMES = ['قياسي', 'مركزي', 'أخضر إسلامي', 'ذهبي أنيق', 'زخرفة كلاسيكية', 'زخرفة أنيقة'];
+    var MODE_NAMES = ['قياسي', 'مركزي', 'أخضر إسلامي', 'ذهبي أنيق', 'زخرفة كلاسيكية', 'زخرفة أنيقة', 'زخرفة كلاسيكية (رفيعة)'];
 
     function _hideOldRow() {
         var cb = document.getElementById('middleSalatNamesCheckbox');
@@ -10167,19 +11131,31 @@ window.SIMUL = (function() {
 //
 //  Déclenchement : UC_EVT.AZAN_SHOW (juste après l'affichage du popup).
 // ───────────────────────────────────────────────────────────────────────────
+// Chemin de l'image de fond (écran d'appel azan) selon la prière -- partagé
+// par _installAzanDynamicBackground et _patchApplyThemeForDome (même logique
+// dupliquée à l'origine, factorisée ici). Bascule dome_xxx.webp/sansdome_xxx.webp
+// selon JS_CUSTOM.ucAzanBgUseDome (case à cocher onglet "الأذان", demande
+// explicite du 12/08/2026).
+function _ucDomeImageForPrayer(prayer) {
+    var base;
+    switch (prayer) {
+        case 'ISHA':  base = 'isha';     break;
+        case 'MGRB':  base = 'maghreb';  break;
+        case 'ASSR':  base = 'asr';      break;
+        case 'JOMOA':
+        case 'DOHR':  base = 'dohr';     break;
+        case 'SHRQ':  base = 'doha';     break;
+        default:      base = 'fajr';     break; // FAJR + fallback
+    }
+    var prefix = (JS_CUSTOM.ucAzanBgUseDome == 1) ? 'dome_' : 'sansdome_';
+    return 'spec/images/' + prefix + base + '.webp';
+}
+
 (function _installAzanDynamicBackground() {
 
     /** Retourne le chemin de l'image de dôme selon la prière. */
     function _getDomeImage(prayer) {
-        switch (prayer) {
-            case 'ISHA':  return 'spec/images/dome_isha.webp';
-            case 'MGRB':  return 'spec/images/dome_maghreb.webp';
-            case 'ASSR':  return 'spec/images/dome_asr.webp';
-            case 'JOMOA':
-            case 'DOHR':  return 'spec/images/dome_dohr.webp';
-            case 'SHRQ':  return 'spec/images/dome_doha.webp';
-            default:      return 'spec/images/dome_fajr.webp'; // FAJR + fallback
-        }
+        return _ucDomeImageForPrayer(prayer);
     }
 
     /** Image de dôme en HORIZONTAL ; fond NOIR uni en VERTICAL (normal ou
@@ -10193,6 +11169,12 @@ window.SIMUL = (function() {
         if (azanPopupBgVertical) {
             azanPopupBgVertical.style.background = '#000';
         }
+        // Sans dôme : plus de silhouette à contourner -- heure/titre azan/nom
+        // de la prière recentrés horizontalement (cf. .ucNoDomeCentered,
+        // custom.css). Avec dôme : comportement d'origine (texte à gauche).
+        var noDome = (JS_CUSTOM.ucAzanBgUseDome != 1);
+        if (azanPopupHorizontalElement) azanPopupHorizontalElement.classList.toggle('ucNoDomeCentered', noDome);
+        if (azanPopupVerticalElement)   azanPopupVerticalElement.classList.toggle('ucNoDomeCentered', noDome);
     }
 
     /**
@@ -10305,17 +11287,10 @@ window.SIMUL = (function() {
     ucOn(UC_EVT.AZAN_SHOW, function(e) { _domeActivePrayer = e.prayer || null; });
     ucOn(UC_EVT.AZAN_HIDE, function()  { _domeActivePrayer = null; });
 
-    // Correspondance priere → image (meme logique que _installAzanDynamicBackground)
+    // Correspondance priere → image (factorisée dans _ucDomeImageForPrayer,
+    // cf. plus haut -- meme logique que _installAzanDynamicBackground)
     function _domeUrl(prayer) {
-        switch (prayer) {
-            case 'ISHA':  return 'spec/images/dome_isha.webp';
-            case 'MGRB':  return 'spec/images/dome_maghreb.webp';
-            case 'ASSR':  return 'spec/images/dome_asr.webp';
-            case 'JOMOA':
-            case 'DOHR':  return 'spec/images/dome_dohr.webp';
-            case 'SHRQ':  return 'spec/images/dome_doha.webp';
-            default:      return 'spec/images/dome_fajr.webp';
-        }
+        return _ucDomeImageForPrayer(prayer);
     }
 
     var _origApplyTheme = applyThemeFunction;
@@ -10781,15 +11756,24 @@ function _startHijriSyncScheduler() {
     const container = document.getElementById('techOptionsContentContainer');
     if (!container) return;
 
+    // Plus de <hr> au-dessus (demande explicite du 14/08/2026 -- ce bloc vit
+    // maintenant dans l'onglet "أخرى"/"Date et Météo" du menu principal,
+    // cf. _installMenuSectionSubTabs, qui ne récupère un <hr> voisin QUE
+    // s'il en trouve un juste avant hijriRow -- sans lui, rien n'est déplacé,
+    // ce qui est le comportement voulu ici).
+    // hijriSyncUrlButton n'affiche plus l'URL brute (trop encombrant à
+    // l'écran) : simple icône 🔗 cliquable à côté du libellé, qui ouvre
+    // toujours la même boîte de saisie (editHijriSyncUrlFunction) -- l'URL
+    // complète reste visible/modifiable une fois la boîte ouverte, via
+    // title=... en info-bulle pour un usage souris/desktop.
     container.insertAdjacentHTML('beforeend',
-        "<hr>" +
         "<!-- ═══ SYNCHRONISATION DATE HIJRI ═══ -->" +
         "<div>" +
             "<input type='checkbox' id='hijriSyncEnabledCheckbox' onchange='toggleHijriSyncFunction();'>" +
             "&nbsp;<span>مزامنة التاريخ الهجري</span>" +
             "&nbsp;<span class='clickableWhiteClass' id='hijriSyncUrlButton'" +
             "  onclick='editHijriSyncUrlFunction();'" +
-            "  style='direction:ltr;display:inline-block;max-width:16em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;'></span>" +
+            "  style='cursor:pointer;vertical-align:middle;'>🔗</span>" +
         "</div>" +
         "<div id='hijriSyncStatusRow' style='padding:2px 0 4px 26px;font-size:.82em;opacity:.7;'></div>"
     );
@@ -10804,7 +11788,20 @@ function toggleHijriSyncFunction() {
     JS_CUSTOM.ucHijriSyncEnabled = +(!JS_CUSTOM.ucHijriSyncEnabled);
     saveCustomSettingsFunction();
     if (JS_CUSTOM.ucHijriSyncEnabled == 1) {
-        _startHijriSyncScheduler();
+        // Activation explicite de la case (demande du 14/08/2026) : on vide
+        // le cache existant (générique + officiel Supabase) et on retente
+        // une VRAIE synchro réseau, plutôt que _startHijriSyncScheduler()
+        // seul, qui aurait pu se contenter d'un cache encore valide pour
+        // aujourd'hui (cf. commentaire de _startHijriSyncScheduler) sans
+        // jamais retaper le réseau -- l'utilisateur qui réactive la case
+        // s'attend à une tentative immédiate et fraîche.
+        _hijriSyncCache   = null;
+        _hijriOfficialRaw = null;
+        try { localStorage.removeItem(_HIJRI_SYNC_KEY); } catch (e) {}
+        try { localStorage.removeItem(_HIJRI_OFFICIAL_KEY); } catch (e) {}
+        if (_hijriSyncTimer) { clearTimeout(_hijriSyncTimer); _hijriSyncTimer = null; }
+        dolog('[HijriSync] activé → cache vidé, resynchro forcée');
+        _attemptHijriSync();
     } else {
         if (_hijriSyncTimer) { clearTimeout(_hijriSyncTimer); _hijriSyncTimer = null; }
         dolog('[HijriSync] désactivé');
@@ -10831,7 +11828,9 @@ function refreshHijriSyncUI() {
     const statusRow = document.getElementById('hijriSyncStatusRow');
 
     if (cb)     cb.checked       = (JS_CUSTOM.ucHijriSyncEnabled == 1);
-    if (urlBtn) urlBtn.innerHTML = '🔗 ' + (JS_CUSTOM.ucHijriSyncUrl || '');
+    // Icône fixe (🔗), plus d'URL affichée en clair (cf. _injectHijriSyncUI) --
+    // seul le title= (info-bulle) reflète la valeur courante.
+    if (urlBtn) urlBtn.title      = JS_CUSTOM.ucHijriSyncUrl || '';
 
     if (statusRow) {
         if (JS_CUSTOM.ucHijriSyncEnabled != 1) {
@@ -12748,7 +13747,7 @@ function forceHijriSyncFunction() {
     var _ov15 = document.createElement('div');
     _ov15.id = 'ucIqama15sOverlay';
     _ov15.style.cssText = [
-        'position:fixed', 'inset:0', 'z-index:19999',
+        'position:fixed', 'top:0', 'right:0', 'bottom:0', 'left:0', 'z-index:19999',
         'display:flex', 'align-items:flex-start', 'justify-content:center',
         'padding-top:12%',
         'pointer-events:none', 'opacity:0',
@@ -14918,6 +15917,43 @@ function selectQPTakbir() {
         btn.onclick = function() { window._ucOpenMosqueSelector(); };
         ref.insertAdjacentElement('afterend', btn);
         _refreshSettingsBtn();
+    })();
+
+    // ── Synchro pays/ville → sélecteur de mosquée (demande explicite du
+    // 14/08/2026) : quand l'utilisateur choisit pays/ville dans le bloc
+    // citySelectionTitle (Paramètres > Ville, boutons selectCountryButton/
+    // selectCityButton), ces mêmes valeurs doivent devenir les valeurs par
+    // défaut affichées dans ucMosqueSelectorInner (ucMosqueSelectCountryButton/
+    // ucMosqueSelectCityButton) ET la liste de mosquées filtrée en dessous.
+    // selectCityFunction() (m2body.js) est l'UNIQUE writer de
+    // JS_DATA.ucNowCityCODE (pays ET ville : le code inclut le préfixe pays,
+    // il n'existe pas de "sélection pays" séparée côté coeur) -- un seul
+    // point de monkey-patch suffit, même idiome que le reste du fichier.
+    // Sens UNIQUEMENT coeur -> sélecteur ici, jamais l'inverse : cf. la
+    // régression documentée plus haut dans _buildLocPicker (appeler
+    // window.selectCityFunction() DEPUIS ce sélecteur avait provoqué une
+    // boucle de rechargement infinie) -- ce patch-ci ne touche jamais
+    // JS_DATA.ucNowCityCODE, il ne fait que relire l'état déjà écrit par
+    // l'original.
+    (function _installRealCitySyncToMosqueSelector() {
+        var _orig = window.selectCityFunction;
+        if (typeof _orig !== 'function') return;
+        window.selectCityFunction = function(selectedCityCode) {
+            _orig.apply(this, arguments);
+            _locDefaults    = _currentLocationDefaults();
+            _selCountryCode = _locDefaults.countryCode;
+            _selCountryName = _locDefaults.countryName;
+            _selCityCode    = _locDefaults.cityCode;
+            _selCityName    = _locDefaults.cityName;
+            // Rafraîchit l'UI seulement si la modale a déjà été construite au
+            // moins une fois (_buildModal) -- sinon _selCityCode/_selCountryCode
+            // resteront simplement à jour pour la prochaine ouverture, qui les
+            // relit déjà correctement (cf. _currentLocationDefaults au chargement).
+            if (document.getElementById('ucMosqueSelectCountryButton')) {
+                _loadCities(_selCountryCode, _selCountryName);
+            }
+            if (_list) _refreshForCity(_searchInput ? _searchInput.value : '');
+        };
     })();
 
     // ── Premier lancement (aucune mosquée choisie) : applique automatiquement
@@ -17835,17 +18871,22 @@ function selectQPTakbir() {
         return { hour: Math.floor(m / 60), minute: m % 60, dayOffset: dayOffset };
     }
 
+    // Injectée directement dans #optionsContentContainer (élément CORE
+    // statique, déjà présent au chargement) -- AVANT que _installOptionsTabs
+    // (plus bas dans ce fichier) ne réorganise tout en onglets : son id est
+    // ajouté à AZAN_CORE_IDS là-bas, donc récupérée automatiquement dans
+    // l'onglet "الأذان" (transférée depuis "تعديل الأذان", demande explicite
+    // du 13/08/2026) sans rien coder de spécifique ici sur le placement final.
     function _injectCheckbox() {
         if (document.getElementById('volumeBoostBeforeAzanCheckbox')) return;
-        var anchor = document.getElementById('prayersAdjustmentsTitle');
-        if (!anchor) return;
+        var host = document.getElementById('optionsContentContainer');
+        if (!host) return;
         var div = document.createElement('div');
-        div.className = 'ucOptRow';
         div.innerHTML =
             '<input type="checkbox" id="volumeBoostBeforeAzanCheckbox"' +
             (JS_CUSTOM.ucVolumeBoostBeforeAzan == 1 ? ' checked' : '') + '> &nbsp;' +
             '<label for="volumeBoostBeforeAzanCheckbox">' + t('label') + '</label>';
-        anchor.insertAdjacentElement('afterend', div);
+        host.appendChild(div);
         document.getElementById('volumeBoostBeforeAzanCheckbox').addEventListener('change', function (e) {
             JS_CUSTOM.ucVolumeBoostBeforeAzan = e.target.checked ? 1 : 0;
             saveCustomSettingsFunction();
@@ -17894,13 +18935,12 @@ function selectQPTakbir() {
 
     window._ucRescheduleVolumeBoost = _ucScheduleVolumeBoostAlarms;
 
-    // Appel initial : attend que calculateAndDisplayTimesFunction() ait tourné
-    // ET que _installAdjustmentsTabs ait construit l'onglet (cf. commentaire
-    // d'en-tête).
-    setTimeout(function() {
-        _injectCheckbox();
-        _ucScheduleVolumeBoostAlarms();
-    }, 4000);
+    // La case est injectée tout de suite (#optionsContentContainer est
+    // statique, cf. commentaire d'en-tête de _injectCheckbox) -- seule la
+    // programmation des alarmes attend que calculateAndDisplayTimesFunction()
+    // ait tourné.
+    _injectCheckbox();
+    setTimeout(_ucScheduleVolumeBoostAlarms, 4000);
 
     // Re-programmer chaque jour (les heures d'azan changent chaque jour).
     var _volumeBoostLastScheduledDay = -1;
@@ -19249,7 +20289,7 @@ function selectQPTakbir() {
         var overlay = document.createElement('div');
         overlay.id = 'ucCfgModal';
         overlay.style.cssText =
-            'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;' +
+            'position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,.7);z-index:99999;' +
             'display:flex;align-items:center;justify-content:center;';
 
         var box = document.createElement('div');
@@ -19290,7 +20330,7 @@ function selectQPTakbir() {
     // le blob) — même style/logique que ucAdminUnlockOverlay.
     // =====================================================================
     (function () {
-        var OV  = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.78);'
+        var OV  = 'display:none;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,0.78);'
                 + 'z-index:999999;align-items:center;justify-content:center;';
         var BOX = 'background:#1a1a2e;border:1px solid #555;border-radius:10px;'
                 + 'padding:24px;min-width:270px;text-align:center;color:#fff;'
@@ -19423,6 +20463,8 @@ function selectQPTakbir() {
     window.refreshLightProgrammingUI                = refreshLightProgrammingUI;
     window.toggleBlinkingEnabledFunction            = toggleBlinkingEnabledFunction;
     window.editBlinkingSecondsFunction              = editBlinkingSecondsFunction;
+    window.toggleAyaRotationEnabledFunction         = toggleAyaRotationEnabledFunction;
+    window.toggleShowMosqueNameFunction             = toggleShowMosqueNameFunction;
     window.toggleSalatNabiEnabledFunction           = toggleSalatNabiEnabledFunction;
     window.toggleSalatNabiPrayerFunction            = toggleSalatNabiPrayerFunction;
     window.toggleTakbirM0Function                   = toggleTakbirM0Function;
@@ -19684,9 +20726,11 @@ function selectQPTakbir() {
 // d'origine (appendChild successifs = ordre préservé) — fonctionne quels que
 // soient les nœuds exacts (input, texte "&nbsp;", label, <hr>), sans dépendre
 // de leur nombre/type précis. Regroupés dans un wrapper (au lieu de rester
-// des nœuds détachés) pour pouvoir les masquer d'un bloc sur téléphone (cf.
-// ci-dessous, demande 29/07/2026) : ce réglage (fichier wcsv.js à éditer
-// manuellement dans le dossier de l'appli) n'a de sens que sur box.
+// des nœuds détachés) pour pouvoir les masquer d'un bloc. Masqué en
+// permanence, tous appareils confondus (demande explicite du 14/08/2026,
+// remplace le masquage précédent limité au téléphone) : ce réglage (fichier
+// wcsv.js à éditer manuellement dans le dossier de l'appli) ne doit plus être
+// visible du tout dans l'UI.
 (function _installMoveWcsvBlockLast() {
     function _init() {
         var container  = document.getElementById('locationContentContainer');
@@ -19699,9 +20743,7 @@ function selectQPTakbir() {
         }
         container.appendChild(wrap);
 
-        var isPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
-            && !window.AndroidMobile.isAndroidTv());
-        if (isPhone) wrap.style.display = 'none';
+        wrap.style.display = 'none';
 
         _L('CUSTOM', 'INIT', { item: 'moveWcsvBlockLast' });
     }
@@ -20387,7 +21429,7 @@ function _ucDefaultAdminPin() {
 
     // ── Style commun des overlays ─────────────────────────────────────────
     var OV_WRAP = [
-        'display:none', 'position:fixed', 'inset:0',
+        'display:none', 'position:fixed', 'top:0', 'right:0', 'bottom:0', 'left:0',
         'background:rgba(0,0,0,0.72)', 'z-index:999999',
         'align-items:center', 'justify-content:center'
     ].join(';');
@@ -20787,7 +21829,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     var ov = document.createElement('div');
     ov.id = 'ucPayloadPreviewOverlay';
     ov.style.cssText = [
-        'display:none', 'position:fixed', 'inset:0',
+        'display:none', 'position:fixed', 'top:0', 'right:0', 'bottom:0', 'left:0',
         'background:rgba(0,0,0,0.84)', 'z-index:999999',
         'align-items:center', 'justify-content:center',
         'padding:4vh 5%', 'box-sizing:border-box'
@@ -20975,7 +22017,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     line3.appendChild(btnMsg);
 
     // Overlay -----------------------------------------------------------
-    var OV  = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.78);'
+    var OV  = 'display:none;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,0.78);'
             + 'z-index:999999;align-items:center;justify-content:center;';
     var BOX = 'background:#1a1a2e;border:1px solid #c8a84b;border-radius:10px;'
             + 'padding:20px;width:92%;max-width:360px;color:#fff;'
@@ -21149,7 +22191,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     line3.appendChild(btnJanaza);
 
     // Overlay -----------------------------------------------------------
-    var OV  = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.78);'
+    var OV  = 'display:none;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,0.78);'
             + 'z-index:999999;align-items:center;justify-content:center;';
     var BOX = 'background:#1a1a2e;border:1px solid #c8a84b;border-radius:10px;'
             + 'padding:20px;width:92%;max-width:360px;color:#fff;'
@@ -21300,7 +22342,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     line5.appendChild(btnHist);
 
     // Overlay -----------------------------------------------------------
-    var OV  = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.78);'
+    var OV  = 'display:none;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,0.78);'
             + 'z-index:999999;align-items:center;justify-content:center;';
     var BOX = 'background:#1a1a2e;border:1px solid #c8a84b;border-radius:10px;'
             + 'padding:20px;width:92%;max-width:380px;color:#fff;'
@@ -22103,7 +23145,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     // prompt PIN DERRIÈRE la boîte qui vient pourtant de le déclencher (retour
     // utilisateur 29/07/2026). Un prompt PIN doit toujours pouvoir passer
     // au-dessus de N'IMPORTE QUEL overlay admin, quel qu'il soit.
-    var OV  = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.78);'
+    var OV  = 'display:none;position:fixed;top:0;right:0;bottom:0;left:0;background:rgba(0,0,0,0.78);'
             + 'z-index:2147483647;align-items:center;justify-content:center;';
     var BOX = 'background:#1a1a2e;border:1px solid #555;border-radius:10px;'
             + 'padding:24px;min-width:270px;text-align:center;color:#fff;'
@@ -25750,7 +26792,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         { key: 'time',   ids: ['optionsSettingsButton', 'adjustmentsButton', 'techOptionsButton', 'lightProgrammingButton', 'locationSettingsButton', 'ucBoxAdminMenuButton'] },
         { key: 'screen', ids: ['blackScreenSettingsButton', 'themesButton', 'fullScreenButton', 'forcedVerticalOption', 'personalFilesButton', 'importExportButton', 'soundRemindersButton'] },
         { key: 'loc',    ids: ['bottomMessagesButton', 'azkarSettingsButton', 'slidesSettingsButton'] },
-        { key: 'help',   ids: ['shortcutsInfoButton', 'ucAboutMenuItem', 'quranPlayerMenuButton'] },
+        { key: 'help',   ids: ['shortcutsInfoButton', 'ucAboutMenuItem'] },
         { key: 'other',  ids: [] } // rempli ci-dessous avec tout élément restant
     ];
     var L_LABELS = {
@@ -25758,7 +26800,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         loc:    { AR: 'الأذكار',        FR: 'Azkar',              EN: 'Azkar',             ES: 'Azkar',              DE: 'Azkar' },
         screen: { AR: 'الشاشة',         FR: 'Écran',              EN: 'Screen',            ES: 'Pantalla',          DE: 'Bildschirm' },
         help:   { AR: 'مساعدة',         FR: 'Aide',               EN: 'Help',              ES: 'Ayuda',             DE: 'Hilfe' },
-        other:  { AR: 'أخرى',           FR: 'Autres',             EN: 'Other',             ES: 'Otros',             DE: 'Andere' }
+        // Renommé "Date et Météo" (demande explicite du 14/08/2026) : ce
+        // groupe accueille désormais meteoApiButton (déjà présent ici, non
+        // assigné à aucun autre groupe) ET le bloc mazamnة التاريخ الهجري
+        // (hijriSyncEnabledCheckbox, déplacé ici depuis techOptionsSectionId
+        // -- cf. plus bas dans cette IIFE) -- traduit dans toutes les langues
+        // gérées ici, pas seulement en FR, pour respecter la langue courante.
+        other:  { AR: 'التاريخ والطقس', FR: 'Date et Météo',      EN: 'Date & Weather',    ES: 'Fecha y Clima',     DE: 'Datum & Wetter' }
     };
     function _lang() {
         return (typeof _ucMenuLinkLang === 'function') ? _ucMenuLinkLang() : 'AR';
@@ -25807,6 +26855,26 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         }
     });
 
+    // ── Bloc "مزامنة التاريخ الهجري" (hijriSyncEnabledCheckbox) : déplacé
+    // ici depuis techOptionsSectionId (demande explicite du 14/08/2026,
+    // cf. renommage du groupe "other" ci-dessus). Récupéré par ses voisins
+    // DOM directs (hr + div checkbox + hijriSyncStatusRow), pas par une
+    // liste d'ids fixe : _injectHijriSyncUI (plus haut dans ce fichier,
+    // exécuté avant celui-ci) l'insère dans techOptionsContentContainer, un
+    // conteneur DIFFÉRENT de #menuSectionsContainer -- jamais capté par la
+    // boucle otherEls ci-dessus (qui ne regarde que les enfants directs de
+    // secEl).
+    (function () {
+        var hijriCb = document.getElementById('hijriSyncEnabledCheckbox');
+        if (!hijriCb) return;
+        var hijriRow    = hijriCb.parentElement;
+        var hijriHr     = hijriRow.previousElementSibling;
+        var hijriStatus = hijriRow.nextElementSibling;
+        if (hijriHr && hijriHr.tagName === 'HR') panels.other.appendChild(hijriHr);
+        panels.other.appendChild(hijriRow);
+        if (hijriStatus && hijriStatus.id === 'hijriSyncStatusRow') panels.other.appendChild(hijriStatus);
+    })();
+
     function _setSectionTab(key) {
         Object.keys(panels).forEach(function (k) {
             var active = (k === key);
@@ -25828,8 +26896,24 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     secEl.appendChild(tabBar);
     GROUPS.forEach(function (g) { secEl.appendChild(panels[g.key]); });
 
+    // Onglet "مساعدة" masqué systématiquement (demande explicite du
+    // 13/08/2026) : le bouton ET le séparateur qui le précède (évite un
+    // double séparateur visuel entre "الأذكار" et "أخرى"), AVANT le calcul de
+    // largeur (_ucFitTabBarOneLine ci-dessous) pour qu'il ignore la place
+    // qu'aurait prise cet onglet. Le contenu (shortcutsInfoButton,
+    // ucAboutMenuItem) reste dans le DOM, simplement inatteignable via cet
+    // onglet -- pas de suppression, juste une masquage.
+    if (tabButtons.help) {
+        tabButtons.help.style.display = 'none';
+        var helpDivider = tabButtons.help.previousElementSibling;
+        if (helpDivider && helpDivider.classList.contains('ucSectionsTabDivider')) {
+            helpDivider.style.display = 'none';
+        }
+    }
+
     _refreshLabels();
     _setSectionTab('time');
+    _ucFitTabBarOneLine(tabBar, '.ucSectionsTab');
 
     // Rappelé par _installMenuTabs (plus haut dans ce fichier) à chaque
     // réouverture du menu, pour toujours repartir du premier sous-onglet.
@@ -25844,6 +26928,29 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 // ═════════════════════════════════════════════════════════════════════════════
 // FIN SOUS-ONGLETS "PRINCIPAL"
 // ═════════════════════════════════════════════════════════════════════════════
+
+// Masquage systématique de 3 boutons du menu principal (demande explicite du
+// 13/08/2026) : élément conservé dans le DOM (juste inaccessible via le
+// menu), même logique que le masquage de l'onglet "مساعدة" ci-dessus.
+(function _hideUnusedMenuButtons() {
+    ['personalFilesButton', 'importExportButton', 'soundRemindersButton'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
+})();
+
+// "الاستيراد اليدوي للأوقات" (useImportedTimesCheckbox) et tout ce qui le
+// suit dans #locationContentContainer (hr + bloc info) masqués (demande
+// explicite du 13/08/2026) : parcours des frères suivants plutôt qu'une
+// liste d'ids, robuste si le bloc HTML évolue.
+(function _hideImportedTimesSection() {
+    var el = document.getElementById('useImportedTimesCheckbox');
+    while (el) {
+        var next = el.nextElementSibling;
+        el.style.display = 'none';
+        el = next;
+    }
+})();
 
 // ═════════════════════════════════════════════════════════════════════════════
 // AJUSTEMENT AUTOMATIQUE DU NOM DE MOSQUÉE (#mosqueNameDisplayVertical) — 1 LIGNE
@@ -27064,6 +28171,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             });
         }
 
+        _ucFitTabBarOneLine(bar, '.ucOptionsSubTab');
+
         return { bar: bar, panels: panels, buttons: buttons, setTab: setTab, refreshLabels: refreshLabels };
     }
 
@@ -27073,10 +28182,19 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     // middleSalatNamesCheckbox — désormais masquée (remplacée visuellement
     // par ce sélecteur) — les deux rejoignent donc le même groupe "table",
     // la checkbox cachée ne comptant pas dans les 7 éléments visibles.
+    // fontsSettingsTitle/fontsTable : ancien onglet de premier niveau à part
+    // ("fonts"/"الخطوط", cf. TABS plus bas) retiré (demande explicite du
+    // 12/08/2026) -- 5 onglets de premier niveau dépassaient systématiquement
+    // la largeur visible de .ucOptionsTabBar (défilement horizontal caché,
+    // sans geste de scroll disponible au boîtier/PC -- cf. simulateClick,
+    // m2body.js ~8561 -- rendant l'onglet le plus à gauche, "الخطوط",
+    // définitivement inatteignable, bug réel constaté en test). Rattaché
+    // directement ici, en fin de groupe "display", plutôt que d'ajouter un
+    // 5e onglet.
     var GENERAL_GROUPS = [
-        { key: 'display', ids: ['ucHrLayoutModeRow', 'psFlagCheckbox', 'qrFlagCheckbox', 'use24HoursCheckbox', 'fullClockCheckbox', 'dateUpRightHrCheckbox', 'fullIqamaTimesCheckbox'] },
+        { key: 'display', ids: ['ucHrLayoutModeRow', 'psFlagCheckbox', 'qrFlagCheckbox', 'use24HoursCheckbox', 'fullClockCheckbox', 'dateUpRightHrCheckbox', 'fullIqamaTimesCheckbox', 'fontsSettingsTitle', 'fontsTable'] },
         { key: 'table',   ids: ['showNightPrayersCheckbox', 'dimPastPrayersCheckbox', 'middleSalatNamesCheckbox', 'fiveBoxesOnlyCheckbox', 'hideIqamatCheckbox', 'middleVrNamesCheckbox', 'addZeroAmPmCheckbox', 'arabicDigitsCheckbox'] },
-        { key: 'counter', ids: ['iqamaCounterCheckbox', 'fullScreenCounterCheckbox', 'lastMinuteCounterCheckbox', 'counterColorAlertCheckbox', 'bigNextPrayCounterCheckbox', 'showAzanScreenCheckbox', 'showIqamaScreenCheckbox'] },
+        { key: 'counter', ids: ['iqamaCounterCheckbox', 'fullScreenCounterCheckbox', 'lastMinuteCounterCheckbox', 'counterColorAlertCheckbox', 'bigNextPrayCounterCheckbox', 'showAzanScreenCheckbox', 'showIqamaScreenCheckbox', 'showMiniPrayerTimesTableCheckbox'] },
         { key: 'system',  ids: ['verifyInternetCheckbox', 'timesBgShadowsCheckbox', 'semiTransparentBgsCheckbox', 'noMobileReminderCheckbox'] }
     ];
     var L_GENERAL = {
@@ -27092,7 +28210,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     // supprimés : leurs ids sont désormais répartis directement entre
     // l'onglet "azan" (ex-"الأذان") et l'onglet de premier niveau "alert"
     // ("تنبيهات", à côté de "صوت الأذان") dans TABS ci-dessous.
-    var AZAN_CORE_IDS   = ['azanIqamaByVoiceCheckbox', 'azanFromServerCheckbox', 'shortAzanCheckbox', 'shortIqamaCheckbox'];
+    var AZAN_CORE_IDS   = ['azanIqamaByVoiceCheckbox', 'azanFromServerCheckbox', 'shortAzanCheckbox', 'shortIqamaCheckbox', 'azanBgUseDomeCheckbox', 'volumeBoostBeforeAzanCheckbox'];
     var AZAN_ALERT_IDS  = ['alertByVoiceCheckbox', 'ucSilenceAlertsCheckbox'];
 
     // ── Onglets de premier niveau (ordre demandé, de droite à gauche en RTL) ──
@@ -27102,15 +28220,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         { key: 'general', ids: GENERAL_GROUPS.reduce(function (acc, g) { return acc.concat(g.ids); }, []) },
         { key: 'azan',    ids: AZAN_CORE_IDS },
         { key: 'alert',   ids: ['alertLastMinuteCheckbox', 'closeMobileAlertButton', 'iqamaHadithCheckbox'].concat(AZAN_ALERT_IDS) },
-        { key: 'mosque',  ids: ['mosqueNameOptionLabel', 'clockAdjustLabel', 'ayatsLanguageSelector', 'ayatsLangListContainer'] },
-        { key: 'fonts',   ids: ['fontsSettingsTitle', 'fontsTable'] }
+        { key: 'mosque',  ids: ['mosqueNameOptionLabel', 'clockAdjustLabel', 'ayatsLanguageSelector', 'ayatsLangListContainer'] }
     ];
     var L_TABS = {
         general: { AR: 'خيارات العرض',    FR: 'Options d\'affichage', EN: 'Display options',  ES: 'Opciones de pantalla', DE: 'Anzeigeoptionen' },
-        azan:    { AR: 'صوت الأذان',      FR: 'Voix de l\'azan',      EN: 'Azan voice',        ES: 'Voz del azán',         DE: 'Adhan-Stimme' },
+        azan:    { AR: 'الأذان',          FR: 'Voix de l\'azan',      EN: 'Azan voice',        ES: 'Voz del azán',         DE: 'Adhan-Stimme' },
         alert:   { AR: 'تنبيهات',         FR: 'Alertes',              EN: 'Alerts',            ES: 'Alertas',              DE: 'Warnungen' },
-        mosque:  { AR: 'المسجد والساعة',  FR: 'Mosquée et horloge',   EN: 'Mosque & clock',    ES: 'Mezquita y reloj',     DE: 'Moschee & Uhr' },
-        fonts:   { AR: 'الخطوط',          FR: 'Polices',              EN: 'Fonts',             ES: 'Fuentes',              DE: 'Schriftarten' }
+        mosque:  { AR: 'المسجد والساعة',  FR: 'Mosquée et horloge',   EN: 'Mosque & clock',    ES: 'Mezquita y reloj',     DE: 'Moschee & Uhr' }
     };
 
     // Les <hr>/<br> de mise en page à plat n'ont plus de raison d'être une
@@ -27180,6 +28296,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     _refreshLabels();
     _setTab('general');
     generalSub.setTab('display');
+    _ucFitTabBarOneLine(tabBar, '.ucOptionsTab');
 
     // Repart systématiquement du 1er onglet/sous-onglet à chaque réouverture
     // de la page (même mécanisme que _installMenuTabs : MutationObserver sur
@@ -27475,6 +28592,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
     _refreshLabels();
     _setTab('iqama');
+    _ucFitTabBarOneLine(tabBar, '.ucOptionsTab');
 
     // Repart systématiquement du 1er onglet à chaque réouverture de la page
     // (même mécanisme que _installOptionsTabs/_installMenuTabs).
@@ -27905,7 +29023,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                  'short azan', 'azan beep', 'disable azan voice', 'silent azan'],
             chip: { AR: 'كيف أفعّل الأذان القصير أو البيب؟', FR: "Comment activer l'azan court ou le bip ?", EN: 'How to enable short azan or beep?' },
             answer: {
-                AR: 'من "الإعدادات > الخيارات" اختر تبويب "صوت الأذان": يمكنك تعطيل الصوت الكامل (بيب فقط) أو تفعيل الأذان القصير.',
+                AR: 'من "الإعدادات > الخيارات" اختر تبويب "الأذان": يمكنك تعطيل الصوت الكامل (بيب فقط) أو تفعيل الأذان القصير.',
                 FR: 'Depuis "Réglages > Options", onglet "Voix de l\'azan" : désactivez la voix complète (bip seul) ou activez l\'azan court.',
                 EN: 'From "Settings > Options", tab "Azan voice": disable the full voice (beep only) or enable short azan.'
             },
@@ -27923,6 +29041,32 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 EN: 'Long-press the speaker icon 🔊 on the main screen to open the azan catalog and choose the muezzin.'
             },
             action: function () { if (typeof window.openAzanCatalogModal === 'function') window.openAzanCatalogModal(); }
+        },
+        {
+            id: 'azan_bg_dome',
+            kw: ['خلفية شاشة الاذان', 'قبة شاشة الاذان', 'ازالة القبة', 'صورة الاذان',
+                 'fond ecran azan', 'dome ecran azan', 'retirer le dome', 'image azan',
+                 'azan background', 'azan dome', 'remove dome', 'azan screen image'],
+            chip: { AR: 'كيف أزيل القبّة من خلفية شاشة الأذان؟', FR: "Comment retirer le dôme du fond de l'écran d'azan ?", EN: 'How to remove the dome from the azan screen background?' },
+            answer: {
+                AR: 'من "الإعدادات > الخيارات" اختر تبويب "الأذان": فعّل/عطّل "إظهار القبّة في خلفية شاشة الأذان" لتبديل بين صورة مع قبّة أو سماء فقط.',
+                FR: 'Depuis "Réglages > Options", onglet "Azan voice" : activez/désactivez "Afficher le dôme dans le fond de l\'écran d\'azan" pour basculer entre une image avec dôme ou juste le ciel.',
+                EN: 'From "Settings > Options", tab "Azan voice": toggle "Show the dome in the azan screen background" to switch between an image with a dome or just the sky.'
+            },
+            action: function () { _openOptionsTab('azan'); }
+        },
+        {
+            id: 'volume_boost_azan',
+            kw: ['رفع الصوت قبل الاذان', 'صوت الجهاز اقصى', 'الصوت في اقصاه', 'مستوى الصوت اثناء الاذان',
+                 'monter le volume avant azan', 'volume maximum azan', 'augmenter le son avant l\'azan',
+                 'boost volume before azan', 'max volume azan', 'increase volume before azan'],
+            chip: { AR: 'كيف أرفع صوت الجهاز تلقائيًا قبل كل أذان؟', FR: 'Comment monter automatiquement le volume avant chaque azan ?', EN: 'How to automatically boost the volume before each azan?' },
+            answer: {
+                AR: 'من "الإعدادات > الخيارات" اختر تبويب "الأذان": فعّل "رفع صوت الجهاز تلقائيًا إلى أقصاه قبل كل أذان بدقيقة".',
+                FR: 'Depuis "Réglages > Options", onglet "Azan voice" : activez "Monter le volume au maximum 1 min avant chaque azan".',
+                EN: 'From "Settings > Options", tab "Azan voice": enable "Boost volume to max 1 min before each azan".'
+            },
+            action: function () { _openOptionsTab('azan'); }
         },
         {
             id: 'black_screen',

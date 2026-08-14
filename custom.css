@@ -2,6 +2,17 @@
    TAWKIT CUSTOM - ne pas modifier lors des updates
    ═══════════════════════════════════════════════ */
 
+/* ── Bouton "Lecteur du Coran" dans la modale "برمجة تلاوة القرآن"
+   (quranPlayerMenuButton, custom.js injectTechOptionsUI) : perdait son
+   curseur cliquable en quittant #menuSectionsContainer (dont il héritait
+   `cursor:pointer` via #menuSectionsContainer div, style0.css core) --
+   demande explicite du 13/08/2026. ─────────────────────────────────────── */
+#quranPlayerMenuButton {
+    cursor: pointer;
+    font-weight: bold;
+    padding: 0.4em 0;
+}
+
 /* ── Hijri : jour en rouge si décalage manuel actif (ucHijriDateFixer ≠ 0) ── */
 .hijriOffsetActive #hijriDaySpan {
     color: #e05555 !important;
@@ -1042,6 +1053,15 @@
     box-sizing:      border-box !important;
     overflow:        hidden !important;   /* sécurité : aucun débordement    */
     gap:             0.15em !important;
+}
+
+/* ── Sans dôme (JS_CUSTOM.ucAzanBgUseDome=0) : plus de zone à réserver à
+   droite pour la silhouette du dôme -- items centrés horizontalement.
+   Classe posée par _installAzanDynamicBackground (custom.js). ─────────── */
+#azanPopupHorizontal.ucNoDomeCentered,
+#azanPopupVertical.ucNoDomeCentered {
+    padding-left:  5% !important;
+    padding-right: 5% !important;
 }
 
 /* ── Éléments texte → flex items (sortent du flux absolu) ────────────── */
@@ -2243,6 +2263,140 @@
     }*/
 
     /* ═══════════════════════════════════════════════════════════════════════
+       MODE 6 – "Classique (fin)" -- demande explicite du 12/08/2026
+       Identique au mode 4 (mêmes positions, même bloc CSS dupliqué) mais avec
+       pb6/pbc6/pp6.webp -- variantes de pbbis/pbc/pp.webp où le contour doré
+       épais extérieur ET la marge qui le sépare du contour fin intérieur ont
+       été retirés (recadrage par érosion du canal alpha, cf. spec/images/),
+       ne gardant que le contour fin + son intérieur. background-size:100%
+       100% étire l'image quel que soit son format natif (plus petit que
+       l'original, contour épais en moins) -- donc un simple changement de
+       fichier suffit, aucun recalcul de position/taille nécessaire.
+       ═══════════════════════════════════════════════════════════════════════ */
+    #mainHorizontalContainer[data-layout-mode="6"] #prayerTimesTableHorizontal {
+        border-spacing: 1vw !important;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] #spacerCellFajrHorizontal {
+        font-size: 15vw;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] #prayerTimesContainerHorizontal {
+        top: 57% !important;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] {
+        --j6iqamaTOP: 13%;
+        --j5iqamaTOP: 7%;
+        --jnamTOP:    35%;
+        --mt7:        -13%;
+        --j6hourTOP:  56%;
+        --j5hourTOP:  52%;
+        --j6iqamaSZ:  3.4vw;
+        --j5iqamaSZ:  4.8vw;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] .sixPrayersTableClass .azanTimeHorizontalClass {
+        font-size: 4.2vw !important;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] .fivePrayersTableClass .azanTimeHorizontalClass {
+        font-size: 4.8vw !important;
+        line-height: 1.5em;
+        width: 101%;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] .prayerNameHorizontalClass,
+    #mainHorizontalContainer[data-layout-mode="6"] .prayerNameHorizontalClass:lang(AR),
+    #mainHorizontalContainer[data-layout-mode="6"] .prayerNameHorizontalClass:lang(UR),
+    #mainHorizontalContainer[data-layout-mode="6"] .prayerNameHorizontalClass:lang(KU),
+    #mainHorizontalContainer[data-layout-mode="6"] .prayerNameHorizontalClass:lang(AF),
+    #mainHorizontalContainer[data-layout-mode="6"] .prayerNameHorizontalClass:lang(PA),
+    #mainHorizontalContainer[data-layout-mode="6"] .prayerNameHorizontalClass:lang(PS),
+    #mainHorizontalContainer[data-layout-mode="6"] .prayerNameHorizontalClass:lang(FA),
+    #mainHorizontalContainer[data-layout-mode="6"] .prayerNameHorizontalClass:lang(UG) {
+        font-size: 3.1vw !important;
+        line-height: 1.5em !important;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] .sixPrayersTableClass .iqamaTimeHorizontalClass,
+    #mainHorizontalContainer[data-layout-mode="6"] .fivePrayersTableClass .iqamaTimeHorizontalClass {
+        line-height: 1.3em !important;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] #prayerNameFajrHorizontal::before {
+        content: '';
+        position:          absolute;
+        left:              55%;
+        top:               50%;
+        transform:         translateY(-50%);
+        width:             8vw;
+        height:            4vw;
+        background-image:  url('./images/croissant-fajr.webp');
+        background-size:   contain;
+        background-repeat: no-repeat;
+        background-position: center;
+        pointer-events:    none;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] #prayerNameDohrHorizontal::before,
+    #mainHorizontalContainer[data-layout-mode="6"] #prayerNameAsrHorizontal::before {
+        content: '';
+        position:            absolute;
+        left:                65%;
+        top:                 50%;
+        transform:           translateY(-50%);
+        width:               3.7vw;
+        height:              2.5vw;
+        background-image:    url('./images/soleil.webp');
+        background-size:     contain;
+        background-repeat:   no-repeat;
+        background-position: center;
+        pointer-events:      none;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] #prayerNameMgrbHorizontal::before {
+        content: '';
+        position:            absolute;
+        left:                65%;
+        top:                 50%;
+        transform:           translateY(-50%);
+        width:               3.7vw;
+        height:              2.5vw;
+        background-image:    url('./images/maghreb.webp');
+        background-size:     contain;
+        background-repeat:   no-repeat;
+        background-position: center;
+        pointer-events:      none;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] #prayerNameIshaHorizontal::before {
+        content: '';
+        position:            absolute;
+        left:                65%;
+        top:                 50%;
+        transform:           translateY(-50%);
+        width:               3.7vw;
+        height:              2.5vw;
+        background-image:    url('./images/croissant-isha.webp');
+        background-size:     contain;
+        background-repeat:   no-repeat;
+        background-position: center;
+        pointer-events:      none;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] .weatherIconHorizontalClass {
+        left: 5% !important;
+        height: 21%;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] #ayaDisplayContainerHorizontal {
+        top: 36% !important;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] #nextPrayerCounterHorizontal,
+    #mainHorizontalContainer[data-layout-mode="6"] #jomoaCounterHorizontal {
+        background-image: url(./images/pp6.webp) !important;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] .prayerCellClass {
+        background-image:    url(./images/pb6.webp) !important;
+        background-size:     100% 100% !important;
+        background-repeat:   no-repeat !important;
+        background-color:    transparent !important;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] td.ucNextPrayerCellBg {
+        background-image:    url(./images/pbc6.webp) !important;
+        background-size:     100% 100% !important;
+        background-repeat:   no-repeat !important;
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
        MODE 5 – "Ornement Elegant"
        Cadre en arc or/emerald, texture geometrique en losanges (repeating
        linear-gradient croises, pas d'image raster necessaire), badges
@@ -2345,6 +2499,17 @@
  ═══════════════════════════════════════════════
    TAWKIT CUSTOM - ne pas modifier lors des updates
    ═══════════════════════════════════════════════ */
+
+/* ── Bouton "Lecteur du Coran" dans la modale "برمجة تلاوة القرآن"
+   (quranPlayerMenuButton, custom.js injectTechOptionsUI) : perdait son
+   curseur cliquable en quittant #menuSectionsContainer (dont il héritait
+   `cursor:pointer` via #menuSectionsContainer div, style0.css core) --
+   demande explicite du 13/08/2026. ─────────────────────────────────────── */
+#quranPlayerMenuButton {
+    cursor: pointer;
+    font-weight: bold;
+    padding: 0.4em 0;
+}
 
 /* ── Hijri : jour en rouge si décalage manuel actif (ucHijriDateFixer ≠ 0) ── */
 .hijriOffsetActive #hijriDaySpan {
@@ -3304,6 +3469,15 @@
     box-sizing:      border-box !important;
     overflow:        hidden !important;   /* sécurité : aucun débordement    */
     gap:             0.15em !important;
+}
+
+/* ── Sans dôme (JS_CUSTOM.ucAzanBgUseDome=0) : plus de zone à réserver à
+   droite pour la silhouette du dôme -- items centrés horizontalement.
+   Classe posée par _installAzanDynamicBackground (custom.js). ─────────── */
+#azanPopupHorizontal.ucNoDomeCentered,
+#azanPopupVertical.ucNoDomeCentered {
+    padding-left:  5% !important;
+    padding-right: 5% !important;
 }
 
 /* ── Éléments texte → flex items (sortent du flux absolu) ────────────── */
@@ -4360,6 +4534,9 @@
 @media only screen and (orientation:landscape) {
     #mainHorizontalContainer[data-layout-mode="4"] #appLogoFrameHorizontal {
         background-image: url(./images/pp.webp) !important;
+    }
+    #mainHorizontalContainer[data-layout-mode="6"] #appLogoFrameHorizontal {
+        background-image: url(./images/pp6.webp) !important;
     }
 }
 
@@ -8053,6 +8230,14 @@ input[type='checkbox']:checked::after {
     text-overflow: ellipsis;
 }
 #ucHrLayoutModeName {
+    color: #DFCDB1;
+}
+
+/* Titre "الخطوط" (Polices) : même habillage que #ucHrLayoutModeName (gras +
+   doré) -- demande explicite du 13/08/2026, les deux vivent dans le même
+   sous-onglet "display" (cf. TABS, custom.js _installOptionsTabs). */
+#fontsSettingsTitle {
+    font-weight: bold;
     color: #DFCDB1;
 }
 

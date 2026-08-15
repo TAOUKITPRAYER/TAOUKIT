@@ -65,17 +65,21 @@ window.MOSQUES_REGISTRY = {
     // =========================================================================
 
     'tn.monastir.aboubakr': {
-        // LOCATION_CODE corrige (demande explicite du 14/08/2026) : cette
-        // mosquee est a Ksibet Al-Mediouni, pas Monastir-ville -- horaires
-        // identiques a tn.monastir (copie exacte, cf. data/TN/wtimes-
-        // tn.ksibet-el-mediouni.js), seul le libelle de ville affiche change.
-        VERSION:       '1.5',
+        // LOCATION_CODE corrige une 2e fois (14/08/2026, rapport telephone
+        // Isha 20:41 au lieu de 20:42) : 'tn.ksibet-el-mediouni' (sans "_")
+        // ajoute lors de la 1ere correction etait un doublon invente par
+        // erreur (copie horaires Monastir) -- data/TN/tn.js contenait DEJA
+        // une entree officielle 'tn.ksibet-el-mediouni_' (donnees reelles
+        // calculees pour cette ville, distinctes de Monastir a la minute
+        // pres). Le doublon + son fichier wtimes ont ete supprimes ; c'est
+        // desormais ce code "_" reel qui est utilise.
+        VERSION:       '1.6',
         LABEL:         'Mosquée Abou Bakr Al-Siddîq — Ksibet Al-Médiouni',
         MOSQUE_NAME:   'جامع أبوبكر الصِّدِّيق',
         ADDRESS:       'Ksibet Al-Médiouni, en face Sancella, Tunisie',
         IMAGE:         'bakrKsibet.webp',
         MOSQUE_COORDS: { latitude: 35.694723042195214, longitude: 10.832041514241665 },
-        LOCATION_CODE: 'tn.ksibet-el-mediouni',
+        LOCATION_CODE: 'tn.ksibet-el-mediouni_',
         IQAMA_DELAYS: { FAJR: 30, DHUHR: 10, ASR: 12, MAGHREB: 10, ISHA: 15 },
         IQAMA_FIXED:  { FAJR: '', DHUHR: '13:15', ASR: '', ISHA: '' },
         DOHR_XMIN_ASR: 0,
@@ -102,15 +106,15 @@ window.MOSQUES_REGISTRY = {
     },
 
     'tn.monastir.hidaya': {
-        // LOCATION_CODE corrige (demande explicite du 14/08/2026) : cf.
-        // commentaire identique sur tn.monastir.aboubakr ci-dessus.
-        VERSION:       '1.5',
+        // LOCATION_CODE corrige une 2e fois (14/08/2026) : cf. commentaire
+        // identique sur tn.monastir.aboubakr ci-dessus.
+        VERSION:       '1.6',
         LABEL:         'Mosquée Al-Hidâya — Ksibet Al-Médiouni',
         MOSQUE_NAME:   'مسجد الهداية',
         ADDRESS:       'مسجد الهداية بقصيبة المديوني',
         IMAGE:         'hidaya.webp',
         MOSQUE_COORDS: { latitude: 35.68034700055071, longitude: 10.853256445606775 },
-        LOCATION_CODE: 'tn.ksibet-el-mediouni',
+        LOCATION_CODE: 'tn.ksibet-el-mediouni_',
         IQAMA_DELAYS: { FAJR: 30, DHUHR: 10, ASR: 10, MAGHREB: 8, ISHA: 15 },
         IQAMA_FIXED:  { FAJR: '', DHUHR: '12:50', ASR: '', ISHA: '' },
         DOHR_XMIN_ASR: 0,
@@ -137,15 +141,15 @@ window.MOSQUES_REGISTRY = {
     },
 
     'tn.monastir.mediouni': {
-        // LOCATION_CODE corrige (demande explicite du 14/08/2026) : cf.
-        // commentaire identique sur tn.monastir.aboubakr plus haut.
-        VERSION:       '1.8',
+        // LOCATION_CODE corrige une 2e fois (14/08/2026) : cf. commentaire
+        // identique sur tn.monastir.aboubakr plus haut.
+        VERSION:       '1.9',
         LABEL:         'Mosquée Al-Médiouni — Qasabat Al-Médiouni',
         MOSQUE_NAME:   'جامع المديوني بقصيبة المديوني',
         ADDRESS:       'Ksibet Al-Médiouni, Monastir, Tunisie',
         IMAGE:         'MEDIOUNIKSIBET.webp',
         MOSQUE_COORDS: { latitude: 35.68866925589379, longitude: 10.842769008939253 },
-        LOCATION_CODE: 'tn.ksibet-el-mediouni',
+        LOCATION_CODE: 'tn.ksibet-el-mediouni_',
         IQAMA_DELAYS: { FAJR: 30, DHUHR: 10, ASR: 10, MAGHREB: 10, ISHA: 15 },
         IQAMA_FIXED:  { FAJR: '', DHUHR: '13:00', ASR: '', ISHA: '' },
         DOHR_XMIN_ASR: 0,
@@ -173,15 +177,15 @@ window.MOSQUES_REGISTRY = {
     },
 
     'tn.monastir.nadour': {
-        // LOCATION_CODE corrige (demande explicite du 14/08/2026) : cf.
-        // commentaire identique sur tn.monastir.aboubakr plus haut.
-        VERSION:       '1.8',
+        // LOCATION_CODE corrige une 2e fois (14/08/2026) : cf. commentaire
+        // identique sur tn.monastir.aboubakr plus haut.
+        VERSION:       '1.9',
         LABEL:         'Mosquée Al-Nûr — Qasabat Al-Médiouni',
         MOSQUE_NAME:   'جامع النّور بقصيبة المديوني',
         ADDRESS:       'Ksibet Al-Médiouni, Monastir, Tunisie',
         IMAGE:         'nourKsibet.webp',
         MOSQUE_COORDS: { latitude: 35.68329910412201, longitude: 10.846790981120296 },
-        LOCATION_CODE: 'tn.ksibet-el-mediouni',
+        LOCATION_CODE: 'tn.ksibet-el-mediouni_',
         IQAMA_DELAYS: { FAJR: 30, DHUHR: 10, ASR: 10, MAGHREB: 10, ISHA: 15 },
         IQAMA_FIXED:  { FAJR: '', DHUHR: '12:45', ASR: '', ISHA: '' },
         DOHR_XMIN_ASR: 0,
@@ -209,15 +213,15 @@ window.MOSQUES_REGISTRY = {
     },
 
     'tn.monastir.youssef': {
-        // LOCATION_CODE corrige (demande explicite du 14/08/2026) : cf.
-        // commentaire identique sur tn.monastir.aboubakr plus haut.
-        VERSION:       '1.9',
+        // LOCATION_CODE corrige une 2e fois (14/08/2026) : cf. commentaire
+        // identique sur tn.monastir.aboubakr plus haut.
+        VERSION:       '2.0',
         LABEL:         'Mosquée Youssef — Ksibet Al-Médiouni',
         MOSQUE_NAME:   'مسجد يوسف',
         ADDRESS:       'Ksibet Al-Médiouni, Monastir, Tunisie',
         IMAGE:         'youssefKsibet.webp',
         MOSQUE_COORDS: { latitude: 35.68731858236977, longitude: 10.84486381417694 },
-        LOCATION_CODE: 'tn.ksibet-el-mediouni',
+        LOCATION_CODE: 'tn.ksibet-el-mediouni_',
         IQAMA_DELAYS: { FAJR: 25, DHUHR: 30, ASR: 8, MAGHREB: 8, ISHA: 10 },
         IQAMA_FIXED:  { FAJR: '', DHUHR: '', ASR: '', ISHA: '' },
         DOHR_XMIN_ASR: 60,
@@ -249,13 +253,20 @@ window.MOSQUES_REGISTRY = {
     // =========================================================================
 
     'tn.monastir.salah': {
-        VERSION:       '1.3',
+        // LOCATION_CODE corrige (14/08/2026, demande explicite) : meme
+        // situation que le doublon Ksibet Al-Mediouni corrige plus haut --
+        // data/TN/tn.js contient 'tn.monastir' (ancien jeu de donnees, sans
+        // en-tete TAWKIT.NET, Isha 20:41) ET 'tn.monastir_' (jeu de donnees
+        // officiel actuel, Isha 20:42, memes valeurs que tn.ksibet-el-
+        // mediouni_ -- localites geographiquement adjacentes). On utilise
+        // desormais le code "_" a jour.
+        VERSION:       '1.4',
         LABEL:         'Mosquée Al-Salâh — Monastir',
         MOSQUE_NAME:   'جامع الصّلاح بالمنستير',
         ADDRESS:       'Skanes Monastir, Tunisie',
         IMAGE:         'SALAHMONASTIR.jpeg',
         MOSQUE_COORDS: { latitude: 35.769327501088405, longitude: 10.793826967770375 },
-        LOCATION_CODE: 'tn.monastir',
+        LOCATION_CODE: 'tn.monastir_',
         IQAMA_DELAYS: { FAJR: 30, DHUHR: 10, ASR: 10, MAGHREB: 10, ISHA: 15 },
         IQAMA_FIXED:  { FAJR: '', DHUHR: '13:00', ASR: '', ISHA: '' },
         DOHR_XMIN_ASR: 0,
@@ -288,9 +299,11 @@ window.MOSQUES_REGISTRY = {
 
     'tn.monastir.ghofran': {
         // LOCATION_CODE corrige (demande explicite du 14/08/2026) : cette
-        // mosquee est a Bennane, pas Monastir-ville -- horaires identiques
-        // a tn.monastir (copie exacte, cf. data/TN/wtimes-tn.bennane.js),
-        // seul le libelle de ville affiche change.
+        // mosquee est a Bennane, pas Monastir-ville. data/TN/wtimes-
+        // tn.bennane.js contient les horaires -- corrige le 15/08/2026 :
+        // c'est desormais une copie de tn.ksibet-el-mediouni_ (localite
+        // adjacente, calcul officiel a jour), et non plus de l'ancien jeu
+        // de donnees tn.monastir.
         VERSION:       '1.5',
         LABEL:         'Mosquée Al-Ghofran — Ben Nân',
         MOSQUE_NAME:   'جامع الغفران ببنّان',

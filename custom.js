@@ -839,7 +839,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.76';
+var CUSTOM_APP_VERSION = '12.77';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -13496,13 +13496,22 @@ function forceHijriSyncFunction() {
     };
 
     // ── Écoute du compte à rebours ────────────────────────────────────────
+    // Plages (<=/>), pas d'égalité stricte : après une mise en arrière-plan
+    // (WebView.pauseTimers()) puis reprise, remainingSeconds peut sauter
+    // directement par-dessus 58 ou 40 lors du recalcul base sur l'horloge
+    // reelle -- avec un test ===, l'overlay pouvait alors s'afficher sans
+    // jamais recevoir son signal de fermeture, restant bloque (pointer-
+    // events:auto) jusqu'a un reload manuel (rapporte par l'utilisateur,
+    // 15/08/2026). _show()/_startFade() sont deja idempotentes (gardees par
+    // _visible), donc les appeler a chaque tick de la plage est sans effet
+    // de bord.
     ucOn(UC_EVT.COUNTDOWN_TICK, function(e) {
         if (JS_DATA.ucIqamaHadith != 1)                              return;
         if (typeof isDohaCounter !== 'undefined' && isDohaCounter)   return;
 
         var s = e.remainingSeconds;
-        if      (s === 58) { _show();      }
-        else if (s === 40) { _startFade(); }
+        if      (s <= 58 && s > 40) { _show();      }
+        else if (s <= 40)           { _startFade(); }
     });
 
     // ── Sécurité : masquer dès que l'iqama démarre réellement ─────────────
@@ -13909,7 +13918,10 @@ function forceHijriSyncFunction() {
 
     document.body.appendChild(_ov15);
 
+    var _visible15 = false;
     function _show15() {
+        if (_visible15) return;
+        _visible15 = true;
         var txt = typeof JS_IqamaRULE === 'string'
             ? JS_IqamaRULE.replace(/^قالَ\s*ﷺ\s*:\s*/u, '').trim()
             : JS_IqamaRULE;
@@ -13918,19 +13930,29 @@ function forceHijriSyncFunction() {
         _L('POPUP','SHOW',{item:'hadith_15s'});
     }
     function _hide15() {
+        if (!_visible15) return;
+        _visible15 = false;
         _ov15.style.opacity = '0';
         _L('POPUP','HIDE',{item:'hadith_15s'});
     }
 
+    // Plages (<=), pas d'egalite stricte -- meme raison que
+    // ucIqamaHadithOverlay ci-dessus (saut de tick possible au retour d'un
+    // arriere-plan). _show15()/_hide15() sont desormais idempotentes
+    // (gardees par _visible15) pour eviter de spammer le log a chaque tick
+    // de la plage.
     ucOn(UC_EVT.COUNTDOWN_TICK, function (e) {
         if (JS_DATA.ucIqamaHadith != 1) return;
         if (typeof isDohaCounter !== 'undefined' && isDohaCounter) return;
-        if (e.remainingSeconds === 30) _show15();
-        if (e.remainingSeconds === 20) _hide15();
+        var s = e.remainingSeconds;
+        if      (s <= 30 && s > 20) { _show15(); }
+        else if (s <= 20)           { _hide15(); }
     });
 
-    /* Reset à chaque nouveau cycle azan */
-    ucOn(UC_EVT.AZAN_TIME, function () { _ov15.style.opacity = '0'; });
+    /* Reset a chaque nouveau cycle azan, et des que l'iqama demarre reellement
+       (filet de securite supplementaire, meme idee que ucIqamaHadithOverlay). */
+    ucOn(UC_EVT.AZAN_TIME, function () { _visible15 = false; _ov15.style.opacity = '0'; });
+    ucOn(UC_EVT.IQAMA_SHOW, function () { _hide15(); });
 }());
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -15405,7 +15427,12 @@ function selectQPTakbir() {
             }
         }
         var cityName = citySlug.charAt(0).toUpperCase() + citySlug.slice(1);
-        var arName = _CITY_NAME_AR[cc] && _CITY_NAME_AR[cc][citySlug];
+        // baseSlug (sans le "_" final) : meme convention que _renderCityList
+        // ci-dessous -- data/TN/tn.js suffixe certains codes de ville par
+        // "_" (homonymes reels, ex. Ben Gardane, ou entrees "brutes" sans
+        // libelle arabe dedie) ; _CITY_NAME_AR reste indexe SANS ce suffixe.
+        var baseSlug = citySlug.replace(/_+$/, '');
+        var arName = _CITY_NAME_AR[cc] && _CITY_NAME_AR[cc][baseSlug];
         if (arName) cityName += '   ' + arName;
         return {
             countryCode: cc, countryName: countryName,

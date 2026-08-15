@@ -839,7 +839,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.77';
+var CUSTOM_APP_VERSION = '12.78';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -15397,6 +15397,39 @@ function selectQPTakbir() {
         return row[_ucLang()] || row.EN;
     }
 
+    // ── Normalisation arabe pour la recherche (ville + mosquee) ──────────────
+    // Demande utilisateur (15/08/2026) : "المنستير" doit matcher "منستير" et
+    // vice versa, "بنان" doit matcher "بنّانُ" (tachkeel) et vice versa --
+    // n'affecte QUE la comparaison interne, jamais le texte affiche/stocke.
+    // Echappements \uXXXX pour les classes de caracteres arabes ci-dessous
+    // (pas de plage arabe brute dans le code) -- evite tout risque de
+    // reordonnancement accidentel a l'edition de ce fichier.
+    //   1. Retire les diacritiques (tachkeel : fatha/damma/kasra/tanwin/
+    //      chadda/soukoun) + le tatwil (kashida).
+    //   2. Unifie les variantes de lettres que les utilisateurs confondent
+    //      couramment en saisissant sans clavier arabe complet (hamza sur
+    //      alif/waw/ya -> lettre nue, ta marbouta -> ha, alif maqsoura -> ya).
+    //   3. Retire l'article defini "ال" en tete de CHAQUE mot (pas
+    //      seulement en tete de chaine, pour les noms a plusieurs mots type
+    //      "قصيبة المديوني") -- \b ne fonctionne pas sur l'arabe en JS (\b est
+    //      base sur \w, qui ne couvre que ASCII), d'ou le split manuel par
+    //      mot.
+    // Le script latin traverse ces remplacements sans effet (aucune plage
+    // arabe ne le concerne) ; toLowerCase() a la fin couvre la casse latine.
+    function _ucArNorm(s) {
+        var v = String(s || '')
+            .replace(/[\u064B-\u0652\u0670\u0640]/g, '')
+            .replace(/[\u0622\u0623\u0625\u0671]/g, '\u0627')
+            .replace(/\u0649/g, '\u064A')
+            .replace(/\u0629/g, '\u0647')
+            .replace(/\u0624/g, '\u0648')
+            .replace(/\u0626/g, '\u064A');
+        v = v.split(/\s+/).map(function(w) {
+            return (w.length > 3 && w.indexOf('\u0627\u0644') === 0) ? w.slice(2) : w;
+        }).join(' ');
+        return v.trim().toLowerCase();
+    }
+
     var _modal       = null;
     var _searchInput = null;
     var _list        = null;
@@ -15641,7 +15674,7 @@ function selectQPTakbir() {
     function _renderList(filter) {
         if (!_list) return;
         var reg = window.MOSQUES_REGISTRY || {};
-        var q = (filter || '').toLowerCase().trim();
+        var q = _ucArNorm(filter);
         var activeId = _getCurrentId();
 
         var items = [];
@@ -15677,8 +15710,8 @@ function selectQPTakbir() {
         });
 
         var filtered = q ? items.filter(function(it) {
-            return String(it.name || '').toLowerCase().indexOf(q) !== -1 ||
-                   String(it.label || '').toLowerCase().indexOf(q) !== -1;
+            return _ucArNorm(it.name).indexOf(q) !== -1 ||
+                   _ucArNorm(it.label).indexOf(q) !== -1;
         }) : items;
 
         var html = '';
@@ -16018,7 +16051,7 @@ function selectQPTakbir() {
             var baseSlug = parts[1].replace(/_+$/, '');
             var arName = embedded || (_CITY_NAME_AR[_selCountryCode] && _CITY_NAME_AR[_selCountryCode][baseSlug]) || '';
             var fullName = arName ? (dispName + '   ' + arName) : dispName;
-            _cityItemsCache.push({ code: code, name: fullName, latin: dispName.toLowerCase(), ar: arName });
+            _cityItemsCache.push({ code: code, name: fullName, latin: dispName.toLowerCase(), ar: arName, arNorm: _ucArNorm(arName) });
         }
         _applyCityFilter(_citySearchInput ? _citySearchInput.value : '');
     }
@@ -16039,9 +16072,9 @@ function selectQPTakbir() {
         // (cf. sa dernière ligne), donc rien à refaire ici une fois _citiesLoading
         // repassé à false : la frappe de l'utilisateur n'est jamais perdue.
         if (_citiesLoading) return;
-        var q = (filter || '').toLowerCase().trim();
+        var q = _ucArNorm(filter);
         var items = q ? _cityItemsCache.filter(function(it) {
-            return it.latin.indexOf(q) !== -1 || it.ar.indexOf(q) !== -1;
+            return it.latin.indexOf(q) !== -1 || it.arNorm.indexOf(q) !== -1;
         }) : _cityItemsCache;
         var html = '';
         for (var i = 0; i < items.length; i++) {

@@ -839,7 +839,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.78';
+var CUSTOM_APP_VERSION = '12.79';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1841,6 +1841,42 @@ window._ucCurrentMosqueId = function () {
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SURCHARGE HORAIRES OFFICIELS (spec/data/<CC>/wtimes-<code>.js)
+// ═══════════════════════════════════════════════════════════════════════════
+// Le core (m1prime.js) charge toujours data/<CC>/wtimes-<code>.js via
+// document.write, SYNCHRONE, avant meme que ce fichier (custom.js) ne
+// s'execute -- impossible d'intercepter ce premier chargement sans toucher
+// au core. A la place : une fois JS_TIMES deja rempli avec les valeurs core,
+// on tente de charger EN PLUS spec/data/<CC>/wtimes-<code>.js -- EXACTEMENT
+// le meme format ("var JS_TIMES = [...]"), donc s'il existe, son chargement
+// REECRIT simplement window.JS_TIMES avec les valeurs officielles (source :
+// tools/compare_affaires_religieuses.py, calendrier du ministere tunisien
+// des Affaires Religieuses -- villes generees le 15/08/2026). Absence de ce
+// fichier = cas normal (la grande majorite des villes n'ont pas de
+// surcharge) -- l'erreur de chargement (onerror) est silencieuse, JS_TIMES
+// core reste alors actif sans aucun changement de comportement.
+(function _installOfficialWtimesOverride() {
+    if (typeof JS_DATA === 'undefined' || !JS_DATA.ucNowCityCODE) return;
+    var cc = (JS_DATA.ucNowCityCODE.split('.')[0] || '').toUpperCase();
+    if (!cc) return;
+    var cacheBust = (typeof appVersionNumber !== 'undefined') ? appVersionNumber : Date.now();
+    var s = document.createElement('script');
+    s.src = 'spec/data/' + cc + '/wtimes-' + JS_DATA.ucNowCityCODE + '.js?e=' + cacheBust;
+    s.onload = function() {
+        if (typeof _L === 'function') {
+            _L('CFG', 'OFFICIAL_WTIMES_OVERRIDE_APPLIED', { city: JS_DATA.ucNowCityCODE });
+        }
+        if (typeof calculateAndDisplayTimesFunction === 'function') {
+            calculateAndDisplayTimesFunction();
+        }
+    };
+    s.onerror = function() {
+        // Pas de surcharge pour cette ville -- cas normal, rien a faire.
+    };
+    document.head.appendChild(s);
+})();
+
 // ── HISTORIQUE MULTI-MOSQUÉE (abonnement notifications cumulatif) ───────────
 // Chaque mosque_id jamais sélectionné sur cet appareil est mémorisé dans
 // localStorage (clé UC_MOSQUE_HISTORY, tableau JSON dédupliqué). Utilisé par
@@ -2568,6 +2604,17 @@ window._ucForceCloseAllCounterOverlays = function () {
         // unique, cf. son commentaire (juste au-dessus de _installResyncOnResume)
         // pour l'historique des bugs qui ont motive ce regroupement.
         window._ucForceCloseAllCounterOverlays();
+        // Hadiths avant iqama (58-40s / 30-20s, custom.js plus bas) : leurs
+        // propres declencheurs de fermeture sont bases sur COUNTDOWN_TICK
+        // (plage de remainingSeconds, cf. fix du 15/08/2026) -- mais une
+        // pause d'arriere-plan de plusieurs HEURES gele l'app avant que le
+        // moindre tick suivant ne puisse s'executer, laissant l'overlay
+        // visible indefiniment jusqu'au prochain cycle azan (rapporte a
+        // nouveau le 16/08/2026 malgre le fix du tick). Meme categorie de
+        // bug documentee au-dessus de _ucForceCloseAllCounterOverlays :
+        // rattrapage explicite ici, independant de leur propre logique.
+        if (typeof window._ucForceHideIqamaHadithOverlay === 'function') window._ucForceHideIqamaHadithOverlay();
+        if (typeof window._ucForceHideIqama15sOverlay === 'function') window._ucForceHideIqama15sOverlay();
         // Doua post-azan (custom.js _installPostAzanDoua) : son propre timer
         // de fermeture (20s) est lui aussi suspendu en arriere-plan — meme
         // logique que les surcouches core ci-dessus.
@@ -13480,6 +13527,17 @@ function forceHijriSyncFunction() {
         _overlay.classList.remove('ucIH-visible', 'ucIH-fading');
         _visible = false;
     }
+    // Expose pour _ucResyncPrayerSequence (tout en haut du fichier) : cet
+    // overlay declenche sur une PLAGE de remainingSeconds (58-40s, cf. plus
+    // bas), pas une egalite stricte -- corrige un blocage rapporte le
+    // 15/08/2026, mais une trop longue pause (webView.pauseTimers(), des
+    // heures) peut geler l'app AVANT que le prochain COUNTDOWN_TICK n'ait la
+    // moindre chance de s'executer, laissant l'overlay visible indefiniment
+    // jusqu'au prochain cycle azan -- meme categorie de bug que celle documentee
+    // ci-dessus pres de _ucForceCloseAllCounterOverlays (chaque overlay doit
+    // etre rattrape explicitement par le resync, pas seulement par son propre
+    // declencheur de fermeture).
+    window._ucForceHideIqamaHadithOverlay = _forceHide;
 
     // ── Intercepter l'affichage d'origine (évite que staticMessage
     //    masque le marquee / hadith pendant 30 s inutilement) ──────────────
@@ -13935,6 +13993,16 @@ function forceHijriSyncFunction() {
         _ov15.style.opacity = '0';
         _L('POPUP','HIDE',{item:'hadith_15s'});
     }
+    // Version inconditionnelle pour le resync (contrairement a _hide15() ci-
+    // dessus, ne se fie pas a _visible15 -- ecrit directement l'etat DOM/JS,
+    // meme principe que _forceHide() de ucIqamaHadithOverlay plus haut).
+    function _forceHide15() {
+        _visible15 = false;
+        _ov15.style.opacity = '0';
+    }
+    // Expose pour _ucResyncPrayerSequence (tout en haut du fichier) : meme
+    // raison que window._ucForceHideIqamaHadithOverlay ci-dessus.
+    window._ucForceHideIqama15sOverlay = _forceHide15;
 
     // Plages (<=), pas d'egalite stricte -- meme raison que
     // ucIqamaHadithOverlay ci-dessus (saut de tick possible au retour d'un
@@ -15554,7 +15622,8 @@ function selectQPTakbir() {
             'tataouine': 'تطاوين', 'tatouine': 'تطاوين', 'testour': 'تستور',
             'thala': 'تالة', 'touza': 'توزة', 'tozeur': 'توزر', 'tunis': 'تونس',
             'wadi-maliz': 'وادي مليز', 'zaghouan': 'زغوان', 'zahanah': 'الزهانة',
-            'zaouiat-djedidi': 'زاوية الجديدي', 'zarzis': 'جرجيس', 'zouila': 'زويلة'
+            'zaouiat-djedidi': 'زاوية الجديدي', 'zarzis': 'جرجيس', 'zouila': 'زويلة',
+            'ain-draham': 'عين دراهم', 'el-meknassi': 'المكناسي', 'es-souassi': 'السوسي', 'hbira': 'هبيرة', 'kerkennah': 'قرقنة', 'moulares': 'مولارس', 'el-borma': 'البرمة', 'raoued': 'رواد'
         }
     };
 

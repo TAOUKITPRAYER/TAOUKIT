@@ -338,25 +338,27 @@ window.MOSQUES_REGISTRY = {
     },
 
     // =========================================================================
-    // TUNIS — CITÉ CHAKER (RAOUED)
+    // RAOUED — CITÉ CHAKER
     // =========================================================================
 
-    // Clé alignée sur le mosque_id Supabase (tn.tunis.nour-chaker, cf. migration
-    // du 24/07/2026 : le mosque_id disait à tort "monastir" alors que la
-    // mosquée est à Raoued/Tunis, comme LOCATION_CODE ci-dessous le confirmait
-    // déjà). Avant cet alignement, cette entrée du registre local (id
-    // tn.monastir.nour-chaker) et la ligne Supabase renommée (tn.tunis.nour-chaker)
-    // désignaient la même mosquée sous deux id différents -> _renderList
-    // (sélecteur de mosquée) les affichait toutes les deux pour la ville
-    // "tunis" (déduplication par id, pas par nom).
-    'tn.tunis.nour-chaker': {
-        VERSION:       '1.4',
+    // 2e renommage de mosque_id pour cette meme mosquee (15/08/2026) : cf.
+    // le commentaire precedent (migration du 24/07/2026, monastir -> tunis).
+    // Meme raison, meme convention -- le mosque_id doit correspondre a la
+    // ville reelle de LOCATION_CODE. "Raoued" n'existait pas comme ville
+    // selectionnable avant ce jour (ni sur data/TN/tn.js, ni cote site du
+    // ministere) : LOCATION_CODE etait donc pose sur "tn.tunis" par defaut,
+    // alors que ucMosqueAddress ("حي شاكر برواد") et ADDRESS ci-dessous
+    // designaient deja Raoued sans ambiguite. Ville "tn.raoued" desormais
+    // creee (copie exacte des horaires de Tunis, localite adjacente) ; ce
+    // renommage aligne enfin le mosque_id sur sa vraie ville.
+    'tn.raoued.nour-chaker': {
+        VERSION:       '1.5',
         LABEL:         'Mosquée Al-Nûr — Cité Chaker, Raoued',
         MOSQUE_NAME:   'جامع النُّور بحي شاكر',
-        ADDRESS:       'Cité Chaker, Raoued, Tunis, Tunisie',
+        ADDRESS:       'Cité Chaker, Raoued, Tunisie',
         IMAGE:         'nourchaker.jpeg',
         MOSQUE_COORDS: { latitude: 36.94450154159308, longitude: 10.173568985600673 },
-        LOCATION_CODE: 'tn.tunis',
+        LOCATION_CODE: 'tn.raoued',
         IQAMA_DELAYS: { FAJR: 30, DHUHR: 10, ASR: 12, MAGHREB: 10, ISHA: 15 },
         IQAMA_FIXED:  { FAJR: '', DHUHR: '13:00', ASR: '', ISHA: '' },
         DOHR_XMIN_ASR: 0,

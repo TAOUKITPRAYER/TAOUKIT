@@ -839,7 +839,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.79';
+var CUSTOM_APP_VERSION = '12.80';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -15627,6 +15627,72 @@ function selectQPTakbir() {
         }
     };
 
+    // Coordonnees de reference (une par ville, PAS de zone/polygone --
+    // le plus proche suffit, cf. discussion 16/08/2026) pour la detection
+    // automatique de ville au premier lancement (_ucFindNearestCityTN).
+    // Sourcees via geocodage Nominatim/OpenStreetMap (une fois, hors ligne
+    // ensuite) le 16/08/2026 -- 163/171 villes resolues ; les 8 manquantes
+    // (tres petits villages, ex. banbalah, harqalah) restent sans detection
+    // GPS automatique, le selecteur manuel reste toujours disponible pour
+    // elles.
+    window.UC_CITY_COORDS_TN = {
+        'akouda_': {lat:35.90524, lng:10.56207}, 'al-marsa_': {lat:36.90014, lng:10.30065}, 'al-matlin_': {lat:37.24411, lng:10.04751},
+        'ariana_': {lat:36.96857, lng:10.12199}, 'beja_': {lat:36.72368, lng:9.18538}, 'bekalta_': {lat:35.61729, lng:10.98913},
+        'ben-arous_': {lat:36.63065, lng:10.21008}, 'ben-gardane': {lat:32.81234, lng:11.30418}, 'ben-gardane_': {lat:32.81234, lng:11.30418},
+        'beni-khalled_': {lat:36.62507, lng:10.63528}, 'beni-kheddache_': {lat:33.25139, lng:10.2001}, 'beni-khiar_': {lat:36.46936, lng:10.78098},
+        'bennane': {lat:35.67603, lng:10.83575}, 'bir-ali-ben-khalifa_': {lat:34.74067, lng:10.09589}, 'bir-el-hafey_': {lat:34.93209, lng:9.196},
+        'bizerte_': {lat:37.27209, lng:9.87086}, 'bou-arada_': {lat:36.35106, lng:9.62415}, 'bou-arkoub_': {lat:36.53108, lng:10.55142},
+        'carthage_': {lat:36.85481, lng:10.33099}, 'chebba_': {lat:35.23655, lng:11.11297}, 'chebika_': {lat:35.65887, lng:9.92765},
+        'chorbane_': {lat:35.22675, lng:10.43553}, 'degache_': {lat:33.98411, lng:8.21546}, 'djebeniana_': {lat:35.09947, lng:10.86584},
+        'douane_': {lat:36.8465, lng:10.21817}, 'douz_': {lat:33.45711, lng:9.02498}, 'el-alia_': {lat:37.1689, lng:10.03387},
+        'el-battan_': {lat:36.80435, lng:9.84444}, 'el-fahs_': {lat:36.26976, lng:9.84234}, 'el-golaa_': {lat:33.48707, lng:8.98847},
+        'el-hamma-g': {lat:33.88944, lng:9.79971}, 'el-hamma_': {lat:33.88944, lng:9.79971}, 'el-haouaria_': {lat:37.04981, lng:11.01165},
+        'el-jem_': {lat:35.29664, lng:10.71284}, 'el-kef_': {lat:36.03576, lng:8.72494}, 'el-ksour_': {lat:35.89859, lng:8.88074},
+        'el-maamoura_': {lat:33.77759, lng:11.03463}, 'el-mida_': {lat:36.72117, lng:10.858}, 'erriadh_': {lat:33.81908, lng:10.85433},
+        'fernana_': {lat:36.65566, lng:8.69579}, 'gabes': {lat:33.88781, lng:10.10044}, 'gabes_': {lat:33.88781, lng:10.10044},
+        'gafsa_': {lat:34.42244, lng:8.78439}, 'ghardimaou': {lat:36.45059, lng:8.44253}, 'ghomrassen_': {lat:33.0599, lng:10.33906},
+        'goubellat_': {lat:36.54001, lng:9.66322}, 'gremda_': {lat:34.78438, lng:10.71355}, 'haffouz_': {lat:35.6165, lng:9.73591},
+        'hammam-lif_': {lat:36.73138, lng:10.3364}, 'hammam-sousse_': {lat:35.87498, lng:10.59352}, 'hammamet_': {lat:36.40127, lng:10.55728},
+        'houmt-el-souk_': {lat:33.82289, lng:10.87052}, 'jemna_': {lat:33.56957, lng:9.016}, 'jendouba_': {lat:36.67797, lng:8.75265},
+        'jerba': {lat:33.78264, lng:11.05499}, 'jilma_': {lat:35.32943, lng:9.39451}, 'kairouan_': {lat:35.67101, lng:10.10062},
+        'kasserine_': {lat:35.16876, lng:8.83657}, 'kebili_': {lat:33.33877, lng:8.70329}, 'kelibia_': {lat:36.84566, lng:11.09357},
+        'kesra_': {lat:35.81316, lng:9.36483}, 'korba_': {lat:36.57289, lng:10.85762}, 'korbous_': {lat:36.81628, lng:10.56893},
+        'ksar-hellal_': {lat:35.64439, lng:10.88914}, 'ksibet-el-mediouni_': {lat:35.68849, lng:10.84201}, 'ksour-essaf_': {lat:35.41562, lng:10.95686},
+        'la-goulette_': {lat:36.81593, lng:10.30424}, 'le-krib_': {lat:36.32807, lng:9.13512}, 'mahares': {lat:34.52436, lng:10.50632},
+        'mahdia_': {lat:35.50364, lng:11.06824}, 'maktar_': {lat:35.8559, lng:9.20575}, 'manouba': {lat:36.76244, lng:9.83362},
+        'manouba_': {lat:36.76244, lng:9.83362}, 'mateur_': {lat:37.0386, lng:9.6677}, 'matmata_': {lat:33.50868, lng:9.97861},
+        'medenine': {lat:32.982, lng:11.28703}, 'medenine_': {lat:32.982, lng:11.28703}, 'medjez-el-bab_': {lat:36.64715, lng:9.61652},
+        'mellouleche_': {lat:35.16546, lng:11.03554}, 'menzel-bourguiba_': {lat:37.15499, lng:9.79259}, 'menzel-jemil_': {lat:37.23932, lng:9.91297},
+        'menzel-kamel_': {lat:35.63626, lng:10.66169}, 'menzel-salem_': {lat:35.85148, lng:8.4755}, 'metlaoui_': {lat:34.31572, lng:8.40183},
+        'mezzouna_': {lat:34.46266, lng:9.68984}, 'midoun_': {lat:33.82456, lng:11.00692}, 'monastir_': {lat:35.77076, lng:10.82805},
+        'msaken': {lat:35.72526, lng:10.58328}, 'msaken_': {lat:35.72526, lng:10.58328}, 'nabeul_': {lat:36.45129, lng:10.73559},
+        'nefta_': {lat:33.8205, lng:7.87245}, 'nibbar_': {lat:36.30509, lng:8.77132}, 'port-el-kantaoui_': {lat:35.8937, lng:10.59652},
+        'rades_': {lat:36.76789, lng:10.27246}, 'rafraf_': {lat:37.19228, lng:10.16935}, 'remada_': {lat:32.31465, lng:10.3987},
+        'sahline_': {lat:35.74137, lng:10.72195}, 'sakiet-sidi-youssef_': {lat:36.22204, lng:8.35473}, 'salakta_': {lat:35.39176, lng:11.0461},
+        'sbiba_': {lat:35.54056, lng:9.07327}, 'sbikha_': {lat:35.95195, lng:10.02967}, 'sfax': {lat:34.73944, lng:10.7604},
+        'sfax_': {lat:34.73944, lng:10.7604}, 'sidi-alouane_': {lat:35.37502, lng:10.93784}, 'sidi-bou-ali_': {lat:35.97023, lng:10.42525},
+        'sidi-bou-said_': {lat:36.87109, lng:10.34905}, 'sidi-bouzid_': {lat:34.88118, lng:9.52636}, 'sidi-el-hani_': {lat:35.69918, lng:10.31845},
+        'siliana_': {lat:35.97153, lng:9.35771}, 'skanes_': {lat:35.76602, lng:10.77744}, 'skhira_': {lat:34.34707, lng:9.9753},
+        'sousse_': {lat:35.82883, lng:10.64053}, 'tabarka': {lat:36.95456, lng:8.75738}, 'tabarka_': {lat:36.95456, lng:8.75738},
+        'tabursuq_': {lat:36.46151, lng:9.24262}, 'tajerouine_': {lat:35.89137, lng:8.55305}, 'takelsa_': {lat:36.79321, lng:10.6751},
+        'tataouine_': {lat:31.7317, lng:9.77022}, 'testour_': {lat:36.55201, lng:9.44186}, 'thala_': {lat:35.57672, lng:8.66071},
+        'touza_': {lat:35.63199, lng:10.82783}, 'tozeur_': {lat:33.9239, lng:8.13706}, 'tunis_': {lat:36.80021, lng:10.18578},
+        'wadi-maliz_': {lat:36.46781, lng:8.55}, 'zaghouan_': {lat:36.33195, lng:10.0453}, 'zarzis_': {lat:33.50368, lng:11.10972},
+        'zouila_': {lat:35.50668, lng:11.05838}, 'ain-draham': {lat:36.77749, lng:8.68795}, 'el-meknassi': {lat:34.67898, lng:9.58603},
+        'hbira': {lat:35.16501, lng:10.23105}, 'kerkennah': {lat:34.64345, lng:11.03758}, 'moulares': {lat:34.48574, lng:8.27338},
+        'el-borma': {lat:31.68801, lng:9.21861}, 'raoued': {lat:36.9536, lng:10.18919}, 'ar-rudayyif_': {lat:34.38432, lng:8.15389},
+        'as-sanad_': {lat:34.54028, lng:9.25133}, 'as-sars_': {lat:36.13022, lng:9.02679}, 'dar-chabanne_': {lat:36.46662, lng:10.74785},
+        'djemmal_': {lat:35.62393, lng:10.75924}, 'douar-tindja_': {lat:37.12898, lng:9.66319}, 'er-regueb_': {lat:34.8542, lng:9.80156},
+        'gafour_': {lat:36.25318, lng:9.33017}, 'gergeis': {lat:33.50368, lng:11.10972}, 'gibly': {lat:33.33877, lng:8.70329},
+        'kasr-jedid': {lat:33.30164, lng:10.29575}, 'la-mohammedia_': {lat:36.66664, lng:10.16863}, 'la-sebala-du-mornag_': {lat:36.58721, lng:10.24376},
+        'lemta_': {lat:35.67533, lng:10.88094}, 'mennzel-bou-zelfa_': {lat:36.70321, lng:10.60123}, 'menzel-abderhaman_': {lat:37.23613, lng:9.86311},
+        'menzel-heurr_': {lat:36.72687, lng:10.95324}, 'mesdour_': {lat:33.95891, lng:10.00143}, 'ouardenine_': {lat:35.70107, lng:10.67721},
+        'oued-lill_': {lat:36.82976, lng:10.0129}, 'rhar-el-melah_': {lat:37.14543, lng:10.09387}, 'rohia_': {lat:35.65143, lng:9.05634},
+        'sejenane_': {lat:37.13689, lng:9.244}, 'sidi-ben-nour_': {lat:35.5251, lng:10.91415}, 'tamaghzah_': {lat:34.38639, lng:7.93349},
+        'tatouine': {lat:31.7317, lng:9.77022}, 'zahanah_': {lat:36.79503, lng:10.17791}, 'zaouiat-djedidi_': {lat:36.64343, lng:10.57464},
+        'es-souassi': {lat:35.34081, lng:10.50308},
+    };
+
     // Calcule seulement maintenant (cf. commentaire plus haut, pres de
     // ANON_LOC_STORAGE_KEY) : _currentLocationDefaults() lit _CITY_NAME_AR,
     // qui vient tout juste d'etre assigne juste au-dessus.
@@ -16229,13 +16295,39 @@ function selectQPTakbir() {
         };
     })();
 
+    // ── Détection GPS de la ville au tout premier lancement (16/08/2026,
+    // demande explicite) : plutôt que de reproduire une carte de zones/
+    // polygones par ville (lourd à dessiner/maintenir), on prend simplement
+    // la ville dont le point de référence (UC_CITY_COORDS_TN, plus haut) est
+    // le plus proche — suffisant pour "même approximativement". Aucune
+    // nouvelle permission native : navigator.geolocation déclenche déjà la
+    // demande ACCESS_FINE_LOCATION si besoin (MainActivity.
+    // onGeolocationPermissionsShowPrompt, même mécanisme déjà utilisé par
+    // Qibla/_installMosqueProximityCheck).
+    function _ucFindNearestCityTN(lat, lng) {
+        var coords = window.UC_CITY_COORDS_TN;
+        if (!coords) return null;
+        var bestSlug = null, bestKm = Infinity;
+        Object.keys(coords).forEach(function(slug) {
+            var c = coords[slug];
+            var d = _ucHaversineKm(lat, lng, c.lat, c.lng);
+            if (d < bestKm) { bestKm = d; bestSlug = slug; }
+        });
+        // > 100km de toute ville connue : la ville la plus proche n'est
+        // probablement plus une suggestion pertinente (hors Tunisie, ou zone
+        // non couverte par UC_CITY_COORDS_TN) -- mieux vaut ne rien suggérer
+        // que de proposer une ville lointaine sans rapport.
+        if (!bestSlug || bestKm > 100) return null;
+        return { slug: bestSlug, km: bestKm };
+    }
+
     // ── Premier lancement (aucune mosquée choisie) : applique automatiquement
     // le modèle par défaut/anonyme au lieu d'imposer le sélecteur bloquant —
     // l'app doit être utilisable immédiatement (cf. discussion point 2). Le
     // sélecteur reste accessible à tout moment, en opt-in, via
     // mosqueNameDisplayVertical / ucSelectMosqueButton. Reload unique
     // (ne se reproduit plus une fois UC_MOSQUE_ID posé).
-    if (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG._NO_MOSQUE_SELECTED) {
+    function _ucFirstRunFallbackAnonymous() {
         // Trace AVANT l'ecrasement + reload (constate 07/08/2026, mosquee Nour
         // Chaker : UC_MOSQUE_ID absent a un demarrage -- reset silencieux vers
         // 'anonymous.generic', aucune preuve nulle part, rapport de debug
@@ -16257,6 +16349,43 @@ function selectQPTakbir() {
         }
         try { localStorage.setItem('UC_MOSQUE_ID', 'anonymous.generic'); } catch (e) {}
         location.reload();
+    }
+
+    if (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG._NO_MOSQUE_SELECTED) {
+        var _geoResolved = false;
+        function _ucFinishFirstRun(nearestCity) {
+            // getCurrentPosition (succès/échec) ET le setTimeout de secours
+            // peuvent chacun appeler cette fonction -- une seule fois retenue.
+            if (_geoResolved) return;
+            _geoResolved = true;
+            if (nearestCity) {
+                _L('MOSQUE_SEL', 'GPS_CITY_DETECTED', { slug: nearestCity.slug, km: Math.round(nearestCity.km) });
+                _selCityCode = 'tn.' + nearestCity.slug;
+                var _baseSlug = nearestCity.slug.replace(/_+$/, '');
+                var _arName = _CITY_NAME_AR['TN'] && _CITY_NAME_AR['TN'][_baseSlug];
+                _selCityName = nearestCity.slug.charAt(0).toUpperCase() + nearestCity.slug.slice(1) +
+                    (_arName ? '   ' + _arName : '');
+                // Ne PAS ecrire UC_MOSQUE_ID ici : ouvre juste le selecteur,
+                // deja pre-filtre sur la ville detectee -- l'utilisateur
+                // choisit sa mosquee lui-meme (ou ferme et reste anonyme).
+                window._ucOpenMosqueSelector();
+            } else {
+                _ucFirstRunFallbackAnonymous();
+            }
+        }
+        if (navigator.geolocation && _selCountryCode === 'TN') {
+            var _ucGeoTimer = setTimeout(function() { _ucFinishFirstRun(null); }, 6000);
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    clearTimeout(_ucGeoTimer);
+                    _ucFinishFirstRun(_ucFindNearestCityTN(pos.coords.latitude, pos.coords.longitude));
+                },
+                function() { clearTimeout(_ucGeoTimer); _ucFinishFirstRun(null); },
+                { enableHighAccuracy: false, timeout: 6000, maximumAge: 0 }
+            );
+        } else {
+            _ucFirstRunFallbackAnonymous();
+        }
     }
 
     console.log('[MOSQUE_SEL] installé, id courant:', _getCurrentId() || '(none)');

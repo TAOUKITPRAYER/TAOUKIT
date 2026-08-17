@@ -905,6 +905,17 @@ if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l
 // (totalement séparé de JS_DATA pour ne jamais interférer avec les updates)
 
 
+// Uniquement en mode telephone reel (hors boitier Android TV ET hors mode
+// navigateur/Windows de test, cf. window.AndroidMobile absent dans ce
+// dernier cas) : ucShowSpeakerIcon/ucShowQuranIcon desactives par defaut
+// (demande explicite du 16/08/2026) -- ne s'applique qu'a la valeur PAR
+// DEFAUT d'une premiere installation : une fois JS_CUSTOM construit plus
+// bas (Object.assign(JS_CUSTOM_DEFAULTS, storedValues)), toute valeur deja
+// sauvegardee (choix explicite de l'utilisateur, y compris une reactivation
+// ulterieure) prend le pas sur ce defaut, comme pour tout autre reglage.
+var _ucIsRealPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+    && !window.AndroidMobile.isAndroidTv());
+
 const JS_CUSTOM_DEFAULTS = {
     // ── Profil mosquée éditable (ucMosqueInfoAddress, cf. _installMosqueInfoModal) :
     // visible par tous, modifiable seulement si mosquée anonyme ou admin PIN
@@ -925,8 +936,8 @@ const JS_CUSTOM_DEFAULTS = {
     ucMosqueImageUrl:       '',   // URL Supabase Storage (photo personnalisee, cf. _openMosquePhotoPicker)
     ucBlinkingEnabled:      1,
     ucStartPrayerBlinking:  60,
-    ucShowSpeakerIcon:      1,
-    ucShowQuranIcon:        1,
+    ucShowSpeakerIcon:      _ucIsRealPhone ? 0 : 1,
+    ucShowQuranIcon:        _ucIsRealPhone ? 0 : 1,
     // Rotation des versets/ayats (#ayaTextDisplayVertical/Horizontal) --
     // désactivée par défaut (demande explicite du 11/08/2026). Les rappels
     // ponctuels (10 derniers jours Ramadan, 10 premières nuits Dhoul Hijja,

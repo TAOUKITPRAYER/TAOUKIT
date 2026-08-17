@@ -839,7 +839,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.80';
+var CUSTOM_APP_VERSION = '12.81';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1874,6 +1874,18 @@ window._ucCurrentMosqueId = function () {
     var cacheBust = (typeof appVersionNumber !== 'undefined') ? appVersionNumber : Date.now();
     var s = document.createElement('script');
     s.src = 'spec/data/' + cc + '/wtimes-' + JS_DATA.ucNowCityCODE + '.js?e=' + cacheBust;
+    // BUG CONSTATE ET CORRIGE (17/08/2026, retour utilisateur -- console
+    // Windows) : contrairement a _probeAndLoad/_tryLoad (memes sondes
+    // "override optionnel" plus bas dans ce fichier), cette balise <script>
+    // n'etait jamais marquee dataset.ucOptionalProbe -- le listener 'error'
+    // global (plus bas, cf. "Sondes d'override optionnel") ne pouvait donc
+    // pas la reconnaitre comme un miss normal et affichait un faux positif
+    // rouge 🔴 [RES] SCRIPT load failed pour TOUTE ville sans surcharge
+    // horaires officiels (la grande majorite, ex. Akouda) -- alors meme que
+    // onerror ci-dessous geraient deja ce cas correctement (JS_TIMES core
+    // inchange, aucun impact fonctionnel). Purement cosmetique (bruit
+    // console trompeur), jamais un vrai echec.
+    s.dataset.ucOptionalProbe = '1';
     s.onload = function() {
         if (typeof _L === 'function') {
             _L('CFG', 'OFFICIAL_WTIMES_OVERRIDE_APPLIED', { city: JS_DATA.ucNowCityCODE });
@@ -4051,6 +4063,7 @@ updateNextPrayerDisplay = function(remainingMinutes) {
         return;
     }
     window.closeMenuFunction = function() {
+        var _wasOpen = (document.getElementById('mainMenuContainer').style.visibility === 'visible');
         isMenuOpen = true;   // toujours "fermé", jamais toggle
         hideElementByIdFunction('mainMenuContainer');
         // Restaure le bouton réglages (masqué quand le menu était ouvert) —
@@ -4062,6 +4075,13 @@ updateNextPrayerDisplay = function(remainingMinutes) {
         if (typeof window._ucSyncSettingsBtnVisibility === 'function') {
             setTimeout(window._ucSyncSettingsBtnVisibility, 0);
         }
+        // BUG CONSTATE ET CORRIGE (17/08/2026, demande explicite) : consomme
+        // l'entrée d'historique poussée à l'ouverture du menu (cf.
+        // _installMenuBackAndOutsideClose plus bas) quand la fermeture vient
+        // d'ailleurs que le bouton retour (lien du menu, clic en dehors en
+        // mode horizontal...) — même idiome que _popBack()/_pushBack()
+        // partout ailleurs dans ce fichier (cf. _installBackManager).
+        if (_wasOpen && typeof window._popBack === 'function') window._popBack();
     };
     console.log('[MENU] patch closeMenuFunction installé');
 })();
@@ -4119,6 +4139,75 @@ updateNextPrayerDisplay = function(remainingMinutes) {
         // (custom.js : techOptionsSectionId, lightProgrammingSectionId...).
         new MutationObserver(_watchModalPopups).observe(document.body, { childList: true });
     }
+})();
+
+// ── Bouton retour Android + clic en dehors (mode horizontal) → ferme
+// mainMenuContainer ─────────────────────────────────────────────────────
+// Demande explicite (17/08/2026) :
+//   1. Mode horizontal : un clic/tap en dehors de #mainMenuContainer doit le
+//      fermer (jusque-là, seul le bouton hamburger le fermait).
+//   2. Bouton retour Android : doit fermer le menu s'il est ouvert, au lieu
+//      d'afficher directement la boîte "Quitter l'application ?" (cf.
+//      MainActivity.kt : cette boîte ne s'affiche QUE si webView.canGoBack()
+//      est false — il suffit donc que l'ouverture du menu pousse une entrée
+//      d'historique, exactement comme toute autre modale de ce fichier, cf.
+//      _installBackManager plus bas).
+//   3. Chaque appui sur retour ne ferme qu'UNE chose à la fois (comportement
+//      déjà garanti par le mécanisme _pushBack/_popBack/popstate existant),
+//      jusqu'à l'écran principal — c'est seulement là, sans plus rien
+//      d'ouvert, que webView.canGoBack() redevient false et que la boîte de
+//      confirmation de sortie s'affiche (cf. MainActivity.kt, inchangé).
+// toggleMenuFunction() (core, m2body.js) ne peut pas être patché ici de
+// façon fiable (cf. _bindMenuLocatorBtn ci-dessus, même constat) — on
+// intercepte le clic sur les boutons hamburger, en lisant l'état APRÈS le
+// toggle (addEventListener s'exécute après l'attribut onclick= inline pour
+// un même événement) : même idiome que _bindMenuLocatorBtn.
+(function _installMenuBackAndOutsideClose() {
+    var mainMenuEl = document.getElementById('mainMenuContainer');
+    if (!mainMenuEl) return;
+
+    function _menuVisible() {
+        return mainMenuEl.style.visibility === 'visible';
+    }
+
+    // 1. Ouverture/fermeture via le bouton hamburger — pousse/consomme
+    // l'entrée d'historique selon le NOUVEL état (déjà posé par le toggle
+    // core au moment où ce listener s'exécute).
+    function _onToggleClick() {
+        if (_menuVisible()) {
+            if (typeof window._pushBack === 'function') window._pushBack();
+        } else if (typeof window._popBack === 'function') {
+            window._popBack();
+        }
+    }
+    var btn  = document.getElementById('menuToggleButton');
+    var btnH = document.getElementById('menuToggleButtonHorizontal');
+    if (btn)  btn.addEventListener('click',  _onToggleClick);
+    if (btnH) btnH.addEventListener('click', _onToggleClick);
+
+    // 2. Mode horizontal uniquement (demande explicite) : clic/tap en dehors
+    // de #mainMenuContainer — jamais sur les boutons hamburger eux-mêmes
+    // (déjà gérés ci-dessus, sinon l'appui qui OUVRE le menu le referme
+    // aussitôt via ce même listener) — ferme via closeMenuFunction(), qui
+    // consomme déjà l'entrée d'historique (cf. patch ci-dessus).
+    // stopPropagation() : contrairement aux autres modales de ce fichier
+    // (backdrop plein écran, cf. ucAnonMosqueWarnModal — "en dehors" ==
+    // forcément le fond, rien d'autre en dessous), #mainMenuContainer est un
+    // panneau partiel (55% de large) SANS backdrop : sans stopPropagation,
+    // ce même clic "en dehors" atteindrait aussi l'élément réel juste
+    // derrière (ex. une case horaire) et déclencherait AUSSI son propre
+    // onclick — premier clic doit seulement fermer le menu, pas agir en plus
+    // sur ce qu'il y a en dessous.
+    document.addEventListener('click', function(e) {
+        var isHR = (typeof isHorizontalOrientation !== 'undefined') && isHorizontalOrientation;
+        if (!isHR || !_menuVisible()) return;
+        if (mainMenuEl.contains(e.target)) return;
+        if (btn  && (e.target === btn  || btn.contains(e.target)))  return;
+        if (btnH && (e.target === btnH || btnH.contains(e.target))) return;
+        e.stopPropagation();
+        e.preventDefault();
+        if (typeof window.closeMenuFunction === 'function') window.closeMenuFunction();
+    }, true);
 })();
 
 // ── Menu à onglets "Principal" / "Boîte à outils" ─────────────────────────
@@ -7086,6 +7175,24 @@ function _qpSavePosition() {
         var infoModal = document.getElementById('ucMosqueInfoModal');
         if (infoModal && infoModal.classList.contains('ucMosqueModalOpen')) {
             infoModal.classList.remove('ucMosqueModalOpen');
+            if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
+            return;
+        }
+        // 4. Menu principal (mainMenuContainer, z-index 99998) — demande
+        // explicite (17/08/2026) : le bouton retour doit fermer le menu (au
+        // lieu de laisser Android afficher "Quitter l'application ?", cf.
+        // MainActivity.kt) quand il est ouvert. Entrée d'historique poussée à
+        // l'ouverture par _installMenuBackAndOutsideClose (plus haut dans ce
+        // fichier). Reproduit ici l'effet de closeMenuFunction() SANS son
+        // propre _popBack() (déjà géré par ce popstate en cours) — même
+        // raison que Qibla/Azan Catalog ci-dessus (éviter un second
+        // history.back()).
+        var mainMenuEl = document.getElementById('mainMenuContainer');
+        if (mainMenuEl && mainMenuEl.style.visibility === 'visible') {
+            isMenuOpen = true;   // toujours "fermé" (naming inversé, cf. _patchCloseMenu)
+            hideElementByIdFunction('mainMenuContainer');
+            var _mlBm = document.getElementById('ucSettingsButtonVertical');
+            if (_mlBm) _mlBm.style.display = '';
             if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
             return;
         }
@@ -16285,24 +16392,40 @@ function selectQPTakbir() {
     // boucle de rechargement infinie) -- ce patch-ci ne touche jamais
     // JS_DATA.ucNowCityCODE, il ne fait que relire l'état déjà écrit par
     // l'original.
+    //
+    // BUG CONSTATE ET CORRIGE (17/08/2026, retour utilisateur -- ville
+    // choisie dans Paramètres > Ville pas reprise dans le sélecteur de
+    // mosquée) : ce patch lisait _currentLocationDefaults() en synchrone,
+    // juste après _orig.apply() -- mais _orig (le premier monkey-patch de
+    // selectCityFunction, plus haut dans ce fichier, cf. _probeAndLoad)
+    // écrit JS_DATA.ucNowCityCODE de façon ASYNCHRONE (callback de
+    // _probeAndLoad, après une sonde réseau/fichier), donc _orig.apply()
+    // revient AVANT que la nouvelle ville soit réellement posée -- ce patch
+    // relisait alors l'ANCIENNE valeur, encore en place à cet instant precis.
+    // Même diagnostic déjà pose plus bas dans ce fichier pour un autre
+    // consommateur de selectCityFunction (cf. "Meme raisonnement, applique a
+    // selectCityFunction", _sendToNative, qui attend deja 1500ms pour la
+    // meme raison) -- meme delai repris ici par coherence/eprouve.
     (function _installRealCitySyncToMosqueSelector() {
         var _orig = window.selectCityFunction;
         if (typeof _orig !== 'function') return;
         window.selectCityFunction = function(selectedCityCode) {
             _orig.apply(this, arguments);
-            _locDefaults    = _currentLocationDefaults();
-            _selCountryCode = _locDefaults.countryCode;
-            _selCountryName = _locDefaults.countryName;
-            _selCityCode    = _locDefaults.cityCode;
-            _selCityName    = _locDefaults.cityName;
-            // Rafraîchit l'UI seulement si la modale a déjà été construite au
-            // moins une fois (_buildModal) -- sinon _selCityCode/_selCountryCode
-            // resteront simplement à jour pour la prochaine ouverture, qui les
-            // relit déjà correctement (cf. _currentLocationDefaults au chargement).
-            if (document.getElementById('ucMosqueSelectCountryButton')) {
-                _loadCities(_selCountryCode, _selCountryName);
-            }
-            if (_list) _refreshForCity(_searchInput ? _searchInput.value : '');
+            setTimeout(function() {
+                _locDefaults    = _currentLocationDefaults();
+                _selCountryCode = _locDefaults.countryCode;
+                _selCountryName = _locDefaults.countryName;
+                _selCityCode    = _locDefaults.cityCode;
+                _selCityName    = _locDefaults.cityName;
+                // Rafraîchit l'UI seulement si la modale a déjà été construite au
+                // moins une fois (_buildModal) -- sinon _selCityCode/_selCountryCode
+                // resteront simplement à jour pour la prochaine ouverture, qui les
+                // relit déjà correctement (cf. _currentLocationDefaults au chargement).
+                if (document.getElementById('ucMosqueSelectCountryButton')) {
+                    _loadCities(_selCountryCode, _selCountryName);
+                }
+                if (_list) _refreshForCity(_searchInput ? _searchInput.value : '');
+            }, 1500);
         };
     })();
 
@@ -20361,9 +20484,23 @@ function selectQPTakbir() {
     window._ucPullRemoteBackup = _pullRemoteBackup;
 
     // -- Liste des configs distantes approuvées pour UNE ville donnée --------
+    // BUG CONSTATE ET CORRIGE (17/08/2026, retour utilisateur -- ville
+    // "Akouda" ne remontait aucune mosquee) : l'appelant (_refreshForCity)
+    // ne transmet ici QUE la forme normalisee/sans "_" (_normCityCode, cf.
+    // plus haut -- necessaire pour les villes en doublon type "tn.monastir"/
+    // "tn.monastir_" ou seule la forme SANS "_" est presente en base). Mais
+    // certaines villes (ex. Akouda) n'existent QU'EN forme AVEC "_" cote
+    // donnees ("tn.akouda_", jamais "tn.akouda" nu) -- un match exact sur la
+    // seule forme normalisee y renvoyait donc systematiquement 0 ligne.
+    // Interroge desormais les DEUX variantes (avec/sans "_" final) en un
+    // seul appel (filtre PostgREST location_code=in.(...)), quelle que soit
+    // celle reellement peuplee en base.
     function _fetchRemoteListByCity(locationCode, cb) {
         if (!locationCode) { cb([]); return; }
-        fetch(_SB_URL + '/rest/v1/mosque_config_backups?status=eq.approved&location_code=eq.' + encodeURIComponent(locationCode) + '&select=mosque_id,mosque_name,image_url', {
+        var bare = locationCode.replace(/_+$/, '');
+        var variants = (bare + '_' === locationCode) ? [bare, locationCode] : [locationCode, bare + '_'];
+        var inFilter = 'location_code=in.(' + variants.join(',') + ')';
+        fetch(_SB_URL + '/rest/v1/mosque_config_backups?status=eq.approved&' + inFilter + '&select=mosque_id,mosque_name,image_url', {
             headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY }
         })
         .then(function (r) { return r.ok ? r.json() : []; })

@@ -2193,6 +2193,14 @@
         background-position: center;
         pointer-events:      none;
     }
+    /* Demande explicite (17/08/2026) : icone Dohr en blanc plutot que doree
+       (Asr garde le dore d'origine ci-dessus) -- soleil.webp est un decoupe
+       transparent (verifie : coins alpha=0, forme alpha=255), donc
+       brightness(0) invert(1) recolore la forme en blanc pur sans toucher au
+       decoupage/contour. */
+    #mainHorizontalContainer[data-layout-mode="4"] #prayerNameDohrHorizontal::before {
+        filter: brightness(0) invert(1);
+    }
 
     /* Mode 4 : icone maghreb a gauche de Maghreb */
     #mainHorizontalContainer[data-layout-mode="4"] #prayerNameMgrbHorizontal::before {
@@ -2344,6 +2352,10 @@
         background-repeat:   no-repeat;
         background-position: center;
         pointer-events:      none;
+    }
+    /* Cf. mode 4 ci-dessus : meme demande, icone Dohr en blanc (Asr reste dore). */
+    #mainHorizontalContainer[data-layout-mode="6"] #prayerNameDohrHorizontal::before {
+        filter: brightness(0) invert(1);
     }
     #mainHorizontalContainer[data-layout-mode="6"] #prayerNameMgrbHorizontal::before {
         content: '';

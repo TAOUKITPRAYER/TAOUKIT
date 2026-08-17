@@ -839,7 +839,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.81';
+var CUSTOM_APP_VERSION = '12.87';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1366,7 +1366,104 @@ function _applyHrAyaRotationLayout() {
         if (shift) tbl.style.setProperty('top', (_hrAyaBaseTop() - shift) + '%', 'important');
         else tbl.style.removeProperty('top');
     }
+    _fixHrTableOverlap(shift);
 }
+// TOUT le tableau des prières (prayerTimesContainerHorizontal), pas
+// seulement prayerCellAsrHorizontal -- correction demandée le 17/08/2026
+// (boîtier 720p) : HmtALT3 (icône tirée à top: var(--mt7) = -13% au-dessus
+// de prayerCellAsrHorizontal sur les thèmes cadre pb.png/pb6.png, modes 4/6,
+// cf. custom.css) chevauche visuellement le texte affiché juste au-dessus
+// (verset OU message admin, même emplacement, jamais les deux en même
+// temps) une fois le tableau remonté par le décalage ci-dessus (ex. message
+// "TAWKIT.NET - تطبيق مجاني" contre HmtALT3, capture écran réelle fournie
+// par l'utilisateur). Un 1er correctif ne déplaçait que HmtALT3 seule,
+// rejeté ("n'importe quoi") ; un 2e ne déplaçait que prayerCellAsrHorizontal
+// seule (colonne Asr décalée hors alignement des 5 autres colonnes),
+// également rejeté -- ici on redescend TOUT le tableau (mêmes 6 colonnes
+// ensemble, alignement de ligne intact).
+// Mesure réelle sur boîtier (CDP distant, pas headless) : dégager
+// ENTIÈREMENT le haut demande ~100px, alors que la marge totale disponible
+// avant hadithDisplayHorizontal/marqueeContainerHorizontal n'est que
+// d'~28px -- impossible de satisfaire les deux à la fois avec ce seul
+// levier (tableau entier). Compromis EXPLICITE choisi par l'utilisateur
+// (17/08/2026, après vérification des chiffres réels) : combler la MOITIÉ
+// du besoin, tout en ne descendant jamais sous une marge basse minimale de
+// secours -- réduit nettement le chevauchement (sans le supprimer
+// entièrement) tout en gardant toujours quelques px vers le bas.
+function _fixHrTableOverlap(shift) {
+    var tbl  = document.getElementById('prayerTimesContainerHorizontal');
+    var hmt3 = document.getElementById('HmtALT3');
+    if (!tbl || !hmt3 || !shift) return;   // !shift : tbl.style.top déjà réinitialisé juste au-dessus, rien à ajouter
+    // Repart TOUJOURS du top "propre" (sans px supplémentaire) avant de
+    // mesurer -- indispensable pour rester idempotent : cette fonction est
+    // rappelée en boucle (chaque tick horloge ET à chaque changement du
+    // texte observé plus bas) ; sans ce reset, un appel mesure sa PROPRE
+    // correction précédente comme "position actuelle" et calcule un delta
+    // erroné à chaque nouvel appel au lieu de rester stable sur un même
+    // contenu.
+    var baseTopPct = _hrAyaBaseTop() - shift;
+    tbl.style.setProperty('top', baseTopPct + '%', 'important');
+
+    var TOP_MARGIN_PX = 6;            // marge mini à garder sous le texte au-dessus
+    var BOTTOM_MARGIN_FLOOR_PX = 3;   // filet de sécurité absolu envers hadith/marquee -- jamais sous ce seuil, même au compromis 50%
+
+    var hmtTop = hmt3.getBoundingClientRect().top;
+    var neededPush = 0;
+    // Ces deux blocs sont masqués via style.visibility (showElementFunction/
+    // hideElementByIdFunction, m2body.js), PAS display:none -- un élément en
+    // visibility:hidden garde sa taille/position en getBoundingClientRect(),
+    // donc le test largeur/hauteur seul ne suffit pas à détecter "pas affiché
+    // actuellement" : il faut aussi lire la visibilité réelle du conteneur.
+    [
+        { textId: 'messageTextDisplayHorizontal', containerId: 'messageDisplayContainerHorizontal' },
+        { textId: 'ayaTextDisplayHorizontal',      containerId: 'ayaDisplayContainerHorizontal' }
+    ].forEach(function(pair) {
+        var el = document.getElementById(pair.textId);
+        var container = document.getElementById(pair.containerId);
+        if (!el || !container) return;
+        if (getComputedStyle(container).visibility === 'hidden') return;
+        var r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return;   // pas affiché actuellement
+        var overlapPx = (r.bottom + TOP_MARGIN_PX) - hmtTop;
+        if (overlapPx > neededPush) neededPush = overlapPx;
+    });
+    if (neededPush <= 0) return;
+
+    var desiredPush = neededPush / 2;   // compromis 50% explicite (cf. commentaire ci-dessus)
+
+    var tblBottom = tbl.getBoundingClientRect().bottom;
+    var maxAllowedPush = 0;
+    var anyBottomRef = false;
+    ['hadithDisplayHorizontal', 'marqueeContainerHorizontal'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return;
+        var room = (r.top - BOTTOM_MARGIN_FLOOR_PX) - tblBottom;
+        if (!anyBottomRef || room < maxAllowedPush) maxAllowedPush = room;
+        anyBottomRef = true;
+    });
+    if (!anyBottomRef || maxAllowedPush < 0) maxAllowedPush = 0;
+
+    var applied = Math.min(desiredPush, maxAllowedPush);
+    if (applied > 0) {
+        tbl.style.setProperty('top', 'calc(' + baseTopPct + '% + ' + applied + 'px)', 'important');
+    }
+}
+// Le texte du message admin change indépendamment des points de déclenchement
+// ci-dessus (showMessagePopupFunction, m2body.js, ne rappelle pas
+// _applyHrAyaRotationLayout) -- observe donc aussi directement son contenu,
+// même idiome que _installAyaRotationFilter un peu plus bas dans ce fichier.
+(function _installHrTableOverlapWatcher() {
+    var msgEl = document.getElementById('messageTextDisplayHorizontal');
+    if (!msgEl) return;
+    var _observer = new MutationObserver(function() {
+        var shift = (JS_CUSTOM.ucAyaRotationEnabled == 1) ? 0 : UC_AYA_HR_SHIFT_UP;
+        if (shift && window.innerHeight <= 720) shift += UC_AYA_HR_SHIFT_UP_720P_EXTRA;
+        _fixHrTableOverlap(shift);
+    });
+    _observer.observe(msgEl, { childList: true, characterData: true, subtree: true });
+})();
 (function _patchApplyHrLayoutForAyaRotation() {
     var _orig = window.applyHrLayoutFunction;
     if (typeof _orig !== 'function') return;
@@ -3740,6 +3837,13 @@ function _applyLightTriggers(remainingMinutes) {
 //  contre un reset prématuré de _azanAlertFired par un flicker de prière).
 function _applyAzanAlertNotification(remainingMinutes, prayerKey) {
     if (JS_CUSTOM.ucAzanAlertEnabled != 1) return;
+    // Demande explicite (17/08/2026) : pas de bandeau sur boîtier TV (écran
+    // mural en continu, le bandeau plein écran gêne l'affichage permanent) --
+    // reste actif sur téléphone/tablette. Même idiome de détection que
+    // _ucIsRealPhone plus haut dans ce fichier.
+    var _ucIsTv = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv());
+    if (_ucIsTv) return;
     if (!prayerKey || prayerKey === 'SHRQ') return;   // Doha : pas d'alerte (pas d'azan)
 
     var thresholdMin = parseInt(JS_CUSTOM.ucAzanAlertMinutes, 10);
@@ -4086,6 +4190,36 @@ updateNextPrayerDisplay = function(remainingMinutes) {
     console.log('[MENU] patch closeMenuFunction installé');
 })();
 
+// ── PATCH closeModalFunction (générique, TOUTES les sections modalPopupClass)
+// ───────────────────────────────────────────────────────────────────────────
+// Demande explicite (17/08/2026) : même bug que mainMenuContainer (cf.
+// _installMenuBackAndOutsideClose plus bas), mais pour TOUTE section ouverte
+// depuis menuSectionsContainer (locationSectionId, optionsSectionId,
+// techOptionsSectionId, lightProgrammingSectionId, etc.) — le bouton retour
+// Android affichait "Quitter l'application ?" au lieu de fermer la section
+// ouverte. Un seul point de patch suffit : CHAQUE section ferme son bouton
+// "✕" via le même core closeModalFunction(el) (cf. onclick="closeModalFunction(
+// this.parentNode);" dans index.html, identique pour toutes) — donc pas
+// besoin de patcher chaque section une par une. L'ouverture (_pushBack), elle,
+// est traquée génériquement par _installMenuSectionsBackPush plus bas (aucun
+// point d'entrée JS unique côté ouverture — chaque bouton du menu appelle
+// directement showElementFunction('xyzSectionId'), trop générique pour être
+// patché sans risque de fausses entrées d'historique ailleurs dans l'appli).
+(function _patchCloseModal() {
+    if (typeof closeModalFunction !== 'function') {
+        console.warn('[MENU] closeModalFunction introuvable — patch annulé');
+        return;
+    }
+    var _origCloseModal = closeModalFunction;
+    window.closeModalFunction = function(el) {
+        var target = el && el.parentNode && el.parentNode.parentNode;
+        var _wasOpen = !!(target && target.style && target.style.visibility === 'visible');
+        _origCloseModal.apply(this, arguments);
+        if (_wasOpen && typeof window._popBack === 'function') window._popBack();
+    };
+    console.log('[MENU] patch closeModalFunction installé');
+})();
+
 // ── Menu hamburger + tout sous-menu/modal accessible depuis lui → masquer/
 // restaurer ucSettingsButtonVertical ──────────────────────────────────────
 // toggleMenuFunction() (m2body.js) ne peut pas être patché ici de façon fiable
@@ -4199,6 +4333,24 @@ updateNextPrayerDisplay = function(remainingMinutes) {
     // onclick — premier clic doit seulement fermer le menu, pas agir en plus
     // sur ce qu'il y a en dessous.
     document.addEventListener('click', function(e) {
+        // RÉGRESSION CONSTATÉE ET CORRIGÉE (17/08/2026, retour utilisateur --
+        // boîtier TV uniquement : le menu se refermait tout seul dans la
+        // seconde suivant son ouverture, systématiquement) : MainActivity.kt
+        // dispatche un vrai MotionEvent (geste "trusted", nécessaire pour
+        // débloquer l'autoplay Chromium) 1.5s après CHAQUE chargement de
+        // page, uniquement sur boîtier (DeviceType.isAndroidTv) — cf.
+        // dispatchSyntheticUnlockTap(). Il atterrit toujours sur
+        // #ucSyntheticUnlockTarget (élément dédié plein z-index, cf.
+        // _installSyntheticUnlockTapTarget plus bas dans ce fichier,
+        // spécifiquement conçu pour absorber ce tap sans agir sur quoi que
+        // ce soit) — mais un clic y bulle quand même jusqu'à document,
+        // exactement comme n'importe quel autre clic : ce listener le
+        // traitait donc, à tort, comme "clic en dehors du menu → fermer".
+        // Même classe de bug déjà rencontrée deux fois pour ce même tap
+        // synthétique (menu hamburger, puis azanCatalogOverlay, cf.
+        // commentaire de _installSyntheticUnlockTapTarget) — ce garde-fou
+        // complète la liste des points d'écoute globaux à protéger.
+        if (e.target && e.target.id === 'ucSyntheticUnlockTarget') return;
         var isHR = (typeof isHorizontalOrientation !== 'undefined') && isHorizontalOrientation;
         if (!isHR || !_menuVisible()) return;
         if (mainMenuEl.contains(e.target)) return;
@@ -4208,6 +4360,53 @@ updateNextPrayerDisplay = function(remainingMinutes) {
         e.preventDefault();
         if (typeof window.closeMenuFunction === 'function') window.closeMenuFunction();
     }, true);
+})();
+
+// ── Bouton retour Android, généralisé à TOUTE section modalPopupClass ──────
+// (locationSectionId, optionsSectionId, techOptionsSectionId,
+// lightProgrammingSectionId, etc.) — demande explicite (17/08/2026), même
+// principe que _installMenuBackAndOutsideClose ci-dessus pour
+// mainMenuContainer, généralisé à toute l'appli.
+// Poussée d'historique à l'OUVERTURE : aucun point d'entrée JS unique côté
+// ouverture (chaque bouton du menu appelle directement showElementFunction
+// (id), fonction bien trop générique pour être patchée sans risque ailleurs
+// dans l'appli — cf. _bindMenuLocatorBtn plus haut, même contrainte) — on
+// observe donc l'état réel (style.visibility) de TOUTE section
+// .modalPopupClass, y compris celles injectées après coup par custom.js
+// (mêmes nœuds que _watchModalPopups plus haut, observateur séparé ici).
+// Sur-pousser une entrée en trop (double mutation observée par erreur) ne
+// coûte qu'un appui retour de plus — jamais dangereux, contrairement à un
+// sur-dépilement qui pourrait sauter une entrée légitime (cf. discussion
+// _installBackManager plus bas) : c'est pourquoi la FERMETURE, elle, n'est
+// JAMAIS gérée par cet observateur, seulement de façon explicite
+// (closeModalFunction ci-dessus, _closeAllMenuSections plus bas, popstate).
+(function _installMenuSectionsBackPush() {
+    if (typeof MutationObserver !== 'function') return;
+    var _visible = {};
+    function _checkAll() {
+        var modals = document.querySelectorAll('.modalPopupClass');
+        for (var i = 0; i < modals.length; i++) {
+            var el = modals[i];
+            var id = el.id || ('ucSection' + i);
+            var nowVisible = (el.style.visibility === 'visible');
+            if (nowVisible && !_visible[id] && typeof window._pushBack === 'function') {
+                window._pushBack();
+            }
+            _visible[id] = nowVisible;
+        }
+    }
+    var _obs = new MutationObserver(_checkAll);
+    function _watchAll() {
+        var modals = document.querySelectorAll('.modalPopupClass');
+        for (var i = 0; i < modals.length; i++) {
+            _obs.observe(modals[i], { attributes: true, attributeFilter: ['style'] });
+        }
+    }
+    _watchAll();
+    // Rattrape les sections injectées après coup (ex. techOptionsSectionId,
+    // lightProgrammingSectionId, cf. injectTechOptionsUI et consorts).
+    new MutationObserver(_watchAll).observe(document.body, { childList: true });
+    _checkAll(); // état initial (tout fermé en temps normal)
 })();
 
 // ── Menu à onglets "Principal" / "Boîte à outils" ─────────────────────────
@@ -4322,7 +4521,17 @@ updateNextPrayerDisplay = function(remainingMinutes) {
     function _closeAllMenuSections() {
         var modals = document.querySelectorAll('.modalPopupClass');
         for (var i = 0; i < modals.length; i++) {
-            if (modals[i].style.visibility === 'visible') modals[i].style.visibility = 'hidden';
+            if (modals[i].style.visibility === 'visible') {
+                modals[i].style.visibility = 'hidden';
+                // Consomme l'entrée d'historique poussée à l'ouverture (cf.
+                // _installMenuSectionsBackPush) : rouvrir le menu principal
+                // pendant qu'une section était ouverte la ferme ici SANS
+                // passer par closeModalFunction (pas de clic sur "✕") —
+                // sans ce _popBack() explicite, la pile d'historique
+                // resterait en décalage d'une entrée (un appui retour de
+                // trop nécessaire avant de pouvoir quitter l'appli).
+                if (typeof window._popBack === 'function') window._popBack();
+            }
         }
         // Lecteur Coran (bouton quranPlayerMenuButton) : mécanisme séparé (qpHidden).
         var qpOverlay = document.getElementById('quranPlayerOverlay');
@@ -7177,6 +7386,24 @@ function _qpSavePosition() {
             infoModal.classList.remove('ucMosqueModalOpen');
             if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
             return;
+        }
+        // 3bis. Sections du menu (modalPopupClass : locationSectionId,
+        // optionsSectionId, techOptionsSectionId, lightProgrammingSectionId,
+        // etc.) — demande explicite (17/08/2026), généralisation du même
+        // correctif que mainMenuContainer ci-dessous à TOUTE section
+        // ouvrable depuis menuSectionsContainer. Entrée d'historique poussée
+        // à l'ouverture par _installMenuSectionsBackPush (plus haut). Ferme
+        // la première trouvée (en pratique une seule à la fois — ouvrir une
+        // section referme d'abord le menu, et rouvrir le menu referme
+        // d'abord toute section via _closeAllMenuSections) SANS _popBack()
+        // (déjà géré par ce popstate en cours).
+        var openModals = document.querySelectorAll('.modalPopupClass');
+        for (var _mi = 0; _mi < openModals.length; _mi++) {
+            if (openModals[_mi].style.visibility === 'visible') {
+                openModals[_mi].style.visibility = 'hidden';
+                if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
+                return;
+            }
         }
         // 4. Menu principal (mainMenuContainer, z-index 99998) — demande
         // explicite (17/08/2026) : le bouton retour doit fermer le menu (au
@@ -15744,6 +15971,13 @@ function selectQPTakbir() {
             'ain-draham': 'عين دراهم', 'el-meknassi': 'المكناسي', 'es-souassi': 'السوسي', 'hbira': 'هبيرة', 'kerkennah': 'قرقنة', 'moulares': 'مولارس', 'el-borma': 'البرمة', 'raoued': 'رواد'
         }
     };
+    // Exposée globalement (demande explicite 17/08/2026) : réutilisée telle
+    // quelle par _installCityListArabicNames (plus bas dans ce fichier) pour
+    // compléter cityListContent (Paramètres > Ville, coeur), qui n'affiche le
+    // nom arabe que pour la minorité de villes l'ayant en 3e segment dans
+    // data/<CC>/<cc>.js — évite une seconde table ~140 entrées à maintenir en
+    // double.
+    window._CITY_NAME_AR = _CITY_NAME_AR;
 
     // Coordonnees de reference (une par ville, PAS de zone/polygone --
     // le plus proche suffit, cf. discussion 16/08/2026) pour la detection
@@ -16526,6 +16760,100 @@ function selectQPTakbir() {
 
 })();
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ── Confirmation avant changement de ville si une vraie mosquée est active ──
+// Demande explicite (17/08/2026) : choisir une ville dans Paramètres > Ville
+// (selectCityButton, coeur) écrase IMMÉDIATEMENT l'affichage courant (heures
+// génériques de la nouvelle ville) SANS toucher à UC_MOSQUE_ID -- si une
+// vraie mosquée était sélectionnée, elle reste "active" en apparence
+// (registre/localStorage inchangés) alors que l'écran affiche déjà autre
+// chose : désynchronisation silencieuse et durable entre l'affichage et la
+// mosquée réellement configurée. Le sélecteur de mosquée a SA PROPRE ville
+// de navigation (ucMosqueSelectCityButton -> ucAnonCityModal), sans effet de
+// bord sur l'affichage tant qu'aucune mosquée n'est confirmée -- c'est le
+// chemin normal pour "parcourir d'autres villes" sans rien casser.
+// selectCityButton reste lui réservé au cas générique/sans mosquée.
+//
+// Patch posé en DERNIER : englobe tous les patches précédents de
+// selectCityFunction (coeur -> _probeAndLoad -> sync vers le sélecteur,
+// cf. _installRealCitySyncToMosqueSelector) -- si l'utilisateur annule
+// l'avertissement, AUCUN d'eux ne s'exécute (annulation complète, pas de
+// demi-effet). confirm() natif plutôt que la modale ucAnonMosqueWarnModal du
+// sélecteur : son texte est spécifique aux mosquées "modèle" nouvellement
+// créées (pas de notifications/mises à jour auto), sans rapport avec ce
+// scénario -- même idiome que L_RESET_CONFIRM plus bas dans ce fichier.
+(function _installSettingsCityGuard() {
+    var L_CONFIRM = {
+        AR: 'تغيير المدينة سيلغي اختيار مسجدكم الحالي وسيعرض أوقات الصلاة العامة لهذه المدينة. متابعة؟',
+        FR: 'Changer de ville désélectionnera votre mosquée actuelle et affichera les horaires génériques de cette ville. Continuer ?',
+        EN: 'Changing city will deselect your current mosque and show generic prayer times for that city. Continue?'
+    };
+    var _origSelectCity = window.selectCityFunction;
+    if (typeof _origSelectCity !== 'function') return;
+    window.selectCityFunction = function(selectedCityCode) {
+        var mid = (typeof window._ucCurrentMosqueId === 'function') ? window._ucCurrentMosqueId() : '';
+        var isRealMosque = !(typeof window._ucIsAnonymousMosqueId === 'function' && window._ucIsAnonymousMosqueId(mid));
+        if (!isRealMosque) {
+            _origSelectCity.apply(this, arguments);
+            return;
+        }
+        if (!confirm(L_CONFIRM[_ucLang()] || L_CONFIRM.EN)) return;
+        try { localStorage.setItem('UC_MOSQUE_ID', 'anonymous.generic'); } catch (e) {}
+        _origSelectCity.apply(this, arguments);
+    };
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ── Noms arabes dans cityListContent (Paramètres > Ville) ──────────────────
+// Demande explicite (17/08/2026) : la majorité des entrées de cityListContent
+// (coeur, m2body.js/onCountryDataLoadSuccess) n'affichent QUE le nom latin —
+// seule une petite minorité de villes a un nom arabe embarqué en 3e segment
+// dans data/<CC>/<cc>.js (ex. "tn.ain-draham.عين دراهم"). Réutilise la table
+// _CITY_NAME_AR déjà construite pour le sélecteur de mosquée (~140 villes TN,
+// bien plus complète que les quelques noms embarqués dans data/), exposée
+// globalement juste au-dessus (window._CITY_NAME_AR).
+// AUCUN changement de l'attribut onclick="selectCityFunction(...)" posé par
+// le coeur — on ne touche qu'à l'affichage (innerHTML) du bouton déjà
+// construit, jamais au code exécuté lors du choix d'une entrée : zéro risque
+// de régression sur la sélection elle-même (demande explicite).
+// MutationObserver plutôt qu'un patch de onCountryDataLoadSuccess : cette
+// fonction est un identifiant global nu (pas window.xxx, jamais réassignable
+// depuis ici de façon fiable) rappelée à chaque changement de pays dans la
+// mini-liste — même contrainte que toggleMenuFunction/showElementFunction
+// ailleurs dans ce fichier (cf. _bindMenuLocatorBtn) — observer l'état réel
+// du DOM déjà construit par le coeur est le seul point d'accroche fiable.
+(function _installCityListArabicNames() {
+    var container = document.getElementById('cityListContent');
+    if (!container) return;
+    // Echappement \uXXXX (pas de plage arabe brute), même convention que
+    // _ucArNorm plus haut dans ce fichier -- évite tout risque de
+    // réordonnancement bidi accidentel à l'édition de ce fichier.
+    var _arRe = /[؀-ۿ]/;
+
+    function _augmentButton(btn) {
+        if (btn.dataset.ucArDone) return;
+        btn.dataset.ucArDone = '1';
+        if (_arRe.test(btn.textContent)) return; // nom arabe déjà embarqué (coeur) — pas de doublon
+        var onclickAttr = btn.getAttribute('onclick') || '';
+        var m = onclickAttr.match(/selectCityFunction\('([a-z0-9_.\-]+)'\)/i);
+        if (!m) return;
+        var parts = m[1].split('.');
+        if (parts.length < 2) return;
+        var cc = parts[0].toUpperCase();
+        var baseSlug = parts[1].replace(/_+$/, '');
+        var arNames = window._CITY_NAME_AR && window._CITY_NAME_AR[cc];
+        var arName = arNames && arNames[baseSlug];
+        if (arName) btn.innerHTML += '&nbsp;&nbsp;&nbsp;' + arName;
+    }
+    function _augmentAll() {
+        var btns = container.querySelectorAll('button');
+        for (var i = 0; i < btns.length; i++) _augmentButton(btns[i]);
+    }
+    if (typeof MutationObserver === 'function') {
+        new MutationObserver(_augmentAll).observe(container, { childList: true });
+    }
+    _augmentAll(); // au cas où déjà peuplé au moment de l'installation
+})();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ── PANNEAU "MES NOTIFICATIONS" — gestion des abonnements par mosquée ──────
@@ -20261,7 +20589,7 @@ function selectQPTakbir() {
         importConfigTitle:   { AR: 'استيراد الإعدادات', FR: 'Import config', EN: 'Import config' },
         chooseDestination:   { AR: 'اختر الوجهة:', FR: 'Choisissez la destination :', EN: 'Choose the destination:' },
         local:               { AR: '💾 محلي', FR: '💾 Local', EN: '💾 Local' },
-        remoteSupabase:      { AR: '☁ عن بعد (Supabase)', FR: '☁ Distant (Supabase)', EN: '☁ Remote (Supabase)' },
+        remoteSupabase:      { AR: '☁ عن بعد (cloud)', FR: '☁ Distant (cloud)', EN: '☁ Remote (cloud)' },
         savedOk:             { AR: 'تم حفظ الإعدادات', FR: 'Configuration enregistrée', EN: 'Configuration saved' },
         exportRemoteTitle:   { AR: 'تصدير عن بعد — اختر الوجهة', FR: 'Export distant — choisir la destination', EN: 'Remote export — choose the destination' },
         importRemoteTitle:   { AR: 'استيراد عن بعد — اختر المسجد', FR: 'Import distant — choisir la mosquée', EN: 'Remote import — choose the mosque' },
@@ -27432,12 +27760,18 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         { key: 'time',   ids: ['optionsSettingsButton', 'adjustmentsButton', 'techOptionsButton', 'lightProgrammingButton', 'locationSettingsButton', 'ucBoxAdminMenuButton'] },
         { key: 'screen', ids: ['blackScreenSettingsButton', 'themesButton', 'fullScreenButton', 'forcedVerticalOption', 'personalFilesButton', 'importExportButton', 'soundRemindersButton'] },
         { key: 'loc',    ids: ['bottomMessagesButton', 'azkarSettingsButton', 'slidesSettingsButton'] },
+        { key: 'audio',  ids: ['ucQuranShortcutButton', 'ucAzanShortcutButton'] },
         { key: 'help',   ids: ['shortcutsInfoButton', 'ucAboutMenuItem'] },
         { key: 'other',  ids: [] } // rempli ci-dessous avec tout élément restant
     ];
     var L_LABELS = {
         time:   { AR: 'البرمجة',        FR: 'Programmation',      EN: 'Programming',      ES: 'Programación',      DE: 'Programmierung' },
         loc:    { AR: 'الأذكار',        FR: 'Azkar',              EN: 'Azkar',             ES: 'Azkar',              DE: 'Azkar' },
+        // Nouvel onglet, juste après "الأذكار" (demande explicite du
+        // 17/08/2026) : regroupe deux raccourcis vers les mêmes actions que
+        // les icônes latérales customQuranIcon/customSpeakerIcon (cf.
+        // création des boutons juste en dessous).
+        audio:  { AR: 'صوتيات',         FR: 'Audio',              EN: 'Audio',             ES: 'Audio',              DE: 'Audio' },
         screen: { AR: 'الشاشة',         FR: 'Écran',              EN: 'Screen',            ES: 'Pantalla',          DE: 'Bildschirm' },
         help:   { AR: 'مساعدة',         FR: 'Aide',               EN: 'Help',              ES: 'Ayuda',             DE: 'Hilfe' },
         // Renommé "Date et Météo" (demande explicite du 14/08/2026) : ce
@@ -27451,6 +27785,36 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     function _lang() {
         return (typeof _ucMenuLinkLang === 'function') ? _ucMenuLinkLang() : 'AR';
     }
+
+    // ── Boutons de l'onglet "صوتيات" ─────────────────────────────────────
+    // Créés ici (comme quranPlayerMenuButton plus haut dans ce fichier)
+    // plutôt que dans index.html/m2body.js (coeur, jamais modifié
+    // directement) -- simples <div id=...>, même style visuel que toutes les
+    // autres lignes de menu, hérité automatiquement des règles core
+    // "#menuSectionsContainer div" (style0.css) et ".ucSectionsPanel > div"
+    // (custom.css) dès qu'ils sont déplacés dans leur panneau par la boucle
+    // GROUPS ci-dessous -- aucun CSS dédié nécessaire.
+    // customQuranIcon.onclick -> openQuranPlayerModal() ; customSpeakerIcon
+    // .onclick -> openAzanCatalogModal() (cf. createCustomSideIcons, plus
+    // haut dans ce fichier) -- mêmes actions ici, juste un second point
+    // d'entrée depuis le menu (utile quand les icônes flottantes sont
+    // masquées, cf. ucShowQuranIcon/ucShowSpeakerIcon).
+    var BTN_LABELS = {
+        quran: { AR: '📖 مشغل القرآن',  FR: '📖 Lecteur du Coran', EN: '📖 Quran player',    ES: '📖 Reproductor del Corán', DE: '📖 Koran-Player' },
+        azan:  { AR: '🔊 صوت الأذان',   FR: '🔊 Son de l\'azan',   EN: '🔊 Azan sound',       ES: '🔊 Sonido del azán',       DE: '🔊 Azan-Ton' }
+    };
+    var quranShortcutBtn = document.createElement('div');
+    quranShortcutBtn.id = 'ucQuranShortcutButton';
+    quranShortcutBtn.onclick = function () { closeMenuFunction(); openQuranPlayerModal(); };
+    document.body.appendChild(quranShortcutBtn);
+
+    var azanShortcutBtn = document.createElement('div');
+    azanShortcutBtn.id = 'ucAzanShortcutButton';
+    azanShortcutBtn.onclick = function () {
+        closeMenuFunction();
+        if (typeof window.openAzanCatalogModal === 'function') window.openAzanCatalogModal();
+    };
+    document.body.appendChild(azanShortcutBtn);
 
     var assignedIds = {};
     GROUPS.forEach(function (g) { g.ids.forEach(function (id) { assignedIds[id] = true; }); });
@@ -27528,6 +27892,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         Object.keys(tabButtons).forEach(function (k) {
             tabButtons[k].textContent = L_LABELS[k][lang] || L_LABELS[k].EN;
         });
+        quranShortcutBtn.innerHTML = BTN_LABELS.quran[lang] || BTN_LABELS.quran.EN;
+        azanShortcutBtn.innerHTML  = BTN_LABELS.azan[lang]  || BTN_LABELS.azan.EN;
     }
 
     // À ce stade, tous les enfants d'origine ont été déplacés dans un panneau

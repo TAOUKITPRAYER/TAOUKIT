@@ -839,7 +839,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.87';
+var CUSTOM_APP_VERSION = '12.93';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1047,7 +1047,7 @@ const JS_CUSTOM_DEFAULTS = {
     ucNMRInterval:               120,  // intervalle entre chaque affichage NMR (secondes)
     ucNMRDuration:               5,    // durée d'affichage de la page NMR (secondes)
     ucCounterBlackBg:            1,   // fond noir pour fullScreenCounterBackgroundHorizontal pendant l'iqama
-    ucSwapAzanIqama:             0,   // interversion visuelle Azan/Iqama dans le tableau horizontal uniquement
+    ucSwapAzanIqama:             0,   // bitmask : bit N (1<<N) = etat swap du mode horizontal N (JS_DATA.ucHrNamesInMiddle), cf. _initSwapAzanIqama
     ucSalatNabiEnabled:          1,   // 1 = popup + audio, 0 = popup seule (si prière activée)
     ucSalatNabiMagrebEnabled:    1,   // déclencher sur MGRB le jeudi soir
     ucSalatNabiIshaEnabled:      1,   // déclencher sur ISHA le jeudi soir
@@ -10916,12 +10916,18 @@ function _doAudioUnlock() {
 })();
 
 // ── INTERVERSION AZAN / IQAMA (mode horizontal uniquement) ───────────────────
-// Quand ucSwapAzanIqama = 1, échange les positions verticales des horaires
-// AZAN et IQAMA dans le tableau des prières horizontal (les libellés
-// iqamaColLabelAzan/iqamaColLabelIqama suivent le même échange). N'a aucun
-// effet sur le mode vertical : la classe est posée uniquement sur
-// #mainHorizontalContainer, et toutes les règles CSS associées (cf.
-// spec/custom.css) sont scopées sous ce sélecteur.
+// Échange les positions verticales des horaires AZAN et IQAMA dans le
+// tableau des prières horizontal (les libellés iqamaColLabelAzan/
+// iqamaColLabelIqama suivent le même échange). N'a aucun effet sur le mode
+// vertical : la classe est posée uniquement sur #mainHorizontalContainer, et
+// toutes les règles CSS associées (cf. spec/custom.css) sont scopées sous ce
+// sélecteur.
+//
+// Mémorisation PAR MODE d'affichage horizontal (JS_DATA.ucHrNamesInMiddle,
+// 0-6) sans multiplier les flags : ucSwapAzanIqama est un bitmask où le bit N
+// (1<<N) stocke l'état swap du mode N. Un seul flag numérique couvre donc
+// tous les modes actuels ET futurs (jusqu'à 31 modes, largement suffisant) —
+// ajouter un mode ne demande aucun nouveau flag ni migration.
 // ─────────────────────────────────────────────────────────────────────────────
 (function _initSwapAzanIqama() {
 
@@ -10960,20 +10966,28 @@ function _doAudioUnlock() {
         sep.insertAdjacentElement('afterend', div);
     }
 
+    // Bit correspondant au mode d'affichage horizontal courant dans le
+    // bitmask ucSwapAzanIqama (cf. commentaire d'en-tête).
+    function _bitForCurrentMode() {
+        var mode = (typeof JS_DATA !== 'undefined') ? (parseInt(JS_DATA.ucHrNamesInMiddle, 10) || 0) : 0;
+        return 1 << mode;
+    }
+
     window.toggleSwapAzanIqamaFunction = function () {
-        JS_CUSTOM.ucSwapAzanIqama = JS_CUSTOM.ucSwapAzanIqama ? 0 : 1;
+        JS_CUSTOM.ucSwapAzanIqama ^= _bitForCurrentMode();
         saveCustomSettingsFunction();
         window.updateSwapAzanIqamaFunction();
     };
 
     window.updateSwapAzanIqamaFunction = function () {
+        var active = !!(JS_CUSTOM.ucSwapAzanIqama & _bitForCurrentMode());
         var cb = document.getElementById('swapAzanIqamaCheckbox');
-        if (cb) cb.checked = !!JS_CUSTOM.ucSwapAzanIqama;
+        if (cb) cb.checked = active;
         var hmc = document.getElementById('mainHorizontalContainer');
         // Thème 1 (fond "arcade") exclu du swap : même coché, ce thème garde
         // toujours ses positions Azan/Iqama d'origine.
         var modeExcluded = (typeof JS_DATA !== 'undefined' && JS_DATA.ucHrNamesInMiddle == 1);
-        if (hmc) hmc.classList.toggle('swapAzanIqamaActive', !!JS_CUSTOM.ucSwapAzanIqama && !modeExcluded);
+        if (hmc) hmc.classList.toggle('swapAzanIqamaActive', active && !modeExcluded);
     };
 
     function _init() {
@@ -19069,6 +19083,7 @@ function selectQPTakbir() {
         alertBeforeAzan: { AR: 'تنبيه قبل أذان الصلاة القادمة', FR: "Alerte avant l'azan de la prochaine prière", EN: 'Alert before the next prayer’s azan' },
         muteAfterAzan:   { AR: 'كتم صوت الهاتف بعد الأذان', FR: "Couper le son du téléphone après l'azan", EN: 'Mute phone sound after azan' },
         restoreAfterAzan:{ AR: 'إعادة الصوت بعد الأذان بـ', FR: "Réactiver le son après l'azan dans", EN: 'Restore sound after azan in' },
+        dndAccessMissing:{ AR: '⚠ إذن "عدم الإزعاج" غير ممنوح، الكتم/الاستعادة لن يعملا. اضغط هنا لإعادة تفعيله ←', FR: '⚠ Accès "Ne pas déranger" non accordé : le mute/restore ne fonctionnera pas. Appuyez ici pour le réactiver ←', EN: '⚠ "Do Not Disturb" access not granted: mute/restore won\'t work. Tap here to re-enable ←' },
         flipToMute:      { AR: 'كتم الأصوات عند قلب الهاتف على وجهه', FR: 'Couper les sons en retournant le téléphone face contre table', EN: 'Mute sounds by flipping the phone face down' },
         autoStart:       { AR: 'تشغيل تلقائي للبرنامج عند إعادة تشغيل الهاتف', FR: "Lancement automatique de l'application au redémarrage du téléphone", EN: 'Automatically launch the app when the phone restarts' },
         autoStartVendor: { AR: 'فتح إعدادات التشغيل التلقائي للجهاز ←', FR: "Ouvrir les réglages de démarrage automatique de l'appareil ←", EN: "Open the device's auto-start settings ←" },
@@ -19146,6 +19161,9 @@ function selectQPTakbir() {
                             '<input id="ucSilentAfterAzanSlider" type="range" min="1" max="180" step="1" value="60" ' +
                                 'oninput="window._ucSilentAfterSliderInput(this.value)" ' +
                                 'onchange="window._ucSilentAfterSliderChange(this.value)">' +
+                        '</div>' +
+                        '<div class="ucSettingsRow" id="ucQuickMuteAfterDndWarning" style="display:none;" onclick="window._ucRequestDndAccessFromWarning()">' +
+                            '<span id="ucQuickMuteAfterDndWarningText" class="clickableWhiteClass"></span>' +
                         '</div>' +
                         '<div class="ucSettingsRow ucSettingsRowSep">' +
                             '<label class="ucSettingsToggleWrap">' +
@@ -19281,7 +19299,36 @@ function selectQPTakbir() {
         if (val) val.textContent = _stMinLabel(mins);
         if (sl2) { sl2.value = after; sl2.disabled = !enabled; }
         if (val2) val2.textContent = _stMinLabel(after);
+        _ucSyncDndWarning(enabled);
     }
+
+    // Détecte le cas "réglage actif mais coupure/reprise du son inopérante en
+    // silence" : Android peut révoquer l'accès spécial "Ne pas déranger" bien
+    // après son octroi initial (révocation auto des permissions inutilisées,
+    // reset OEM...) sans que JS_CUSTOM.ucMuteAfterAzanEnabled ne change --
+    // SilentModeReceiver.hasNotificationPolicyAccess() renvoie alors false et
+    // ignore silencieusement TOUTES les alarmes MUTE/RESTORE (cf. son
+    // onReceive), sans qu'aucun signal ne remonte jusqu'ici. Vérifié à chaque
+    // ouverture de cette modale (cf. _ucOpenSettingsModal) plutôt qu'en
+    // polling continu -- l'écran où l'admin regarde justement ce réglage.
+    function _ucSyncDndWarning(featureEnabled) {
+        var row = _modal ? _modal.querySelector('#ucQuickMuteAfterDndWarning') : null;
+        if (!row) return;
+        var missing = featureEnabled && window.AndroidMobile
+            && typeof window.AndroidMobile.hasDndAccess === 'function'
+            && !window.AndroidMobile.hasDndAccess();
+        row.style.display = missing ? '' : 'none';
+        if (missing) {
+            var txt = _modal.querySelector('#ucQuickMuteAfterDndWarningText');
+            if (txt) txt.textContent = _stT('dndAccessMissing');
+        }
+    }
+
+    window._ucRequestDndAccessFromWarning = function() {
+        if (window.AndroidMobile && typeof window.AndroidMobile.requestDndAccess === 'function') {
+            window.AndroidMobile.requestDndAccess();
+        }
+    };
 
     window._ucToggleQuickMuteAfterAzan = function(checked) {
         if (checked && window.AndroidMobile && typeof window.AndroidMobile.hasDndAccess === 'function'
@@ -27927,6 +27974,10 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _refreshLabels();
         _setSectionTab('time');
     };
+    // Exposé pour l'assistant intelligent (_installSmartAssistant, plus bas
+    // dans ce fichier) -- deep-link direct vers un sous-onglet précis du menu
+    // principal (ex. 'other' pour la mazamnة التاريخ الهجري).
+    window._ucMenuSectionsSetTab = _setSectionTab;
 
     _L('CUSTOM', 'INIT', { item: 'menuSectionSubTabs' });
 })();
@@ -30092,30 +30143,30 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                  'black screen settings', 'dim screen', 'screen saver'],
             chip: { AR: 'أين إعدادات الشاشة السوداء؟', FR: "Où sont les réglages de l'écran noir ?", EN: 'Where are black screen settings?' },
             answer: {
-                AR: 'من قائمة الإعدادات اختر "الشاشة السوداء" لضبط تفعيلها أثناء الصلاة، عرض الساعة/التاريخ، ومدة كل صلاة.',
-                FR: 'Depuis le menu réglages, ouvrez "Écran noir" pour régler son activation pendant la prière, l\'affichage horloge/date et la durée par prière.',
-                EN: 'From the settings menu, open "Black screen" to configure activation during prayer, clock/date display, and duration per prayer.'
+                AR: 'من قائمة الإعدادات اختر "الشاشة السوداء" لضبط تفعيلها أثناء الصلاة، عرض الساعة/التاريخ، ومدة كل صلاة. يمكن أيضًا تفعيلها يدويًا بنقرة مزدوجة على شعار التطبيق (انقر على الشاشة السوداء لإزالتها).',
+                FR: 'Depuis le menu réglages, ouvrez "Écran noir" pour régler son activation pendant la prière, l\'affichage horloge/date et la durée par prière. Vous pouvez aussi l\'activer manuellement par un double-clic sur le logo de l\'application (cliquez sur l\'écran noir pour le retirer).',
+                EN: 'From the settings menu, open "Black screen" to configure activation during prayer, clock/date display, and duration per prayer. You can also trigger it manually with a double-click on the app logo (tap the black screen to remove it).'
             },
             action: function () { _openSection('blackScreenSectionId'); }
         },
         {
             id: 'display_options',
-            kw: ['نظام 24 ساعة', 'تنسيق الوقت', 'عرض الثواني', 'ارقام عربية',
-                 'affichage 24h', 'format horloge', 'afficher les secondes', 'chiffres arabes',
-                 '24 hour format', 'clock format', 'display seconds', 'arabic digits'],
+            kw: ['نظام 24 ساعة', 'تنسيق الوقت', 'عرض الثواني',
+                 'affichage 24h', 'format horloge', 'afficher les secondes',
+                 '24 hour format', 'clock format', 'display seconds'],
             chip: { AR: 'كيف أفعّل نظام 24 ساعة؟', FR: "Comment activer le format 24h ?", EN: 'How to enable 24h format?' },
             answer: {
-                AR: 'من "الإعدادات > الخيارات" اختر تبويب "خيارات العرض" ثم مجموعة "نمط العرض" لتفعيل نظام 24 ساعة، الأرقام العربية، والساعة الكاملة.',
-                FR: 'Depuis "Réglages > Options", onglet "Options d\'affichage", groupe "Affichage et horloge" pour le format 24h, les chiffres arabes et l\'horloge complète.',
-                EN: 'From "Settings > Options", tab "Display options", group "Display & clock" for 24h format, Arabic digits and full clock.'
+                AR: 'من "الإعدادات > الخيارات" اختر تبويب "خيارات العرض" ثم مجموعة "نمط العرض" لتفعيل نظام 24 ساعة والساعة الكاملة.',
+                FR: 'Depuis "Réglages > Options", onglet "Options d\'affichage", groupe "Affichage et horloge" pour le format 24h et l\'horloge complète.',
+                EN: 'From "Settings > Options", tab "Display options", group "Display & clock" for 24h format and full clock.'
             },
             action: function () { _openOptionsTab('general', 'display'); }
         },
         {
             id: 'counter_settings',
-            kw: ['العد التنازلي', 'الشاشة الكاملة للعداد', 'اخر دقيقة',
-                 'compte a rebours', 'plein ecran compteur', 'derniere minute',
-                 'countdown settings', 'fullscreen counter', 'last minute counter'],
+            kw: ['العد التنازلي', 'الشاشة الكاملة للعداد', 'اخر دقيقة', 'لون تنبيه العداد', 'تكبير عداد الصلاة القادمة',
+                 'compte a rebours', 'plein ecran compteur', 'derniere minute', 'alerte couleur compteur', 'agrandir compteur prochaine priere',
+                 'countdown settings', 'fullscreen counter', 'last minute counter', 'counter color alert', 'enlarge next prayer counter'],
             chip: { AR: 'أين إعدادات العد التنازلي؟', FR: 'Où sont les réglages du compte à rebours ?', EN: 'Where are countdown settings?' },
             answer: {
                 AR: 'من "الإعدادات > الخيارات" اختر تبويب "خيارات العرض" ثم مجموعة "العدّ والشاشات".',
@@ -30285,7 +30336,12 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             AR: 'راسل tawkit.net@gmail.com، أو استخدم زر "إرسال تقرير" في وحدة التصحيح (Debug) داخل التطبيق لإرفاق سجلّ تلقائي.',
             FR: 'Écrivez à tawkit.net@gmail.com, ou utilisez le bouton "Envoyer un rapport" de la console de débogage intégrée pour joindre un journal automatique.',
             EN: 'Email tawkit.net@gmail.com, or use the "Send report" button in the built-in debug console to attach an automatic log.'
-        }
+        },
+        // Ouvre directement la console de debug décrite dans la réponse
+        // (window._toggleDebugConsole, déjà exposée globalement -- cf. IIFE
+        // "DEBUG CONSOLE" plus haut dans ce fichier, déclenchée normalement
+        // par un clic sur cityCodeDisplayHorizontal/Vertical).
+        action: function () { if (typeof window._toggleDebugConsole === 'function') window._toggleDebugConsole(); }
     });
 
     // ── Intentions supplémentaires (audit exhaustif des fonctionnalités,
@@ -30431,7 +30487,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         },
         {
             id: 'azkar_settings',
-            kw: ['الاذكار', 'اذكار الصباح والمساء', 'صورة الاذكار',
+            kw: ['تفعيل الاذكار', 'اذكار الصباح والمساء', 'صورة الاذكار',
                  'azkar', 'invocations matin soir', 'image azkar',
                  'azkar', 'morning evening remembrance', 'azkar picture'],
             chip: { AR: 'كيف أفعّل الأذكار على الشاشة؟', FR: 'Comment activer les azkar à l\'écran ?', EN: 'How to enable azkar on screen?' },
@@ -30457,27 +30513,39 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         },
         {
             id: 'shortcuts_gestures_help',
-            kw: ['اختصارات مخفية', 'ايماءات التطبيق', 'سحب لاسفل للتحديث',
-                 'raccourcis caches', 'gestes de l\'application', 'glisser vers le bas pour rafraichir',
-                 'hidden shortcuts', 'app gestures', 'pull to refresh'],
+            kw: ['اختصارات مخفية', 'ايماءات التطبيق', 'سحب لاسفل للتحديث', 'تكبير عداد الصلاة بالنقر', 'خمس او ست خانات بالنقر',
+                 'raccourcis caches', 'gestes de l\'application', 'glisser vers le bas pour rafraichir', 'agrandir compteur en cliquant', 'cinq ou six cases en cliquant',
+                 'hidden shortcuts', 'app gestures', 'pull to refresh', 'enlarge counter by tapping', 'five or six boxes by tapping'],
             chip: { AR: 'هل يوجد اختصارات مخفية في التطبيق؟', FR: 'Y a-t-il des raccourcis cachés dans l\'appli ?', EN: 'Are there hidden shortcuts in the app?' },
             answer: {
-                AR: 'من قائمة الإعدادات اختر "الاختصارات" لرؤية قائمة بكل الإيماءات المخفية (نقر مزدوج، سحب لأسفل للتحديث...).',
-                FR: 'Depuis le menu réglages, ouvrez "Raccourcis" pour voir la liste de tous les gestes cachés (double-tap, glisser vers le bas pour rafraîchir...).',
-                EN: 'From the settings menu, open "Shortcuts" to see the list of all hidden gestures (double-tap, swipe down to refresh...).'
+                AR: 'نعم، إيماءات سريعة بدون المرور بالإعدادات: نقرة على الساعة (ساعة مصغّرة/كاملة) — نقرة على الحديث أسفل الشاشة (حديث/شريط إعلانات) — نقرة على إقامة العشاء (تغيير الحديث المعروض) — نقرة على وقت الصلاة القادمة (الأسماء في الوسط) — نقرة على نص الصلاة القادمة (تكبير العداد) — نقرة مزدوجة على الشعار (شاشة سوداء، انقر لإزالتها) — نقرة على اسم المسجد بالوضع الأفقي (نقل التاريخ والاسم) — نقرة على اسم "tawkit" بالوضع الأفقي (5 أو 6 خانات) — 7 نقرات على توقعات الطقس (إعادة ضبط التطبيق العالق) — نقرة مزدوجة على إقامة الفجر (إظهار/إخفاء وقت الإقامة) — 3 نقرات على وقت فجر الغد (إظهار/إخفاء الآيات). القائمة الكاملة متوفرة أيضًا من "الاختصارات".',
+                FR: 'Oui, des gestes rapides sans passer par les réglages : cliquer sur l\'horloge (mini/complète) — cliquer sur le hadith en bas d\'écran (hadith/bandeau défilant) — cliquer sur l\'iqama d\'Isha (change le hadith affiché) — cliquer sur l\'heure de la prochaine prière (noms au centre) — cliquer sur le texte de la prochaine prière (agrandir le compteur) — double-clic sur le logo (écran noir, cliquer pour le retirer) — cliquer sur le nom de la mosquée en horizontal (déplace date/nom) — cliquer sur "tawkit" en horizontal (5 ou 6 cases) — 7 clics sur les prévisions météo (réinitialise l\'appli bloquée) — double-clic sur l\'iqama de Fajr (affiche/masque l\'heure d\'iqama) — 3 clics sur l\'heure de Fajr de demain (affiche/masque les versets). La liste complète est aussi disponible depuis "Raccourcis".',
+                EN: 'Yes, quick gestures without going through settings: tap the clock (mini/full) — tap the bottom-screen hadith (hadith/scrolling banner) — tap Isha\'s iqama (changes the displayed hadith) — tap the next-prayer time (names in the middle) — tap the next-prayer text (enlarge the counter) — double-click the logo (black screen, tap to remove) — tap the mosque name in horizontal mode (moves date/name) — tap "tawkit" in horizontal mode (5 or 6 boxes) — 7 taps on the weather forecast (resets a stuck app) — double-click Fajr\'s iqama (show/hide iqama time) — 3 taps on tomorrow\'s Fajr time (show/hide verses). The full list is also available from "Shortcuts".'
             },
             action: function () { _openSection('shortcutsSectionId'); }
         },
         {
             id: 'app_reset_reload',
-            kw: ['اعادة ضبط التطبيق', 'التطبيق عالق', 'اعادة تحميل', 'مشكلة في التطبيق',
-                 'reinitialiser l\'application', 'appli bloquee', 'recharger', 'probleme d\'affichage',
-                 'reset the app', 'app stuck', 'reload', 'app not working'],
+            kw: ['اعادة ضبط التطبيق', 'التطبيق عالق', 'اعادة تحميل', 'مشكلة في التطبيق', 'اعادة التحميل بين الاذان والاقامة',
+                 'reinitialiser l\'application', 'appli bloquee', 'recharger', 'probleme d\'affichage', 'recharger pendant le decompte de l\'iqama',
+                 'reset the app', 'app stuck', 'reload', 'app not working', 'reload during the iqama countdown'],
             chip: { AR: 'التطبيق يبدو عالقًا أو به مشكلة، ماذا أفعل؟', FR: 'L\'appli semble bloquée ou a un problème, que faire ?', EN: 'The app seems stuck or has an issue, what do I do?' },
             answer: {
-                AR: 'جرّب أولًا زر التحديث اليدوي (أسفل الشاشة)، أو "RELOAD" في أسفل القائمة. كحل أخير "RESET" يمسح كل الإعدادات المحلية ويعيد التطبيق لحالته الأولى (لا يؤثر على مسجدك المسجّل في الخادم).',
-                FR: 'Essayez d\'abord le bouton de rafraîchissement manuel (bas d\'écran), ou "RELOAD" en bas du menu. En dernier recours, "RESET" efface tous les réglages locaux et remet l\'appli à zéro (n\'affecte pas votre mosquée enregistrée côté serveur).',
-                EN: 'Try the manual refresh button first (bottom of screen), or "RELOAD" at the bottom of the menu. As a last resort, "RESET" clears all local settings and restores the app to its initial state (doesn\'t affect your mosque registered server-side).'
+                AR: 'جرّب أولًا زر التحديث اليدوي (أسفل الشاشة)، أو "RELOAD" في أسفل القائمة. إذا كان التطبيق عالقًا تمامًا بسبب إعداد خاطئ ولا يمكن الوصول للقائمة، انقر 7 مرات متتالية على توقعات الطقس لإعادة ضبط الإعدادات وإعادة التشغيل تلقائيًا. كحل أخير "RESET" يمسح كل الإعدادات المحلية ويعيد التطبيق لحالته الأولى (لا يؤثر على مسجدك المسجّل في الخادم). تنبيه: تجنّب "RELOAD" أثناء عدّ الإقامة التنازلي إن أمكن — الوقت المتبقي يبقى صحيحًا (يُعاد حسابه من الساعة الفعلية)، لكن تأثيرات بداية العدّاد (الشاشة الكاملة، الوميض، الصوت) تُعاد من جديد كأن العدّاد بدأ للتو.',
+                FR: 'Essayez d\'abord le bouton de rafraîchissement manuel (bas d\'écran), ou "RELOAD" en bas du menu. Si l\'appli est totalement bloquée par un mauvais réglage et que le menu est inaccessible, cliquez 7 fois de suite sur les prévisions météo pour réinitialiser les réglages et relancer automatiquement. En dernier recours, "RESET" efface tous les réglages locaux et remet l\'appli à zéro (n\'affecte pas votre mosquée enregistrée côté serveur). Attention : évitez "RELOAD" pendant le compte à rebours de l\'iqama si possible — le temps restant reste correct (recalculé depuis l\'heure réelle), mais les effets de démarrage du compteur (plein écran, clignotement, son) se rejouent comme si le décompte venait de commencer.',
+                EN: 'Try the manual refresh button first (bottom of screen), or "RELOAD" at the bottom of the menu. If the app is completely stuck from a bad setting and the menu is unreachable, tap the weather forecast 7 times in a row to reset the settings and auto-restart. As a last resort, "RESET" clears all local settings and restores the app to its initial state (doesn\'t affect your mosque registered server-side). Note: avoid "RELOAD" during the iqama countdown if possible — the remaining time stays correct (recalculated from the real clock), but the countdown\'s start effects (fullscreen, blinking, sound) replay as if it had just started.'
+            }
+        },
+        {
+            id: 'restart_app_shortcut',
+            kw: ['اعادة تشغيل التطبيق بالعلم', 'ضغط طويل على العلم', 'نقر مزدوج على رقم الاصدار',
+                 'redemarrer l\'application avec le drapeau', 'appui long sur le drapeau', 'double clic sur le numero de version',
+                 'restart app with the flag shortcut', 'long press flag to restart', 'double click version number to restart'],
+            chip: { AR: 'كيف أُعيد تشغيل التطبيق بسرعة دون المرور بالقائمة؟', FR: 'Comment redémarrer l\'appli rapidement sans passer par le menu ?', EN: 'How to quickly restart the app without the menu?' },
+            answer: {
+                AR: 'اضغط ضغطًا طويلًا (نحو ثانية) على علم فلسطين في الوضع العمودي، أو انقر عليه نقرة عادية في الوضع الأفقي، أو انقر نقرًا مزدوجًا على رقم إصدار التطبيق أسفل القائمة، لإعادة تشغيله فورًا. (نقرة عادية وقصيرة على العلم في الوضع العمودي تفتح بدلًا من ذلك رمز QR الخاص بالمسجد.)',
+                FR: 'Appui long (environ 1 seconde) sur le drapeau Palestine en mode vertical, ou simple clic sur ce même drapeau en mode horizontal, ou double-clic sur le numéro de version en bas du menu, pour redémarrer l\'application immédiatement. (Un tap court sur le drapeau en mode vertical ouvre à la place le QR code de la mosquée.)',
+                EN: 'Long-press (about 1 second) the Palestine flag in vertical mode, or a simple tap on that same flag in horizontal mode, or double-tap the version number at the bottom of the menu, to restart the app immediately. (A short tap on the flag in vertical mode instead opens the mosque\'s QR code.)'
             }
         },
         {
@@ -30490,6 +30558,12 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 AR: 'من القائمة الرئيسية اضغط أيقونة ملء الشاشة لإخفاء أشرطة النظام والدخول في وضع العرض الكامل.',
                 FR: 'Depuis le menu principal, touchez l\'icône plein écran pour masquer les barres système et passer en affichage plein écran.',
                 EN: 'From the main menu, tap the fullscreen icon to hide system bars and enter full-screen display.'
+            },
+            // Déclenche directement l'action (pas juste une navigation) --
+            // même 2 appels que #fullScreenButton dans index.html (coeur).
+            action: function () {
+                if (typeof closeMenuFunction === 'function') closeMenuFunction();
+                if (typeof enterFullScreenFunction === 'function') enterFullScreenFunction();
             }
         },
         {
@@ -30697,10 +30771,282 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 FR: 'Vérifiez que l\'appli a bien la permission "Ne pas déranger" et "Alarmes exactes", et qu\'elle est exclue de l\'économie de batterie dans les réglages Android.',
                 EN: 'Make sure the app has "Do Not Disturb" access and "Exact alarms" permission, and is exempted from battery optimization in Android settings.'
             }
+        },
+        {
+            // Absent jusqu'ici (retour utilisateur 18/08/2026 -- "nuit"/"priere"/
+            // "priere nuit" ne trouvaient aucune réponse pertinente) : mot-clé
+            // court à 1 seul mot (ليل/nuit/night) inclus en plus des phrases
+            // complètes pour que ces requêtes très brèves franchissent
+            // MATCH_THRESHOLD (0.5, cf. _scoreIntent) -- un mot-clé d'UN mot
+            // donne un score de 1.0 dès que ce mot est présent dans la
+            // question, quels que soient les autres mots ("priere nuit" match
+            // donc déjà via le seul mot-clé "nuit", pas besoin d'un mot-clé
+            // "priere nuit" dédié). VOLONTAIREMENT PAS de mot-clé court
+            // combinant "priere"/"صلاة" (mots génériques, utilisés par
+            // beaucoup d'autres intentions) avec "nuit"/"ليل" : un mot-clé de
+            // 2 mots ainsi construit aurait donné un score de 0.5 à "priere"
+            // ou "صلاة" tout seuls (via la tolérance morphologique 4 caractères
+            // de _wordMatches, "priere"~"prieres"/"صلاة"~"صلوات") -- détourné
+            // silencieusement TOUTE question généraliste sur les prières vers
+            // cette seule réponse, constaté en test avant ce correctif.
+            id: 'night_prayers_display',
+            kw: ['اظهار اوقات صلاة الليل', 'اظهار صلوات الليل', 'صلاة الليل', 'قيام الليل',
+                 'منتصف الليل والثلث الأخير', 'ليل',
+                 'afficher les horaires des prieres de la nuit', 'afficher prieres de nuit',
+                 'minuit dernier tiers de la nuit', 'nuit',
+                 'show night prayer times', 'midnight last third of the night', 'night'],
+            chip: { AR: 'كيف أُظهر أوقات صلاة الليل (منتصف الليل، ثلث الليل)؟', FR: 'Comment afficher les horaires des prières de la nuit (minuit, dernier tiers) ?', EN: 'How do I show the night prayer times (midnight, last third)?' },
+            answer: {
+                AR: 'من القائمة الرئيسية اختر "خيارات" ثم قسم "الأوقات"، وفعّل خانة "إظهار أوقات صلوات الليل" لعرض منتصف الليل وثلث الليل الأخير بجانب وقت الفجر.',
+                FR: 'Depuis le menu principal, ouvrez "Options" puis l\'onglet "Tableau des horaires", et cochez "Afficher les horaires des prières de la nuit" pour afficher minuit et le dernier tiers de la nuit à côté de Fajr.',
+                EN: 'From the main menu, open "Options" then the "Times table" tab, and check "Show night prayer times" to display midnight and the last third of the night next to Fajr.'
+            },
+            // Demande explicite (18/08/2026 -- retour direct sur ce test :
+            // "pas de lien direct à l'onglet qui le contient") : ouvre
+            // directement optionsSectionId sur l'onglet "general" (خيارات
+            // العرض) puis le sous-onglet "table" (الأوقات) où vit
+            // showNightPrayersCheckbox -- même mécanisme que edit_iqama/
+            // edit_azan_minutes plus haut (_openOptionsTab, déjà existant).
+            action: function () { _openOptionsTab('general', 'table'); }
+        }
+    );
+
+    // ── Complément d'audit exhaustif (18/08/2026, retour explicite : "je
+    // pensais que tu as inclus toutes les options... visiblement non", avec
+    // exemple concret "تبديل مكان الإقامة" (swapAzanIqamaCheckbox) totalement
+    // absent). Chaque intention ci-dessous correspond à une fonctionnalité
+    // réelle du code qui n'avait aucun mot-clé -- ni direct ni via un autre
+    // intent générique -- pour la retrouver depuis l'assistant.
+    INTENTS.push(
+        {
+            id: 'swap_azan_iqama_position',
+            kw: ['تبديل مكان الاقامة', 'تبديل مكان الاذان', 'تبديل موقع الاقامة', 'تبديل الاذان والاقامة', 'عكس مكان الاذان والاقامة',
+                 'intervertir azan iqama', 'echanger position azan iqama', 'permuter azan iqama', 'inverser position azan iqama',
+                 'swap azan iqama', 'swap azan iqama position', 'switch azan iqama columns', 'invert azan iqama position'],
+            chip: { AR: 'كيف أُبدّل مكان الأذان والإقامة؟', FR: "Comment intervertir les positions Azan/Iqama ?", EN: 'How to swap Azan/Iqama positions?' },
+            answer: {
+                AR: 'من "الإعدادات > الخيارات"، فعّل خانة "تبديل مكاني توقيت الأذان والإقامة" لعكس عمودي الأذان والإقامة في الجدول الأفقي. كل نمط عرض أفقي يحتفظ بإعداده الخاص (بدون تأثير على النمط 1).',
+                FR: 'Depuis "Réglages > Options", activez "Intervertir les positions Azan / Iqama" pour échanger les colonnes Azan et Iqama dans le tableau horizontal. Chaque mode d\'affichage horizontal garde son propre réglage (sans effet sur le thème 1).',
+                EN: 'From "Settings > Options", enable "Swap Azan / Iqama positions" to swap the Azan and Iqama columns in the horizontal table. Each horizontal display mode keeps its own setting (no effect on theme 1).'
+            },
+            action: function () { _openSection('optionsSectionId'); }
+        },
+        {
+            id: 'counter_black_background',
+            kw: ['خلفية سوداء للعداد', 'تعتيم خلفية شاشة الاقامة', 'اسود خلفية العداد',
+                 'fond noir compteur', 'arriere plan noir iqama', 'noircir fond compteur',
+                 'black background counter', 'counter black background', 'dark background countdown'],
+            chip: { AR: 'كيف أفعّل الخلفية السوداء للعداد؟', FR: 'Comment activer le fond noir du compteur ?', EN: 'How to enable the counter black background?' },
+            answer: {
+                AR: 'من "الإعدادات > الخيارات"، فعّل خانة "خلفية سوداء" ليظهر خلف شاشة العد التنازلي بالحجم الكامل فون أسود بدل الصورة الأصلية.',
+                FR: 'Depuis "Réglages > Options", activez le fond noir du compteur pour afficher un fond noir uni derrière le plein écran du compte à rebours iqama, à la place de l\'image d\'origine.',
+                EN: 'From "Settings > Options", enable the counter black background to show a plain black background behind the full-screen iqama countdown instead of the original image.'
+            },
+            action: function () { _openSection('optionsSectionId'); }
+        },
+        {
+            id: 'table_display_misc',
+            kw: ['علم فلسطين', 'رمز الاستجابة السريعة', 'كيو ار كود المسجد', 'تعتيم الصلاة الماضية', 'خمس خانات فقط', 'اخفاء وقت الاقامة', 'اسماء عمودية بالوسط', 'صفر قبل الوقت', 'ارقام عربية',
+                 'drapeau palestine', 'qr code mosquee', 'griser priere passee', 'cinq cases seulement', 'masquer iqama tableau', 'noms verticaux au centre', 'zero devant heure', 'chiffres arabes',
+                 'palestine flag', 'mosque qr code', 'dim past prayer', 'five boxes only', 'hide iqama column', 'vertical names centered', 'leading zero time', 'arabic digits'],
+            chip: { AR: 'أين أضبط علم فلسطين، رمز QR، أو تظليل الصلاة الماضية؟', FR: 'Où régler le drapeau Palestine, le QR code ou griser la prière passée ?', EN: 'Where to set the Palestine flag, QR code, or dim past prayer?' },
+            answer: {
+                AR: 'من "الإعدادات > الخيارات" اختر تبويب "خيارات العرض" ثم مجموعة "الأوقات" لضبط علم فلسطين، رمز QR للمسجد، تظليل الصلاة الماضية، وضع 5 خانات فقط، إخفاء وقت الإقامة، الأسماء العمودية بالوسط، الصفر قبل الوقت، والأرقام العربية.',
+                FR: 'Depuis "Réglages > Options", onglet "Options d\'affichage", groupe "Tableau des horaires" pour le drapeau Palestine, le QR code de la mosquée, griser la prière passée, n\'afficher que 5 cases, masquer l\'iqama, les noms verticaux centrés, le zéro devant l\'heure, et les chiffres arabes.',
+                EN: 'From "Settings > Options", tab "Display options", group "Times table" for the Palestine flag, the mosque QR code, dimming the past prayer, showing only 5 boxes, hiding the iqama time, centered vertical names, leading zero, and Arabic digits.'
+            },
+            action: function () { _openOptionsTab('general', 'table'); }
+        },
+        {
+            id: 'voice_alert_before_iqama',
+            kw: ['تنبيه صوتي قبل الاقامة', 'رسالة صوتية اغلاق الهاتف', 'صوت تذكير اغلاق الهاتف',
+                 'alerte vocale avant iqama', 'message vocal fermez telephone', 'annonce vocale rangez telephone',
+                 'voice alert before iqama', 'phone off voice reminder', 'voice message close phone'],
+            chip: { AR: 'كيف أفعّل التنبيه الصوتي قبل الإقامة؟', FR: "Comment activer l'alerte vocale avant l'iqama ?", EN: 'How to enable the voice alert before iqama?' },
+            answer: {
+                AR: 'من "الإعدادات > تنبيهات"، فعّل التنبيه الصوتي الذي يُذكّر المصلين بإغلاق هواتفهم قبل انتهاء عدّاد الإقامة بعدد ثوانٍ قابل للضبط (12 إلى 59 ثانية)، مع زر لتجربة الصوت.',
+                FR: 'Depuis "Réglages > Alertes", activez l\'alerte vocale qui rappelle aux fidèles d\'éteindre leur téléphone quelques secondes avant la fin du compte à rebours de l\'iqama (réglable de 12 à 59 s), avec un bouton pour tester le son.',
+                EN: 'From "Settings > Alerts", enable the voice alert reminding worshippers to switch off their phones shortly before the iqama countdown ends (adjustable 12-59s), with a test-sound button.'
+            },
+            action: function () { _openOptionsTab('alert'); }
+        },
+        {
+            id: 'silence_short_alerts',
+            kw: ['تعطيل التنبيهات الصوتية القصيرة', 'ايقاف صوت التنبيه القصير', 'كتم اصوات البيب',
+                 'desactiver alertes sonores courtes', 'couper bips application', 'silence sons courts',
+                 'disable short beep sounds', 'mute short alert sounds', 'turn off beep sounds'],
+            chip: { AR: 'كيف أعطّل الأصوات القصيرة (البيب)؟', FR: 'Comment désactiver les bips courts ?', EN: 'How to disable the short beep sounds?' },
+            answer: {
+                AR: 'من "الإعدادات > تنبيهات"، فعّل خانة "تعطيل التنبيهات الصوتية القصيرة" لكتم أصوات التنبيه القصيرة (البيب) في التطبيق دون التأثير على صوت الأذان نفسه.',
+                FR: 'Depuis "Réglages > Alertes", activez "Désactiver les alertes sonores courtes" pour couper les petits bips de l\'application, sans toucher au son de l\'azan lui-même.',
+                EN: 'From "Settings > Alerts", enable "Disable short sound alerts" to mute the app\'s short beep sounds, without affecting the azan sound itself.'
+            },
+            action: function () { _openOptionsTab('alert'); }
+        },
+        {
+            id: 'iqama_hadith_fullscreen',
+            kw: ['حديث اثناء الاقامة', 'عرض حديث في العداد', 'حديث شاشة الاقامة',
+                 'hadith pendant iqama', 'afficher hadith pendant decompte iqama', 'hadith plein ecran iqama',
+                 'hadith during iqama countdown', 'fullscreen hadith iqama', 'show hadith countdown'],
+            chip: { AR: 'كيف أعرض حديثًا أثناء عدّاد الإقامة؟', FR: 'Comment afficher un hadith pendant le décompte iqama ?', EN: 'How to show a hadith during the iqama countdown?' },
+            answer: {
+                AR: 'من "الإعدادات > تنبيهات"، فعّل خانة عرض الحديث لإظهار حديث نبوي بملء الشاشة على خلفية سوداء أثناء عدّاد الإقامة.',
+                FR: 'Depuis "Réglages > Alertes", activez l\'affichage du hadith pour montrer un hadith en plein écran, sur fond noir, pendant le compte à rebours de l\'iqama.',
+                EN: 'From "Settings > Alerts", enable the hadith display option to show a hadith in full screen on a black background during the iqama countdown.'
+            },
+            action: function () { _openOptionsTab('alert'); }
+        },
+        {
+            id: 'slideshow_settings',
+            kw: ['شرائح', 'عرض الشرائح', 'اضافة شريحة', 'سلايدات التطبيق',
+                 'diaporama', 'slides application', 'ajouter une diapositive', 'gerer les slides',
+                 'slideshow', 'add a slide', 'manage slides', 'slides settings'],
+            chip: { AR: 'أين إعدادات عرض الشرائح؟', FR: 'Où sont les réglages du diaporama ?', EN: 'Where are the slideshow settings?' },
+            answer: {
+                AR: 'من قائمة الإعدادات اختر "الشرائح" لإضافة شرائح نصية أو صور أو روابط، وضبط مدة العرض وتفعيل الترتيب العشوائي.',
+                FR: 'Depuis le menu réglages, ouvrez "Diaporama" pour ajouter des diapositives (texte, image ou lien), régler leur durée d\'affichage et activer l\'ordre aléatoire.',
+                EN: 'From the settings menu, open "Slideshow" to add slides (text, image or link), set their display duration and enable random order.'
+            },
+            action: function () { _openSection('slidesSectionId'); }
+        },
+        {
+            id: 'home_screen_icons_azan_quran',
+            kw: ['ايقونة الاذان في الواجهة', 'ايقونة القران في الواجهة', 'اظهار ايقونات الرئيسية',
+                 'icone azan ecran accueil', 'icone coran ecran principal', 'afficher icones raccourci',
+                 'home screen azan icon', 'quran icon main screen', 'show shortcut icons'],
+            chip: { AR: 'كيف أظهر أو أخفي أيقونتي الأذان والقرآن؟', FR: 'Comment afficher/masquer les icônes Azan et Coran ?', EN: 'How to show/hide the Azan and Quran icons?' },
+            answer: {
+                AR: 'من "⚙ برمجة تلاوة القرآن"، فعّل أو عطّل خانتي "أيقونة الأذان" و"أيقونة ترتيل القرآن" لإظهار أو إخفاء أيقونتي الوصول السريع على الواجهة الرئيسية.',
+                FR: 'Depuis "⚙ Programmation Coran", activez ou désactivez les cases des icônes Azan et Coran pour afficher/masquer ces raccourcis sur l\'écran principal.',
+                EN: 'From "⚙ Quran programming", toggle the Azan icon and Quran icon checkboxes to show or hide these shortcut icons on the main screen.'
+            },
+            action: function () { _openSection('techOptionsSectionId'); }
+        },
+        {
+            id: 'clock_manual_adjust',
+            kw: ['تعديل الساعة يدويا', 'ضبط فارق التوقيت', 'تصحيح الساعة المعروضة',
+                 'ajuster horloge manuellement', 'decalage heure affichee', 'corriger heure ecran',
+                 'manual clock adjustment', 'offset displayed time', 'fix displayed clock'],
+            chip: { AR: 'كيف أُعدّل الساعة المعروضة يدويًا؟', FR: "Comment ajuster manuellement l'heure affichée ?", EN: 'How to manually adjust the displayed clock?' },
+            answer: {
+                AR: 'من "الإعدادات > المسجد والساعة"، استخدم إعداد "تعديل الساعة" لإضافة فارق زمني يدوي (بالدقائق) على الساعة المعروضة، دون التأثير على أوقات الصلاة نفسها.',
+                FR: 'Depuis "Réglages > Mosquée et horloge", utilisez le réglage "Ajustement de l\'horloge" pour appliquer un décalage manuel (en minutes) à l\'heure affichée, sans toucher aux horaires de prière eux-mêmes.',
+                EN: 'From "Settings > Mosque & clock", use the "Clock adjustment" setting to apply a manual offset (in minutes) to the displayed time, without affecting the prayer times themselves.'
+            },
+            action: function () { _openOptionsTab('mosque'); }
+        },
+        {
+            id: 'ayat_display_language',
+            kw: ['لغة الايات المعروضة', 'تغيير لغة القران على الشاشة', 'لغة ترجمة الايات',
+                 'langue des versets affiches', 'changer langue coran ecran', 'langue traduction ayat',
+                 'quran verses display language', 'change ayat language screen', 'verse translation language'],
+            chip: { AR: 'كيف أُغيّر لغة الآيات المعروضة على الشاشة؟', FR: 'Comment changer la langue des versets affichés ?', EN: 'How to change the displayed verses language?' },
+            answer: {
+                AR: 'من "الإعدادات > المسجد والساعة"، اختر من قائمة لغات الآيات (نحو 40 لغة) اللغة التي تريد عرض ترجمة الآيات القرآنية بها على الشاشة.',
+                FR: 'Depuis "Réglages > Mosquée et horloge", choisissez dans la liste des langues des versets (une quarantaine) celle utilisée pour afficher la traduction des versets coraniques à l\'écran.',
+                EN: 'From "Settings > Mosque & clock", pick from the verse-language list (about 40 languages) the one used to display the Quranic verse translation on screen.'
+            },
+            action: function () { _openOptionsTab('mosque'); }
+        },
+        {
+            id: 'hijri_date_sync',
+            kw: ['مزامنة التاريخ الهجري', 'ضبط التاريخ الهجري رسميا', 'تحديث الهجري من مصدر',
+                 'synchronisation date hijri', 'date hegirienne officielle', 'source date hijri',
+                 'hijri date sync', 'official hijri date source', 'sync islamic calendar'],
+            chip: { AR: 'كيف أُفعّل مزامنة التاريخ الهجري؟', FR: 'Comment activer la synchronisation de la date hijri ?', EN: 'How to enable Hijri date synchronization?' },
+            answer: {
+                AR: 'من القائمة الرئيسية، ضمن قسم "التاريخ والطقس"، فعّل "مزامنة التاريخ الهجري" ليتبع التقويم الهجري المعروض مصدرًا رسميًا حسب البلد بدل الحساب الفلكي المحلي.',
+                FR: 'Depuis le menu principal, section "Date et Météo", activez "Synchronisation de la date hijri" pour faire suivre le calendrier hégirien affiché une source officielle par pays plutôt que le calcul astronomique local.',
+                EN: 'From the main menu, under "Date & Weather", enable "Hijri date sync" to make the displayed Hijri calendar follow an official per-country source instead of the local astronomical calculation.'
+            },
+            action: function () {
+                var mm = document.getElementById('mainMenuContainer');
+                if (mm && mm.style.visibility !== 'visible' && typeof toggleMenuFunction === 'function') toggleMenuFunction();
+                setTimeout(function () {
+                    if (typeof window._ucMenuSectionsSetTab === 'function') window._ucMenuSectionsSetTab('other');
+                }, 80);
+            }
+        },
+        {
+            id: 'box_control_panel',
+            kw: ['التحكم بصوت الموسيقى بالصندوق', 'التحكم بالواي فاي', 'تحكم الصندوق', 'ايقاف الموسيقى في الصندوق',
+                 'controle volume musique box', 'controle wifi box', 'panneau controle boitier', 'couper musique box',
+                 'box control panel', 'box music volume control', 'box wifi control', 'mute box music'],
+            chip: { AR: 'كيف أتحكم بصوت الموسيقى أو الواي فاي في الصندوق؟', FR: 'Comment contrôler le volume musique ou le WiFi de la box ?', EN: "How to control the box's music volume or WiFi?" },
+            answer: {
+                AR: 'من رابط "▶ التحكم في الصندوق" أسفل القائمة الرئيسية، اضبط مستوى صوت الموسيقى (كتم، +/-5%، +/-10%، 100%) وفعّل أو أوقف الواي فاي مع عرض اسم الشبكة وعنوان IP.',
+                FR: 'Depuis le lien "▶ Contrôle box" en bas du menu principal, réglez le volume de la musique (muet, +/-5%, +/-10%, 100%) et activez/coupez le WiFi, avec le SSID et l\'IP affichés.',
+                EN: 'From the "▶ Box control" link at the bottom of the main menu, adjust the music volume (mute, +/-5%, +/-10%, 100%) and turn WiFi on/off, with SSID and IP shown.'
+            },
+            action: function () { if (typeof window.openBoxControl === 'function') window.openBoxControl(); }
+        },
+        {
+            id: 'quran_player_read_listen',
+            kw: ['مشغل القران', 'قراءة القران في التطبيق', 'الاستماع للقران', 'فهرس السور في التطبيق',
+                 'lecteur du coran', 'lire le coran application', 'ecouter le coran application', 'mushaf application',
+                 'read quran app', 'listen to quran app', 'mushaf reader'],
+            chip: { AR: 'كيف أستمع أو أقرأ القرآن داخل التطبيق؟', FR: "Comment écouter ou lire le Coran dans l'application ?", EN: 'How to listen to or read the Quran in the app?' },
+            answer: {
+                AR: 'اضغط على أيقونة 📖 (أو من القائمة "📖 مشغل القرآن") لفتح المشغل: تبويب "الاستماع" لاختيار السورة والقارئ، وتبويب "القراءة" لعرض المصحف (حفص/قالون/ورش) مع بحث نصي وتظليل التجويد والمفضلة والفهرس.',
+                FR: 'Appuyez sur l\'icône 📖 (ou "📖 Lecteur du Coran" dans le menu) pour ouvrir le lecteur : onglet "Écoute" pour choisir sourate et récitateur, et onglet "Lecture" pour le Mushaf (Hafs/Qaloun/Warsh) avec recherche, coloration tajweed, favoris et index.',
+                EN: 'Tap the 📖 icon (or "📖 Quran player" in the menu) to open the player: "Listen" tab to pick a surah and reciter, and "Read" tab for the Mushaf (Hafs/Qaloun/Warsh) with search, tajweed coloring, bookmarks and an index.'
+            },
+            action: function () {
+                if (typeof closeMenuFunction === 'function') closeMenuFunction();
+                if (typeof window.openQuranPlayerModal === 'function') window.openQuranPlayerModal();
+            }
+        },
+        {
+            id: 'quran_http_server',
+            kw: ['خادم القران', 'تشغيل القران من سيرفر', 'بث صوت القران عبر الشبكة',
+                 'serveur coran http', 'streamer audio coran serveur', 'coran via serveur local',
+                 'quran http server', 'stream quran audio server', 'quran local server'],
+            chip: { AR: 'ما هو خادم القرآن (HTTP)؟', FR: 'Qu\'est-ce que le serveur Coran (HTTP) ?', EN: 'What is the Quran HTTP server?' },
+            answer: {
+                AR: 'من "⚙ برمجة تلاوة القرآن"، فعّل "خادم القرآن (HTTP)" لبثّ صوت القرآن والأذان من خادم محلي (بالصندوق) بدل الملفات المضمّنة في التطبيق، مع إمكانية تعديل عنوان الخادم.',
+                FR: 'Depuis "⚙ Programmation Coran", activez "Serveur Coran (HTTP)" pour diffuser l\'audio du Coran et de l\'azan depuis un serveur local (sur la box) au lieu des fichiers intégrés à l\'application, avec possibilité de modifier l\'adresse du serveur.',
+                EN: 'From "⚙ Quran programming", enable the "Quran server (HTTP)" option to stream Quran and azan audio from a local server (on the box) instead of the files bundled with the app, with an editable server address.'
+            },
+            action: function () { _openSection('techOptionsSectionId'); }
         }
     );
 
     if (!isPhone) {
+        INTENTS.push({
+            id: 'show_mosque_name_toggle',
+            kw: ['اظهار اسم المسجد على الشاشة', 'اخفاء اسم المسجد', 'عرض اسم المسجد بالصندوق',
+                 'afficher nom mosquee ecran', 'masquer nom mosquee affichage', 'cacher nom mosquee box',
+                 'show mosque name screen', 'hide mosque name display', 'toggle mosque name box'],
+            chip: { AR: 'كيف أُظهر أو أُخفي اسم المسجد على الشاشة؟', FR: 'Comment afficher/masquer le nom de la mosquée à l\'écran ?', EN: 'How to show/hide the mosque name on screen?' },
+            answer: {
+                AR: 'من "الإعدادات > المسجد والساعة" (على الصندوق)، فعّل أو عطّل خانة إظهار اسم المسجد للتحكم في ظهوره على الشاشة، بشكل مستقل عن تعديل نصّه نفسه.',
+                FR: 'Depuis "Réglages > Mosquée et horloge" (sur boîtier), cochez/décochez l\'affichage du nom pour le montrer ou le masquer à l\'écran, indépendamment de la modification du texte lui-même.',
+                EN: 'From "Settings > Mosque & clock" (on box), toggle the mosque-name display option to show or hide it on screen, independently from editing the name text itself.'
+            },
+            action: function () { _openOptionsTab('mosque'); }
+        });
+
+        INTENTS.push({
+            id: 'tv_logo_longpress_settings',
+            kw: ['اعدادات الاندرويد على الصندوق', 'فتح الواي فاي من الصندوق', 'ضغط طويل على الشعار',
+                 'parametres android sur la box', 'ouvrir le wifi depuis la box', 'appui long sur le logo',
+                 'android settings on the box', 'open wifi from the box', 'long press the logo on the box'],
+            chip: { AR: 'كيف أصل لإعدادات الأندرويد (الواي فاي) على الصندوق؟', FR: 'Comment accéder aux réglages Android (WiFi) sur la box ?', EN: 'How to access Android settings (WiFi) on the box?' },
+            answer: {
+                AR: 'اضغط ضغطًا طويلًا على شعار التطبيق في الشاشة الرئيسية (الصندوق فقط) لفتح قائمة أدوات الأندرويد (الواي فاي، تغيير شاشة البداية...) — الطريقة الوحيدة للوصول إليها، إذ لا توجد شاشة إعدادات أندرويد أخرى في الوضع الأفقي.',
+                FR: 'Sur le boîtier uniquement, un appui long sur le logo de l\'application (écran principal) ouvre le menu d\'outils Android (WiFi, changer l\'écran d\'accueil...) — le seul moyen d\'y accéder, aucun autre écran de réglages Android n\'étant disponible en mode horizontal.',
+                EN: 'On the box only, long-pressing the app logo (main screen) opens the Android tools menu (WiFi, change home screen...) — the only way to reach it, since no other Android settings screen is available in horizontal mode.'
+            },
+            // MobileJsBridge.openTvUtilityMenu (cf. _ucHasNative, plus haut dans
+            // ce fichier) -- même chemin natif que le vrai appui long,
+            // disponible uniquement sur boîtier (no-op silencieux ailleurs).
+            action: function () {
+                if (window.AndroidMobile && typeof window.AndroidMobile.openTvUtilityMenu === 'function') {
+                    window.AndroidMobile.openTvUtilityMenu();
+                }
+            }
+        });
+
         INTENTS.push({
             id: 'box_admin_access_landscape',
             kw: ['ادارة المسجد على الصندوق', 'قفل الادارة افقي',
@@ -30711,6 +31057,16 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 AR: 'من القائمة الرئيسية على الصندوق، اختر "🔒 إدارة المسجد" للوصول مباشرة إلى نفس لوحة الإدارة (يتطلب رمز PIN).',
                 FR: 'Depuis le menu principal sur la box, choisissez "🔒 Administrer la mosquée" pour accéder directement au même panneau admin (code PIN requis).',
                 EN: 'From the main menu on the box, choose "🔒 Administer the mosque" to access the same admin panel directly (PIN required).'
+            },
+            // #ucBoxAdminMenuButton (custom.js, _installBoxAdminAccess) n'est
+            // visible qu'en horizontal, comme cette intention elle-même
+            // (bloc if (!isPhone) ci-dessus) -- son handler d'ouverture est
+            // privé à sa propre IIFE, non exposé sur window : simuler le clic
+            // sur le bouton lui-même déclenche exactement le même chemin
+            // (PIN, etc.) que l'utilisateur le ferait à la main.
+            action: function () {
+                var btn = document.getElementById('ucBoxAdminMenuButton');
+                if (btn) btn.click();
             }
         });
     }
@@ -30748,6 +31104,44 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         return false;
     }
 
+    // ── Pondération IDF (fréquence inverse par intention) ───────────────────
+    // Audit interne + recherche web (18/08/2026) : un score basé sur un simple
+    // ratio "mots communs / mots du mot-clé" laisse un mot GÉNÉRIQUE (présent
+    // dans beaucoup d'intentions, ex. "écran", "changer", "modifier", "اظهار")
+    // détourner à lui seul une intention précise dès qu'il partage une courte
+    // expression-clé (2 mots) avec elle -- confirmé sur ~10-15 intentions du
+    // corpus actuel par analyse programmatique (mot présent dans N
+    // intentions au total, mais dans une expression courte d'UNE SEULE
+    // d'entre elles → aucune intention concurrente pour déclencher la
+    // désambiguïsation, réponse fausse donnée avec une confiance de 0.5+).
+    // Fix standard en recherche d'information (principe TF-IDF/BM25) :
+    // pondérer chaque mot par sa RARETÉ dans le corpus (nombre d'intentions
+    // où il apparaît) plutôt que de compter tous les mots à égalité -- un mot
+    // présent dans 1 seule intention pèse lourd, un mot présent dans presque
+    // toutes pèse quasi rien. Corrige toute la classe de bug d'un coup, y
+    // compris pour les futures intentions, sans réaudit manuel mot par mot à
+    // chaque ajout. Calculé UNE SEULE FOIS ici (pas par requête) à partir du
+    // catalogue INTENTS déjà entièrement construit à ce stade du fichier
+    // (après les deux INTENTS.push() plus haut).
+    var _IDF = (function () {
+        var df = {};   // mot normalisé -> nombre d'intentions distinctes qui le contiennent
+        var N  = INTENTS.length;
+        INTENTS.forEach(function (intent) {
+            var seen = {};   // ne compter qu'une fois par intention même si le mot revient dans plusieurs kw de la même intention
+            intent.kw.forEach(function (phrase) {
+                _words(_norm(phrase)).forEach(function (w) { seen[w] = true; });
+            });
+            Object.keys(seen).forEach(function (w) { df[w] = (df[w] || 0) + 1; });
+        });
+        var idf = {};
+        var EPSILON = 0.15;   // plancher : jamais tout à fait 0, même pour un mot présent dans (presque) toutes les intentions
+        Object.keys(df).forEach(function (w) { idf[w] = Math.log(N / df[w]) + EPSILON; });
+        return idf;
+    })();
+    function _wordWeight(w) {
+        return (_IDF[w] != null) ? _IDF[w] : 1;   // mot jamais vu dans le corpus (faute de frappe, mot rare) : poids neutre par défaut
+    }
+
     function _scoreIntent(queryNorm, queryWords, intent) {
         var best = 0;
         for (var i = 0; i < intent.kw.length; i++) {
@@ -30755,13 +31149,15 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             if (!kwNorm) continue;
             var kwWords = _words(kwNorm);
             if (!kwWords.length) continue;
-            var hits = 0;
+            var weightedHits = 0, totalWeight = 0;
             for (var j = 0; j < kwWords.length; j++) {
+                var w = _wordWeight(kwWords[j]);
+                totalWeight += w;
                 for (var m = 0; m < queryWords.length; m++) {
-                    if (_wordMatches(queryWords[m], kwWords[j])) { hits++; break; }
+                    if (_wordMatches(queryWords[m], kwWords[j])) { weightedHits += w; break; }
                 }
             }
-            var score = hits / kwWords.length;
+            var score = totalWeight > 0 ? (weightedHits / totalWeight) : 0;
             if (queryNorm.indexOf(kwNorm) !== -1) score = Math.max(score, 0.95);
             if (score > best) best = score;
         }
@@ -30928,6 +31324,16 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     }
 
     function _open() {
+        // Demande explicite (18/08/2026) : fermer le menu principal
+        // (mainMenuContainer) en premier -- pertinent surtout pour l'icône
+        // du menu en mode horizontal (_installHrAssistMenuIcon, plus bas
+        // dans ce fichier), qui ouvre l'assistant DEPUIS le menu encore
+        // ouvert. Sans appel, l'assistant s'affiche par-dessus le menu
+        // toujours visible en arrière-plan. Même idiome que _openSection
+        // plus haut dans ce fichier (appel systématique, no-op sûr si le
+        // menu était déjà fermé -- cf. _patchCloseMenu, qui ne dépile
+        // l'historique que si le menu était réellement ouvert).
+        if (typeof closeMenuFunction === 'function') closeMenuFunction();
         _buildModal();
         _thread.innerHTML = '';
         _addBubble(_t('greeting'), 'bot');
@@ -30954,8 +31360,52 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
     window._ucOpenSmartAssistant  = _open;
     window._ucCloseSmartAssistant = _close;
+    // Debug console (même idiome que window.ucTestLight ailleurs dans ce
+    // fichier) : window._ucAssistDebugRank('question') -> liste des
+    // intentions classées par score pour cette question, sans ouvrir l'UI.
+    // Utile pour valider une nouvelle intention/un nouveau mot-clé avant de
+    // le livrer (vérifier qu'il ne détourne pas une autre intention).
+    window._ucAssistDebugRank = function (query) {
+        return _rankIntents(query).map(function (r) { return { id: r.intent.id, score: r.score }; });
+    };
 
     _L('CUSTOM', 'INIT', { item: 'smartAssistant' });
+})();
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ACCÈS À L'ASSISTANT (ucAssistOverlay) DEPUIS LE MENU EN MODE HORIZONTAL
+// ─────────────────────────────────────────────────────────────────────────────
+// Demande explicite (18/08/2026) : l'assistant intelligent (window.
+// _ucOpenSmartAssistant, cf. section précédente) n'était jusqu'ici
+// accessible que via la barre flottante à icônes ouverte par appLogoImage
+// (_installLogoQuickBar) -- volontairement VERTICALE UNIQUEMENT
+// (appLogoImageHorizontal garde son comportement d'origine, cf. commentaire
+// à cet endroit : "pas de mode tactile fiable pour une barre à icônes" sur
+// boîtier/horizontal). Le menu principal (#mainMenuContainer), lui, est
+// commun aux deux orientations et déjà cliquable de façon fiable partout
+// (boîtier TV compris, télécommande/souris) -- on y ajoute donc un accès
+// direct, juste à côté de menuScrollButtons dans l'en-tête, visible
+// UNIQUEMENT en mode horizontal (le vertical garde son seul point d'entrée
+// existant, la barre flottante, pour ne rien dupliquer inutilement).
+(function _installHrAssistMenuIcon() {
+    var scrollBtns = document.getElementById('menuScrollButtons');
+    if (!scrollBtns || !scrollBtns.parentElement) return;
+
+    var icon = document.createElement('span');
+    icon.id = 'ucAssistMenuIconHorizontal';
+    icon.innerHTML = '🤖';
+    icon.onclick = function () {
+        if (typeof window._ucOpenSmartAssistant === 'function') window._ucOpenSmartAssistant();
+    };
+    scrollBtns.insertAdjacentElement('afterend', icon);
+
+    function _refreshVisibility() {
+        icon.style.display = _ucIsHorizontalOrientation() ? '' : 'none';
+    }
+    _refreshVisibility();
+    window.addEventListener('resize', function () { requestAnimationFrame(_refreshVisibility); });
+
+    _L('CUSTOM', 'INIT', { item: 'hrAssistMenuIcon' });
 })();
 // ═════════════════════════════════════════════════════════════════════════════
 // FIN ASSISTANT INTELLIGENT

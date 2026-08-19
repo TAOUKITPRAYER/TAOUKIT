@@ -6055,6 +6055,15 @@
 #ucSettingsSection {
     padding-top: 4px;
 }
+/* Avertissement "accès Ne pas déranger révoqué" (cf. _ucSyncDndWarning,
+   custom.js) -- même couleur d'alerte que le reste de l'appli (.acBadgeError
+   etc.). Masqué par défaut, affiché en JS uniquement quand le réglage est
+   actif mais l'accès système manquant. */
+#ucQuickMuteAfterDndWarning #ucQuickMuteAfterDndWarningText {
+    color: #ff6b6b;
+    font-size: 90%;
+    line-height: 1.3;
+}
 .ucSettingsRow {
     display: flex;
     /* Aligne le toggle avec le haut de son label (cf. .ucSettingsRowLabel) au
@@ -10035,4 +10044,20 @@ select.ucRATextInput { text-align: start; }
 .weatherIconHorizontalClass[style*="i_clearDay.png"],
 .weatherIconClass[style*="i_clearDay.png"] {
     filter: brightness(0) invert(1);
+}
+
+/* ── Icône assistant intelligent dans l'en-tête du menu, mode horizontal ────
+   (demande explicite du 18/08/2026, décalage ajusté le même jour) : injectée
+   par custom.js (_installHrAssistMenuIcon) juste après #menuScrollButtons --
+   même positionnement absolu que ce voisin (style0.css core), décalé vers la
+   gauche pour ne jamais le chevaucher. display géré en JS selon
+   l'orientation courante (_ucIsHorizontalOrientation) ; pas de media query
+   ici, le mode horizontal/vertical de l'appli ne correspond pas forcément à
+   la largeur d'écran (rotation forcée, kiosque). */
+#ucAssistMenuIconHorizontal {
+    position: absolute;
+    right: 30%;
+    top: 30%;
+    font-size: 115%;
+    cursor: pointer;
 }

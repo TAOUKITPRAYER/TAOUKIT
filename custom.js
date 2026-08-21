@@ -3666,7 +3666,23 @@ let _lastAzanPrayer = '';
 // donc toujours à jour indépendamment de l'historique des évènements de
 // cette session. Même substitution Jumu'ah que _getUpcomingPrayerKey().
 function _ucCurrentPrayerKey() {
-    if (_lastAzanPrayer) return _lastAzanPrayer;
+    // BUG (trouvé 21/08/2026, logs Supabase mosquée tn.monastir.hidaya) :
+    // _lastAzanPrayer est alimentée directement depuis e.prayer du cœur (cf.
+    // handler AZAN_SHOW ci-dessous, ~L9490), qui vaut TOUJOURS 'DOHR' même le
+    // vendredi (le cœur n'a pas de clé 'JOMOA' distincte) -- ce "return"
+    // précoce court-circuitait donc la substitution DOHR->JOMOA ci-dessous
+    // pour tout le reste du cycle azan (jusqu'à la prière suivante), dès que
+    // _lastAzanPrayer avait été posée. Conséquence concrète : le handler
+    // LIGHTS d'AZAN_HIDE (ampliExtOff, etc.) compare
+    // _ucCurrentPrayerKey() === 'JOMOA' pour respecter jomoaOnHrCheckbox --
+    // toujours faux dans ce cas, donc l'automatisation se déclenchait quand
+    // même le vendredi à Dhuhr malgré la case décochée (haut-parleur externe
+    // activé sans Jumu'ah configurée). La même substitution doit donc
+    // s'appliquer QUELLE QUE SOIT la source de la valeur mise en cache.
+    if (_lastAzanPrayer) {
+        if (_lastAzanPrayer === 'DOHR' && typeof isFriday !== 'undefined' && isFriday) return 'JOMOA';
+        return _lastAzanPrayer;
+    }
     var k = (typeof _ucPrayerNow === 'function') ? _ucPrayerNow() : '';
     if (!k || k === 'UNKNOWN') {
         k = (typeof _ucComputeCurrentPrayerFromClock === 'function') ? _ucComputeCurrentPrayerFromClock() : '';

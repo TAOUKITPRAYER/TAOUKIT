@@ -1033,6 +1033,15 @@ const JS_CUSTOM_DEFAULTS = {
     ucLightMihrabOnUrl:         'http://191.168.1.129/relay/0?turn=on',
     ucLightMihrabOnDelay:       10,
     ucLightMihrabOnPrayers:     '11111',   // FAJR|DOHR|ASSR|MGRB|ISHA (un chiffre pour chaque prière : 1=actif, 0=inactif)
+    // Colonne dédiée Jumu'a (0=inactif, 1=actif) : la salat du vendredi
+    // (JOMOA) n'est pas dans le masque 5 prières ci-dessus (_LIGHT_PRAYER_KEYS
+    // ne la contient pas), donc _lightPrayerAllowed la bloquait
+    // systématiquement jusqu'ici, sans réglage possible. Partagé entre
+    // mihrabOn et mihrabOff (cf. jomoaMaskSetting sur les deux entrées de
+    // _lightProgramConfig) -- la fermeture suit donc automatiquement la même
+    // décision que l'ouverture pour Jumu'a, exactement comme le masque
+    // 5 prières ci-dessus est déjà partagé entre les deux pour les 5 autres.
+    ucLightMihrabOnJomoa:       0,
     ucLightMihrabOnTrigger:     'beforeAzan',//'afterAzanHide', // 'beforeAzan' | 'afterAzanHide'
     ucLightMihrabOffEnabled:    1,
     ucLightMihrabOffUrl:        'http://191.168.1.129/relay/0?turn=off',
@@ -3148,8 +3157,8 @@ const _lightProgramConfig = [
     { key: 'minaretOff',   trigger: 'afterAzanShow', prayerFilter: 'FAJR', title: 'إغلاق المِأذنة (بعد أذان الفجر)',   enabledSetting: 'ucLightMinaretOffEnabled', pairEnabledSetting: 'ucLightMinaretOnEnabled', urlSetting: 'ucLightMinaretOffUrl', delaySetting: 'ucLightMinaretOffDelay', delayDefault: 10, delayTitle: 'إغلاق المِأذنة بعد أذان الفجر بـ (ثواني)' },
     // strobingOn / strobingOff retirés : seuls iqamaZeroMinaretBlink et iqamaZeroMihrabBlink
     // sont autorisés à strobo, exclusivement à remainingSeconds = 0 (UC_EVT.IQAMA_TIME).
-    { key: 'mihrabOn',     trigger: 'afterAzanHide', triggerSetting: 'ucLightMihrabOnTrigger', noQuranOffset: true, title: 'تشغيل المحراب',          enabledSetting: 'ucLightMihrabOnEnabled',    pairEnabledSetting: 'ucLightMihrabOffEnabled',    urlSetting: 'ucLightMihrabOnUrl',  delaySetting: 'ucLightMihrabOnDelay',  delayDefault: 10, delayTitle: 'تشغيل المحراب بعد نافذة الأذان بـ (ثواني)', prayersMaskSetting: 'ucLightMihrabOnPrayers' },
-    { key: 'mihrabOff',    trigger: 'afterBlackHide', title: 'إغلاق المحراب',          enabledSetting: 'ucLightMihrabOffEnabled',   pairEnabledSetting: 'ucLightMihrabOnEnabled', urlSetting: 'ucLightMihrabOffUrl', delaySetting: 'ucLightMihrabOffDelay', delayDefault: 10, delayTitle: 'إغلاق المحراب بعد إغلاق الستار الأسود بـ (ثواني)', prayersMaskSetting: 'ucLightMihrabOnPrayers' },
+    { key: 'mihrabOn',     trigger: 'afterAzanHide', triggerSetting: 'ucLightMihrabOnTrigger', noQuranOffset: true, title: 'تشغيل المحراب',          enabledSetting: 'ucLightMihrabOnEnabled',    pairEnabledSetting: 'ucLightMihrabOffEnabled',    urlSetting: 'ucLightMihrabOnUrl',  delaySetting: 'ucLightMihrabOnDelay',  delayDefault: 10, delayTitle: 'تشغيل المحراب بعد نافذة الأذان بـ (ثواني)', prayersMaskSetting: 'ucLightMihrabOnPrayers', jomoaMaskSetting: 'ucLightMihrabOnJomoa' },
+    { key: 'mihrabOff',    trigger: 'afterBlackHide', title: 'إغلاق المحراب',          enabledSetting: 'ucLightMihrabOffEnabled',   pairEnabledSetting: 'ucLightMihrabOnEnabled', urlSetting: 'ucLightMihrabOffUrl', delaySetting: 'ucLightMihrabOffDelay', delayDefault: 10, delayTitle: 'إغلاق المحراب بعد إغلاق الستار الأسود بـ (ثواني)', prayersMaskSetting: 'ucLightMihrabOnPrayers', jomoaMaskSetting: 'ucLightMihrabOnJomoa' },
     { key: 'rollerOpen',   trigger: 'beforeIqama',   title: 'فتح الستارة',             enabledSetting: 'ucLightRollerOpenEnabled',  pairEnabledSetting: 'ucLightRollerCloseEnabled', urlSetting: 'ucLightRollerOpenUrl',  delaySetting: 'ucLightRollerOpenDelay',  delayDefault: 60, delayTitle: 'فتح الستارة قبل الإقامة بـ (ثواني)' },
     { key: 'rollerClose',  trigger: 'afterBlackHide',title: 'إغلاق الستارة',           enabledSetting: 'ucLightRollerCloseEnabled', pairEnabledSetting: 'ucLightRollerOpenEnabled', urlSetting: 'ucLightRollerCloseUrl', delaySetting: 'ucLightRollerCloseDelay', delayDefault: 10, delayTitle: 'إغلاق الستارة بعد نهاية الصلاة بـ (ثواني)' }
 ];
@@ -3613,12 +3622,21 @@ function _buildLightPrayerMaskTableHtml(item) {
     _LIGHT_PRAYER_LABELS.forEach(function (label) {
         html += '<th>' + label + '</th>';
     });
+    // Colonne Jumu'a dédiée (booléen séparé, hors du masque 5 prières -- cf.
+    // jomoaMaskSetting/_lightPrayerAllowed) : n'apparaît que pour les items
+    // qui la définissent (mihrabOn/mihrabOff).
+    if (item.jomoaMaskSetting) html += '<th>الجمعة</th>';
     html += '</tr><tr>';
     _LIGHT_PRAYER_KEYS.forEach(function (key, idx) {
         const active = mask.charAt(idx) === '1';
         html += '<td class="ucLPMCell" onclick="toggleLightPrayerMaskFunction(\'' + item.key + '\',' + idx + ');">' +
             (active ? '&#10005;' : '') + '</td>';
     });
+    if (item.jomoaMaskSetting) {
+        const jomoaActive = (JS_CUSTOM[item.jomoaMaskSetting] == 1);
+        html += '<td class="ucLPMCell" onclick="toggleLightPrayerMaskJomoaFunction(\'' + item.key + '\');">' +
+            (jomoaActive ? '&#10005;' : '') + '</td>';
+    }
     html += '</tr></table>';
     return html;
 }
@@ -3649,10 +3667,17 @@ function _buildLightTriggerTableHtml(item) {
 
 // Retourne true si l'item est autorisé pour la prière donnée
 function _lightPrayerAllowed(item, prayerKey) {
+    // JOMOA n'est pas dans _LIGHT_PRAYER_KEYS (masque 5 prières) : sans
+    // jomoaMaskSetting, un item reste bloqué pour Jumu'a comme avant (SHRQ
+    // aussi, jamais concerné). Avec jomoaMaskSetting défini (cf. mihrabOn/
+    // mihrabOff), une colonne dédiée décide indépendamment du masque 5 prières.
+    if (prayerKey === 'JOMOA') {
+        return item.jomoaMaskSetting ? (JS_CUSTOM[item.jomoaMaskSetting] == 1) : false;
+    }
     if (!item.prayersMaskSetting) return true;   // pas de masque → toujours actif
     const mask = String(JS_CUSTOM[item.prayersMaskSetting] || '11111');
     const idx  = _LIGHT_PRAYER_KEYS.indexOf(prayerKey);
-    if (idx < 0) return false;  // prière hors du masque (SHRQ, JOMOA…) → bloqué
+    if (idx < 0) return false;  // prière hors du masque (SHRQ…) → bloqué
     return mask.charAt(idx) === '1';
 }
 
@@ -5502,6 +5527,19 @@ function toggleLightPrayerMaskFunction(itemKey, prayerIdx) {
     JS_CUSTOM[item.prayersMaskSetting] = chars.join('');
     saveCustomSettingsFunction();
     // Pas besoin de refreshLightProgrammingUI complet — juste re-render la ligne prières
+    refreshLightProgrammingUI();
+}
+
+// Colonne Jumu'a dédiée (booléen séparé, cf. jomoaMaskSetting) -- même
+// principe que toggleLightPrayerMaskFunction ci-dessus, mais mihrabOn ET
+// mihrabOff partagent le MÊME réglage (ucLightMihrabOnJomoa) : basculer
+// depuis l'une ou l'autre ligne change la même valeur, la fermeture suit
+// donc automatiquement la décision d'ouverture pour Jumu'a.
+function toggleLightPrayerMaskJomoaFunction(itemKey) {
+    const item = _lightProgramConfig.find(function(x) { return x.key === itemKey; });
+    if (!item || !item.jomoaMaskSetting) return;
+    JS_CUSTOM[item.jomoaMaskSetting] = (JS_CUSTOM[item.jomoaMaskSetting] == 1) ? 0 : 1;
+    saveCustomSettingsFunction();
     refreshLightProgrammingUI();
 }
 
@@ -21858,6 +21896,7 @@ function selectQPTakbir() {
     window.editLightProgrammingJomaDelayFunction    = editLightProgrammingJomaDelayFunction;
     window.editLightProgrammingExtraFunction        = editLightProgrammingExtraFunction;
     window.toggleLightPrayerMaskFunction            = toggleLightPrayerMaskFunction;
+    window.toggleLightPrayerMaskJomoaFunction       = toggleLightPrayerMaskJomoaFunction;
     window.refreshLightProgrammingUI                = refreshLightProgrammingUI;
     window.toggleBlinkingEnabledFunction            = toggleBlinkingEnabledFunction;
     window.editBlinkingSecondsFunction              = editBlinkingSecondsFunction;

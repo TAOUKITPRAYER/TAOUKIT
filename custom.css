@@ -2,6 +2,14 @@
    TAWKIT CUSTOM - ne pas modifier lors des updates
    ═══════════════════════════════════════════════ */
 
+/* ── fullIqamaTimesCheckbox grisé en mode d'affichage horizontal 1
+   (custom.js, _ucSyncFullIqamaTimesAvailability) : le natif `disabled` sur
+   la case grise déjà la case elle-même, mais pas son libellé -- grisé ici
+   en plus pour que toute la ligne se lise clairement comme indisponible. */
+#fullIqamaTimesCheckbox:disabled ~ #fullIqamaTimesLabel {
+    opacity: 0.4;
+}
+
 /* ── Bouton "Lecteur du Coran" dans la modale "برمجة تلاوة القرآن"
    (quranPlayerMenuButton, custom.js injectTechOptionsUI) : perdait son
    curseur cliquable en quittant #menuSectionsContainer (dont il héritait
@@ -2120,7 +2128,8 @@
         font-size: 15vw; /*13.2*/
     }
     #mainHorizontalContainer[data-layout-mode="4"] #prayerTimesContainerHorizontal {
-        top: 57% !important;
+        top:   57% !important;
+        width: 96% !important;   /* laisse 4% a droite pour les labels iqamaColLabel (cf. mode 3) -- sans ca, la cellule Fajr (la plus a droite) colle au bord ecran et les libelles azan/iqama y sont coupes en mode fullIqamaTimesActive (retour utilisateur 19/08/2026) */
     }
     #mainHorizontalContainer[data-layout-mode="4"] {
         --j6iqamaTOP: 13%;
@@ -2288,7 +2297,8 @@
         font-size: 15vw;
     }
     #mainHorizontalContainer[data-layout-mode="6"] #prayerTimesContainerHorizontal {
-        top: 57% !important;
+        top:   57% !important;
+        width: 96% !important;   /* laisse 4% a droite pour les labels iqamaColLabel (cf. mode 3) -- meme correctif que le mode 4, meme cause (retour utilisateur 19/08/2026) */
     }
     #mainHorizontalContainer[data-layout-mode="6"] {
         --j6iqamaTOP: 13%;
@@ -2435,7 +2445,12 @@
             repeating-linear-gradient(45deg,  rgba(212, 175, 90, 0.07) 0 2px, transparent 2px 26px),
             repeating-linear-gradient(-45deg, rgba(0, 180, 120, 0.06) 0 2px, transparent 2px 26px),
             linear-gradient(160deg, #0d1f16 0%, #163024 55%, #0d1f16 100%);
-        border-top:    3px solid rgba(240, 208, 128, 0.65);
+        /* Bord haut : etait dore (rgba(240,208,128,...)) -- retire (demande
+           explicite du 19/08/2026) : en position par defaut (sans swap),
+           l'iqama occupe le haut de la cellule juste sous cet arc, qui se
+           lisait comme un "contour jaune autour de l'iqama". Aligne
+           desormais sur le meme vert que les bords gauche/droit. */
+        border-top:    3px solid rgba(0, 180, 120, 0.55);
         border-left:   1px solid rgba(0, 180, 120, 0.30);
         border-right:  1px solid rgba(0, 180, 120, 0.30);
         border-bottom: 1px solid rgba(0, 120, 80, 0.22);
@@ -2445,40 +2460,99 @@
         border-radius: 42% 42% 6% 6% / 14% 14% 3% 3%;
     }
 
+    /* Nom de la priere : recentre verticalement (top:50%/translateY(-50%))
+       entre les deux badges azan/iqama (19/08/2026, retour utilisateur sur
+       la capture Mediouni -- le "top" hors mode 5 dont il heritait par
+       defaut le faisait chevaucher le badge iqama). Ne touche pas au
+       centrage horizontal existant (text-align:center, deja correct). */
     #mainHorizontalContainer[data-layout-mode="5"] .prayerNameHorizontalClass {
         color: #F0D080;
         font-weight: bold;
         text-shadow: 0 0 10px rgba(0, 210, 110, 0.35), 0.15vw 0.15vw 0.2vw rgba(0, 0, 0, 0.6);
+        top:       50% !important;
+        transform: translateY(-50%);
     }
 
-    /* Azan : badge plein dore (l'horaire mis en avant) */
+    /* Azan/Iqama, heure complete (fullIqamaTimesActive) : les deux badges
+       partagent desormais EXACTEMENT le meme moule -- meme font-size, meme
+       padding, meme epaisseur de bordure (transparente cote azan, qui n'en
+       affichait aucune) -- pour rendre une taille identique (retour
+       utilisateur 19/08/2026 : le badge iqama, avec une police heritee plus
+       grande et un padding different, ressortait visiblement plus haut/large
+       que l'azan). Ancres symetriquement haut (iqama, top:3%) / bas (azan,
+       bottom:3%, top:auto pour annuler le "top" herite hors mode 5) --
+       garantit un ecart identique de chaque cote avec le nom recentre
+       ci-dessus, quelle que soit la hauteur reelle des badges. */
     #mainHorizontalContainer[data-layout-mode="5"] .azanTimeHorizontalClass {
         color:         #1a1710;
         background:    linear-gradient(180deg, #413c31, #e7ae06);
         text-shadow:   none;
         font-size:     4vw !important;
+        top:           auto !important;
+        bottom:        3% !important;
         width:         fit-content !important;
+        max-width:     94% !important;   /* cf. iqama ci-dessous : meme garde-fou */
         left:          50% !important;
         transform:     translateX(-50%);
         padding:       0.10em 0.55em;
+        border:        1.5px solid transparent;   /* meme epaisseur que le contour iqama, pour une taille de boite identique (box-sizing: border-box) */
         border-radius: 999px;
         box-shadow:    0 2px 8px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.15);
         box-sizing:    border-box;
     }
 
-    /* Iqama : badge contour emeraude, plus discret que l'azan */
+    /* Iqama : badge sans contour, texte blanc (demande explicite du
+       19/08/2026 -- etait #A8FFCC vert menthe) */
     #mainHorizontalContainer[data-layout-mode="5"] .iqamaTimeHorizontalClass {
-        color:         #A8FFCC;
+        color:         #FFFFFF;
         background:    rgba(0, 40, 20, 0.55);
         text-shadow:   none;
-        top:           5% !important;
+        font-size:     4vw !important;   /* aligne sur l'azan ci-dessus (heritait avant une taille de base plus grande) */
+        top:           3% !important;
         width:         fit-content !important;
+        /* Bug constate (19/08/2026, capture ecran boitier Mediouni, heure
+           d'iqama complete HH:MM/fullIqamaTimesActive) : sans plafond, la
+           largeur "fit-content" de ce badge (176px mesures) depassait la
+           cellule parente (161px) de ~7px de chaque cote -- le contour vert
+           debordait visiblement sur les cellules voisines. max-width la
+           recale toujours a l'interieur de sa propre cellule (centree via
+           left:50%/translateX(-50%) ci-dessous, donc le pourcentage se
+           reduit symetriquement des deux cotes), sans jamais retrecir le
+           badge dans le cas courant ou "HH:MM" tient deja dans les 94%. */
+        max-width:     94% !important;
         left:          50% !important;
         transform:     translateX(-50%);
-        padding:       0.05em 0.4em;
-        border:        1.5px solid rgba(0, 210, 110, 0.55);
+        padding:       0.10em 0.55em;   /* aligne sur l'azan ci-dessus (etait 0.05em 0.4em -- taille differente) */
+        /* Contour vert retire (demande explicite du 19/08/2026) : border
+           gardee (meme epaisseur que le transparent cote azan ci-dessus)
+           mais rendue transparente plutot que supprimee -- la retirer
+           purement aurait retreci le badge de 2x1.5px et recasse l'egalite
+           de taille avec l'azan (box-sizing: border-box inclut la bordure
+           dans les dimensions). */
+        border:        1.5px solid transparent;
         border-radius: 999px;
         box-sizing:    border-box;
+    }
+
+    /* Interversion azan/iqama (swapAzanIqamaCheckbox) -- mode 5 uniquement.
+       Bug constate (19/08/2026, audit systematique du swap sur tous les
+       modes) : la regle generique d'interversion (~ligne 967) ne touche QUE
+       "top", pensee pour les autres modes qui positionnent azan/iqama
+       uniquement via "top". Le mode 5 positionne l'azan par le BAS
+       ("bottom:3%" ci-dessus) -- la regle generique lui imposait alors un
+       "top" ET laissait le "bottom" actif simultanement, ce qui NE DEPLACE
+       PAS le badge mais l'ETIRE sur toute la hauteur de la cellule (mesure :
+       124px de haut au lieu de 49px). Palliatif : redefinir ici les DEUX
+       proprietes (top ET bottom) permutees, avec la meme specificite que les
+       regles de base du mode 5 juste au-dessus (elle doivent l'emporter, pas
+       la regle generique qui ne fait rien d'utile dans ce mode). */
+    #mainHorizontalContainer[data-layout-mode="5"].swapAzanIqamaActive .azanTimeHorizontalClass {
+        top:    3%    !important;
+        bottom: auto  !important;
+    }
+    #mainHorizontalContainer[data-layout-mode="5"].swapAzanIqamaActive .iqamaTimeHorizontalClass {
+        top:    auto  !important;
+        bottom: 3%    !important;
     }
 
     /* Voile sombre radial derriere le cadre : fait ressortir l'or/emeraude

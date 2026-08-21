@@ -839,7 +839,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '12.93';
+var CUSTOM_APP_VERSION = '13.0';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1048,6 +1048,7 @@ const JS_CUSTOM_DEFAULTS = {
     ucNMRDuration:               5,    // durée d'affichage de la page NMR (secondes)
     ucCounterBlackBg:            1,   // fond noir pour fullScreenCounterBackgroundHorizontal pendant l'iqama
     ucSwapAzanIqama:             0,   // bitmask : bit N (1<<N) = etat swap du mode horizontal N (JS_DATA.ucHrNamesInMiddle), cf. _initSwapAzanIqama
+    ucMode1RestoreFullIqamaTimes: 0,  // 1 = fullIqamaTimesCheckbox etait actif avant l'entree en mode 1 (a restaurer en sortant), cf. _ucSetHrLayoutMode
     ucSalatNabiEnabled:          1,   // 1 = popup + audio, 0 = popup seule (si prière activée)
     ucSalatNabiMagrebEnabled:    1,   // déclencher sur MGRB le jeudi soir
     ucSalatNabiIshaEnabled:      1,   // déclencher sur ISHA le jeudi soir
@@ -6552,6 +6553,21 @@ const _QP_STORAGE_TIME_KEY = 'JS_QP_POSITION_TIME';
         var _rName = (JS_CUSTOM.ucReciters[_qpReciterIdx] && JS_CUSTOM.ucReciters[_qpReciterIdx].name) || '?';
         var _sName = (_SURAH_NAMES && _SURAH_NAMES[_qpSurahNum - 1]) || '?';
         _L('AUDIO','FIRE',{action:'restore',reciter:_qpReciterIdx,reciter_name:_rName,surah:_qpSurahNum,surah_name:_sName});
+
+        // Filet de sécurité : en pratique, RIEN ne remet _qpRestoring à false
+        // automatiquement au démarrage normal (_qpAutoLoadIfNeeded, seul autre
+        // point qui le fait, n'est appelé que depuis les bascules serveur/
+        // récitateur des réglages -- jamais au boot) -- confirmé en direct
+        // (CDP, 21/08/2026, boîtier Mediouni) : _qpRestoring restait bloqué à
+        // true indéfiniment après CHAQUE démarrage. Tant que ce flag reste
+        // bloqué, _playQP() (donc TOUTE lecture, y compris le passage
+        // automatique à la sourate suivante) se contente de retourner sans
+        // rien charger -- observé : _qpSurahNum avance bien en interne
+        // (16->17) mais audio.src ne se charge jamais, aucun son. 4s laisse
+        // largement le temps à _startQuranAutoPlayback (si un azan est en
+        // cours de préparation) de faire son seek via 'canplay' avant que ce
+        // filet ne s'applique.
+        setTimeout(function() { _qpRestoring = false; }, 4000);
     } catch(e) {}
 })();
 
@@ -7037,11 +7053,50 @@ function _qpSavePosition() {
         grid.appendChild(btn);
     });
 
-    // Passage automatique à la sourate suivante (la lecture était active → on relance)
+    // Détermine le prochain récitateur "disponible" après reciterIdx (demande
+    // du 21/08/2026 : ne plus reboucler sur le même récitateur une fois la
+    // sourate 114 terminée, mais passer au récitateur suivant, jusqu'à
+    // épuiser la liste puis reboucler sur le premier). Même notion de
+    // "disponible" que _qpHasPlayableSource : un récitateur serveur
+    // (index < UC_RECITERS_STATIC_COUNT) ne compte que si le serveur est
+    // activé ; un récitateur "device" (téléchargé/USB) compte dès qu'il est
+    // présent dans la liste (toujours enabled=1, cf. _syncDeviceReciters).
+    // Parcourt toute la liste (pas seulement les récitateurs serveur) : un
+    // récitateur device ajouté après le dernier statique compte bien comme
+    // "suivant". Repli sur reciterIdx lui-même si aucun autre récitateur
+    // n'est disponible (évite un index invalide / une boucle infinie).
+    function _qpNextAvailableReciterIdx(reciterIdx) {
+        var reciters = Array.isArray(JS_CUSTOM.ucReciters) ? JS_CUSTOM.ucReciters : [];
+        var n = reciters.length;
+        if (n === 0) return reciterIdx;
+        function isAvailable(r, idx) {
+            if (!r || r.enabled != 1) return false;
+            if (idx < UC_RECITERS_STATIC_COUNT) return JS_CUSTOM.ucQuranServerEnabled == 1;
+            return true;
+        }
+        for (var step = 1; step <= n; step++) {
+            var idx = (reciterIdx + step) % n;
+            if (isAvailable(reciters[idx], idx)) return idx;
+        }
+        return reciterIdx;
+    }
+
+    // Passage automatique à la sourate suivante (la lecture était active → on
+    // relance). Sourate 114 (An-Nas) déjà atteinte : ne reboucle plus sur le
+    // même récitateur (ancien comportement, `(_qpSurahNum % 114) + 1`) mais
+    // passe au récitateur suivant disponible, sourate 1 -- et reboucle sur le
+    // premier récitateur de la liste une fois le dernier épuisé (demande du
+    // 21/08/2026).
     const _qpAudio = document.getElementById('quranAudioPlayer');
     _qpAudio.addEventListener('ended', function() {
         _qpAutoAdvance = true;
-        selectQPSurah((_qpSurahNum % 114) + 1);
+        if (_qpSurahNum >= 114) {
+            _qpReciterIdx = _qpNextAvailableReciterIdx(_qpReciterIdx);
+            if (typeof _refreshQPReciters === 'function') _refreshQPReciters();
+            selectQPSurah(1);
+        } else {
+            selectQPSurah(_qpSurahNum + 1);
+        }
     });
 
     // ── Retry automatique sur erreur de chargement audio ─────────────────
@@ -9104,6 +9159,30 @@ function _ucHumanLog(cat, verb, ctx, ts) {
     if (line) console.log('[' + ts + '][' + cat + '] ' + line);
 }
 
+// ── Progression du chargement (écran de démarrage natif) ───────────────────
+// Écran natif (activity_main.xml, splashOverlay) : logo + basmala + cercle de
+// progression 0-100 par-dessus le WebView tant que ce fichier n'a pas fini de
+// construire le DOM/CSS final -- retour utilisateur explicite du 19/08/2026
+// ("éviter de voir la construction progressive du CSS"). On se branche sur
+// les ~50 jalons _L('CUSTOM','INIT',...) déjà émis par les IIFEs
+// d'initialisation réparties dans tout ce fichier (aucune de ces ~50 IIFEs
+// n'a besoin d'être modifiée) pour alimenter un pourcentage 0-95 envoyé au
+// natif au fil de l'exécution. Plafonné à 95 ici à dessein : certains jalons
+// ne se déclenchent pas selon la config/l'appareil (gardes `if (!el) return`
+// fréquentes dans ce fichier), donc le compte réel n'atteint pas toujours
+// _UC_BOOT_TOTAL_MILESTONES. Le passage à 100 et la fermeture réelle du
+// splash (MobileJsBridge.notifyAppFullyReady()) n'arrivent qu'à la toute fin
+// de ce fichier -- seul signal fiable de "plus rien à exécuter en synchrone".
+var _UC_BOOT_TOTAL_MILESTONES = 50; // nb actuel de _L('CUSTOM','INIT',...) ci-dessous -- ajuster si on en ajoute/retire
+var _ucBootMilestoneCount = 0;
+var _ucBootComplete = false;
+function _ucReportBootProgress(pct) {
+    if (_ucBootComplete) return;
+    if (window.AndroidMobile && typeof window.AndroidMobile.reportLoadProgress === 'function') {
+        window.AndroidMobile.reportLoadProgress(pct);
+    }
+}
+
 // ── Log structuré commun ──────────────────────────────────────────────────
 // Format : [HH:MM:SS][CAT] VERB key=val key=val ...
 // Verbes normalisés : FIRE | SKIP | RESUME | STOP | EVT
@@ -9115,6 +9194,10 @@ function _L(cat, verb, ctx) {
     var parts = Object.keys(ctx || {}).map(function(k) { return k + '=' + ctx[k]; });
     console.log('[' + ts + '][' + cat + '] ' + verb + (parts.length ? ' ' + parts.join(' ') : ''));
     _ucHumanLog(cat, verb, ctx, ts);
+    if (cat === 'CUSTOM' && verb === 'INIT' && !_ucBootComplete) {
+        _ucBootMilestoneCount++;
+        _ucReportBootProgress(Math.min(95, Math.round(_ucBootMilestoneCount / _UC_BOOT_TOTAL_MILESTONES * 100)));
+    }
 }
 
 // ── Dispatcher interne ────────────────────────────────────────────────────
@@ -11282,10 +11365,52 @@ window.SIMUL = (function() {
     // meme logique que toggleHrNamesMiddleFunction (sauvegarde + re-render).
     window._ucSetHrLayoutMode = function (mode) {
         var m = ((mode % 7) + 7) % 7; // toujours positif meme si mode < 0
+        var prevMode = JS_DATA.ucHrNamesInMiddle;
         JS_DATA.ucHrNamesInMiddle = m;
         saveSettingsToStorageFunction();
+
+        // Mode 1 ("مركزي") : le fond arcade (hrCellBg9.png) n'est appliqué
+        // par le core (m2body.js, updateIqamaTimesDisplayFunction) QUE quand
+        // l'iqama s'affiche en durée ("12'"), jamais en heure complète
+        // (HH:MM, fullIqamaTimesCheckbox) -- confirmé en conditions réelles
+        // (capture boîtier Mediouni, 19/08/2026) : avec l'heure complète
+        // active, le mode 1 affichait un simple fond carré au lieu de
+        // l'arcade voulue. Plutôt que de forcer artificiellement le fond par
+        // CSS (le mode 1 resterait alors incohérent avec son propre
+        // affichage iqama), on désactive l'heure complète le temps du mode 1
+        // et on la restaure telle quelle en le quittant.
+        if (m === 1 && prevMode !== 1) {
+            if (JS_DATA.ucIqamaFullTimes == 1 && typeof toggleIqamaFullTimesFunction === 'function') {
+                JS_CUSTOM.ucMode1RestoreFullIqamaTimes = 1;
+                saveCustomSettingsFunction();
+                toggleIqamaFullTimesFunction();
+            }
+        } else if (m !== 1 && prevMode === 1) {
+            if (JS_CUSTOM.ucMode1RestoreFullIqamaTimes == 1) {
+                JS_CUSTOM.ucMode1RestoreFullIqamaTimes = 0;
+                saveCustomSettingsFunction();
+                if (JS_DATA.ucIqamaFullTimes != 1 && typeof toggleIqamaFullTimesFunction === 'function') {
+                    toggleIqamaFullTimesFunction();
+                }
+            }
+        }
+
+        _ucSyncFullIqamaTimesAvailability();
         updateHrNamesPositionFunction(true);
     };
+
+    // Grise fullIqamaTimesCheckbox en mode 1 (retour utilisateur explicite,
+    // 19/08/2026) : au-dela du garde-fou d'entree/sortie ci-dessus, empeche
+    // aussi l'utilisateur de recocher l'heure complete MANUELLEMENT pendant
+    // que le mode 1 est actif (ce qui recreerait aussitot le fond carre au
+    // lieu de l'arcade) -- disabled empeche a la fois le clic ET l'evenement
+    // onchange, natif, aucune interception necessaire.
+    function _ucSyncFullIqamaTimesAvailability() {
+        var cb = document.getElementById('fullIqamaTimesCheckbox');
+        if (cb) cb.disabled = (JS_DATA.ucHrNamesInMiddle == 1);
+    }
+    window._ucSyncFullIqamaTimesAvailability = _ucSyncFullIqamaTimesAvailability;
+    _ucSyncFullIqamaTimesAvailability();
 
 })();
 
@@ -13694,11 +13819,34 @@ function forceHijriSyncFunction() {
 //    aucun appelant, laissée intacte mais inerte.
 // ═══════════════════════════════════════════════════════════════════════════
 (function _installSmoothMarqueeCss() {
+    // Saccadé constaté malgré la CSS @keyframes ci-dessus (retour utilisateur
+    // 20/08/2026) : mesuré en direct (screenrecord + analyse image par image,
+    // 20fps) -- la position n'avance en réalité qu'une frame sur deux
+    // (~10fps effectifs), motif parfaitement régulier (0px, -7px, 0px, -7px,
+    // ...). Le renfort d'isolation ci-dessous (contain + backface-visibility)
+    // a été testé et NE corrige PAS le motif (mesuré identique avant/après,
+    // et identique même avec TOUTES les autres animations de la page
+    // désactivées) -- ce n'est donc pas une contention CSS/JS. Cause réelle
+    // trouvée : MainActivity.kt force LAYER_TYPE_SOFTWARE sur boîtier TV
+    // (fix d'un autre bug, l'artefact vert de l'horloge), ce qui sort tout
+    // le WebView du compositeur GPU et plafonne le rendu logiciel à ~10fps
+    // sur ce CPU faible -- aucun réglage CSS/JS ne peut lever ce plafond
+    // tant que ce compromis natif est en place. Cf. le TODO daté 20/08/2026
+    // dans MainActivity.kt::setupWebView() pour la suite. On garde quand
+    // même ce renfort d'isolation ci-dessous : gain potentiel si/quand
+    // LAYER_TYPE_HARDWARE est rétabli sur TV.
     var _styleEl = document.createElement('style');
     _styleEl.textContent =
         '@keyframes ucMarqueeSlide {' +
         '  from { transform: translate3d(var(--uc-mq-start, 0px), 0, 0); }' +
         '  to   { transform: translate3d(var(--uc-mq-end, 0px), 0, 0); }' +
+        '}' +
+        '#marqueeContainerHorizontal, #marqueeContainerVertical {' +
+        '  contain: strict;' +
+        '}' +
+        '#marqueeTextHorizontal, #marqueeTextVertical {' +
+        '  backface-visibility: hidden;' +
+        '  contain: layout style;' +
         '}';
     document.head.appendChild(_styleEl);
 
@@ -27197,7 +27345,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     // Persiste jusqu'au prochain succès ou à la prochaine tentative.
     var _acLastError      = {};
 
-    var _AC_DOWNLOAD_TIMEOUT_MS = 45000;   // filet de sécurité (voir commentaire plus bas)
+    var _AC_DOWNLOAD_TIMEOUT_MS = 130000;   // filet de sécurité (voir commentaire plus bas)
     var _acDownloadTimeouts = {};           // id -> setTimeout id
 
     function _acDownload(item, groupKeyIfSelecting) {
@@ -27234,10 +27382,17 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         // jamais (cf. catch silencieux ci-dessous, avant correctif) ou une
         // connexion native qui ne referme jamais son statut laisse la roue
         // tourner indéfiniment, sans aucune trace — exactement le symptôme
-        // "spinner infini, zéro log". Le natif se termine déjà seul sous ~35s
-        // (connect 15s + read 20s, cf. AzanCatalogManager.kt), donc 45s ici ne
-        // devrait normalement jamais se déclencher — c'est un filet, pas le
-        // chemin normal.
+        // "spinner infini, zéro log". Le natif se termine déjà seul sous
+        // ~81s au pire (3 tentatives automatiques depuis le 21/08/2026, cf.
+        // AzanCatalogManager.MAX_DOWNLOAD_ATTEMPTS/ATTEMPT_DEADLINE_MS/
+        // RETRY_DELAY_MS : 25s par tentative + 3s entre tentatives -- ce
+        // plafond de 25s est une horloge murale dure, indépendante de
+        // connectTimeout/readTimeout, cf. son propre commentaire : les vrais
+        // échecs observés en logs Supabase, mosquée Mediouni le 18/08/2026,
+        // n'ont jamais atteint ces timeouts socket, la connexion restait
+        // "vivante" en trickle sans jamais finir), donc 130s ici ne devrait
+        // normalement jamais se déclencher — c'est un filet, pas le chemin
+        // normal.
         _acDownloadTimeouts[item.id] = setTimeout(function () {
             _L('AZANCAT', 'SKIP', { action: 'download_timeout', id: item.id });
             if (window._ucToast) window._ucToast('خطأ التحميل | Échec du téléchargement (délai dépassé)', 'error');
@@ -31471,3 +31626,81 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 // ═════════════════════════════════════════════════════════════════════════════
 // FIN ENRICHISSEMENT AZKAR SABAH/MASAA
 // ═════════════════════════════════════════════════════════════════════════════
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SIGNAL "APPLICATION PRÊTE" (écran de démarrage natif) — DERNIER BLOC DE CE
+// FICHIER, VOLONTAIREMENT. D'après AGENTS.md (ordre de chargement des
+// scripts), spec/custom.js est le dernier fichier chargé de toute la page --
+// à ce stade, tous les IIFEs d'initialisation ci-dessus ont fini de
+// construire le DOM/CSS dynamique. Ça ne suffit PAS a soi seul : bug constaté
+// en direct (logcat, 19/08/2026) -- ce point de "fin de script synchrone"
+// arrive ~4s AVANT l'évènement 'load' de la fenêtre (m2body.js:8838,
+// dolog('_LOAD_COMPLETED_')), qui attend en plus toutes les ressources encore
+// en vol (probes d'images de thèmes, requête audio vers le serveur local de
+// la box...). On attend donc la PLUS TARDIVE des deux : fin de ce fichier ET
+// évènement 'load'. Puis en plus le chargement des polices
+// (document.fonts.ready) et deux frames d'animation (garantit qu'un vrai
+// paint a eu lieu, pas seulement le layout) avant de signaler au natif de
+// retirer l'écran de chargement -- évite de révéler une construction encore
+// visible (retour utilisateur explicite, répété avec insistance). Sans
+// bridge natif (navigateur/PC kiosque) : aucun splash à masquer, no-op.
+// ═════════════════════════════════════════════════════════════════════════════
+(function _ucSignalAppFullyReady() {
+    // Bug constaté en direct (logcat, 19-20/08/2026) : un simple "if
+    // (!window.AndroidMobile) return;" ici faisait échouer TOUT le mécanisme
+    // en silence (hideSplash() ne se déclenchait alors plus que par le filet
+    // de sécurité 12s, jamais par ce signal) -- le bridge natif
+    // (addJavascriptInterface, injecté avant loadUrl()) n'est apparemment
+    // pas garanti synchrone au tout premier tick sur ce WebView (Chrome/91,
+    // boîtiers génériques). On retente donc pendant quelques secondes
+    // (largement sous le filet de sécurité natif de 12s) plutôt que
+    // d'abandonner sur un seul essai.
+    var ANDROID_BRIDGE_RETRY_MS = 150;
+    var ANDROID_BRIDGE_MAX_WAIT_MS = 8000;
+    var _bridgeWaited = 0;
+
+    function _withBridge(cb) {
+        if (window.AndroidMobile && typeof window.AndroidMobile.notifyAppFullyReady === 'function') {
+            cb();
+            return;
+        }
+        _bridgeWaited += ANDROID_BRIDGE_RETRY_MS;
+        if (_bridgeWaited > ANDROID_BRIDGE_MAX_WAIT_MS) {
+            console.warn('[BOOT] window.AndroidMobile jamais disponible après ' + ANDROID_BRIDGE_MAX_WAIT_MS + 'ms -- abandon (filet de sécurité natif prendra le relais)');
+            return;
+        }
+        setTimeout(function () { _withBridge(cb); }, ANDROID_BRIDGE_RETRY_MS);
+    }
+
+    var customJsDone = false;
+    var windowLoaded = (document.readyState === 'complete');
+    var fired = false;
+
+    function _maybeFire() {
+        if (fired || !customJsDone || !windowLoaded) return;
+        fired = true;
+
+        var fontsReady = (typeof document !== 'undefined' && document.fonts && document.fonts.ready)
+            ? document.fonts.ready
+            : Promise.resolve();
+
+        fontsReady.catch(function () {}).then(function () {
+            requestAnimationFrame(function () {
+                requestAnimationFrame(function () {
+                    _ucBootComplete = true;
+                    _withBridge(function () {
+                        window.AndroidMobile.reportLoadProgress(100);
+                        window.AndroidMobile.notifyAppFullyReady();
+                        console.log('[BOOT] notifyAppFullyReady() envoyé');
+                    });
+                });
+            });
+        });
+    }
+
+    if (!windowLoaded) {
+        window.addEventListener('load', function () { windowLoaded = true; _maybeFire(); }, { once: true });
+    }
+    customJsDone = true;
+    _maybeFire();
+})();

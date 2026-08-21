@@ -13401,6 +13401,35 @@ function forceHijriSyncFunction() {
 
     ucOn(UC_EVT.AZAN_TIME, function(e) {
         if (e.isDohaPrayer)                     return;   // shuruq : pas d'audio long
+
+        // jomoaAzanCheckbox (JS_DATA.ucActivateJomoaAzan) : le cœur ne
+        // consulte ce flag QUE dans playAzanSoundFunction() (m2body.js
+        // L2284), jamais appelée ici -- ce handler court-circuite entièrement
+        // le cœur en mode "voix complète" (son JS direct + prise en charge
+        // native, cf. commentaire plus bas). Sans ce garde-fou, décocher la
+        // case n'empêchait donc RIEN le vendredi : ni le son JS, ni le son
+        // natif (_sendToNative ne consulte pas non plus ce flag -- cf. fix
+        // jumelé dans _sendToNative ci-dessous). Constaté en log Supabase :
+        // azan-doukali.ogg joué à l'heure de Jumu'ah malgré la case décochée.
+        //
+        // Placé EN PREMIER, avant le branchement "mode silencieux" ci-dessous
+        // (déplacé le 21/08/2026) : ce garde-fou était auparavant après le
+        // "return" du mode silencieux (ucAzanIqamaByVoice != 1), donc jamais
+        // atteint dès que le mode voix était désactivé -- dans ce cas précis,
+        // le popup d'azan s'affichait quand même et restait maintenu 180s à
+        // l'heure de Jumu'ah, checkbox décochée ou non (constaté en log
+        // Supabase, mosquée tn.monastir.aboubakr, 21/08/2026 : popup DOHR
+        // affiché puis fermé par le timeout 180s à l'heure exacte de
+        // Jumu'ah, alors que jomoaAzanCheckbox était décochée -- coïncidence
+        // avec un changement de mode voix juste avant qui a permis de le
+        // repérer, mais le même popup se serait affiché même sans ce
+        // changement puisque ce garde-fou n'était de toute façon jamais
+        // atteint par cette branche).
+        if (e.prayer === 'DOHR' && isFriday && JS_DATA.ucActivateJomoaAzan != 1) {
+            _L('AZAN','WEBVIEW_AUDIO_SKIP',{prayer:e.prayer,reason:'jomoa_azan_disabled'});
+            return;
+        }
+
         // mode silencieux : popup maintenu 180 s (= ~3min audio)
         if (JS_DATA.ucAzanIqamaByVoice != 1) {
             if (e.isDohaPrayer) return;
@@ -13415,20 +13444,6 @@ function forceHijriSyncFunction() {
             return;
         }
         if (JS_DATA.ucShortAzanActive  ==  1)   return;   // azan court : durée connue d'avance
-
-        // jomoaAzanCheckbox (JS_DATA.ucActivateJomoaAzan) : le cœur ne
-        // consulte ce flag QUE dans playAzanSoundFunction() (m2body.js
-        // L2284), jamais appelée ici -- ce handler court-circuite entièrement
-        // le cœur en mode "voix complète" (son JS direct + prise en charge
-        // native, cf. commentaire plus bas). Sans ce garde-fou, décocher la
-        // case n'empêchait donc RIEN le vendredi : ni le son JS, ni le son
-        // natif (_sendToNative ne consulte pas non plus ce flag -- cf. fix
-        // jumelé dans _sendToNative ci-dessous). Constaté en log Supabase :
-        // azan-doukali.ogg joué à l'heure de Jumu'ah malgré la case décochée.
-        if (e.prayer === 'DOHR' && isFriday && JS_DATA.ucActivateJomoaAzan != 1) {
-            _L('AZAN','WEBVIEW_AUDIO_SKIP',{prayer:e.prayer,reason:'jomoa_azan_disabled'});
-            return;
-        }
 
         var isFajr   = (e.prayer === 'FAJR');
         var audioEl  = document.getElementById(isFajr ? 'audioFajrElement' : 'audioAzanElement');

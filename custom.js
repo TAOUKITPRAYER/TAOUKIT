@@ -201,7 +201,7 @@ function _ucBindGuidedInput(el, type) {
         // index de thème (0-39) OU "." seul (sentinelle "aucun thème") --
         // cf. commentaire sur intOrDot dans _UC_GUIDED_MASKERS plus haut.
         [/editThemeFor(Salat|Day)Function/, 'intOrDot'],
-        [/editBlinkingSecondsFunction|editTakbirM[01](Delay|Duration)Function|editIqamaZeroBlinkDurFunction|editStopQuranBeforeAzanDelayFunction|editStartQuranBeforeAzanDelayFunction|editLightProgramming(Delay|JomaDelay|Extra)Function|editNMRIntervalFunction|editNMRDurationFunction|_ucEditAlertVoiceDelay|editRAQuranDelayFunction|editSlidesViewTimeFunction|editTawkitViewTimeFunction|editDohrXminAsrFunction|editPrimaryAzanFunction/, 'int']
+        [/editBlinkingSecondsFunction|editTakbirM[01](Delay|Duration)Function|editIqamaZeroBlinkDurFunction|editStopQuranBeforeAzanDelayFunction|editStopQuranBeforeAzanDelayJomoaFunction|editStartQuranBeforeAzanDelayFunction|editLightProgramming(Delay|JomaDelay|Extra)Function|editNMRIntervalFunction|editNMRDurationFunction|_ucEditAlertVoiceDelay|editRAQuranDelayFunction|editSlidesViewTimeFunction|editTawkitViewTimeFunction|editDohrXminAsrFunction|editPrimaryAzanFunction/, 'int']
     ];
     function _classify(cb) {
         cb = String(cb || '');
@@ -705,6 +705,7 @@ const L_DIALOGS = {
     iqamaZeroBlinkMinaret:  { AR: 'مدة وميض المِأذنة (ثواني)', FR: 'Durée du clignotement du minaret (secondes)', EN: 'Minaret blink duration (seconds)' },
     iqamaZeroBlinkMihrab:   { AR: 'مدة وميض المحراب (ثواني)', FR: 'Durée du clignotement du mihrab (secondes)', EN: 'Mihrab blink duration (seconds)' },
     stopQuranBeforeAzan:    { AR: 'التوقف قبل الأذان بـ (ثواني)', FR: "Arrêt avant l'azan dans (secondes)", EN: 'Stop before azan in (seconds)' },
+    stopQuranBeforeAzanJomoa: { AR: 'التوقف قبل أذان الجمعة بـ (دقائق)', FR: "Arrêt avant l'azan de Jumu'a dans (minutes)", EN: "Stop before Jumu'a azan in (minutes)" },
     quranServerUrl:         { AR: 'عنوان سيرفر القرآن', FR: 'Adresse du serveur Coran', EN: 'Quran server address' },
     reciterName:            { AR: 'اسم القارئ', FR: 'Nom du récitateur', EN: 'Reciter name' },
     reciterCatalogUrl:      { AR: 'رابط كتالوج القرّاء (JSON)', FR: 'Lien du catalogue des récitateurs (JSON)', EN: 'Reciters catalog link (JSON)' },
@@ -986,6 +987,12 @@ const JS_CUSTOM_DEFAULTS = {
     ucStartQuranBeforeAzanJomoa: 900,   // 15 min actif par défaut (était Enabled=1)
     ucStopQuranBeforeAzan:      1,   // 1 = actif, 0 = désactivé
     ucStopQuranBeforeAzanDelay: 60, // secondes avant l'azan
+    // Réglage dédié Jumu'a (minutes, pas secondes -- valeurs typiques en
+    // dizaines de minutes) : 0 = pas de valeur dédiée, on retombe sur
+    // ucStopQuranBeforeAzanDelay ci-dessus (comportement générique inchangé
+    // tant que l'admin n'a rien configuré). cf. updateNextPrayerDisplay
+    // (bloc "Arrêt du Coran avant l'azan") pour son utilisation.
+    ucStopQuranBeforeAzanDelayJomoa: 0,
     ucQuranServerEnabled:   0,
     ucAzanFromServer:       1,
     ucQuranServerUrl:       'http://127.0.0.1:8080',
@@ -4081,7 +4088,17 @@ function applyNextPrayerHighlight(remainingMinutes) {
 
     // ── Arrêt du Coran avant l'azan ─────────────────────────────────────
     if (JS_CUSTOM.ucStopQuranBeforeAzan == 1) {
-        const thresholdMin = JS_CUSTOM.ucStopQuranBeforeAzanDelay / 60;
+        // Réglage dédié Jumu'a (ucStopQuranBeforeAzanDelayJomoa, en minutes,
+        // 0=désactivé -> repli sur le générique ci-dessous). +1 min de marge
+        // volontaire (demande explicite) : la valeur saisie par l'admin
+        // (ex. 30) déclenche l'arrêt à valeur+1 min avant l'azan (ex. 31),
+        // pour garantir la marge même si le tick tombe juste après le seuil
+        // affiché -- ne s'applique qu'à Jumu'a, le générique garde son
+        // comportement (thresholdMin exact, pas de marge) inchangé.
+        const jomoaOverrideMin = JS_CUSTOM.ucStopQuranBeforeAzanDelayJomoa;
+        const thresholdMin = (nextKey === 'JOMOA' && jomoaOverrideMin > 0)
+            ? jomoaOverrideMin + 1
+            : (JS_CUSTOM.ucStopQuranBeforeAzanDelay / 60);
         if (remainingMinutes <= thresholdMin && !_sqbFired) {
             _sqbFired = true;
             _pendingAutoStart = false;
@@ -4702,6 +4719,12 @@ function _rmSetDownloadActive(id, active) {
                 &nbsp;<span>إيقاف القرآن قبل الأذان</span>
                 &nbsp;<span class='clickableWhiteClass' id='stopQuranBeforeAzanButton' onclick='editStopQuranBeforeAzanDelayFunction();'></span>
             </div>
+
+            <!-- ═══ VARIABLE : StopQuranBeforeAzanJomoa (réglage dédié Jumu'a) ═══ -->
+            <div style='padding-left:26px;'>
+                &nbsp;<span>إيقاف قرآن الجمعة قبل الأذان (دقائق)</span>
+                &nbsp;<span class='clickableWhiteClass' id='stopQuranBeforeAzanJomoaButton' onclick='editStopQuranBeforeAzanDelayJomoaFunction();'></span>
+            </div>
             <hr>
 
             <div>
@@ -4832,6 +4855,7 @@ function _rmSetDownloadActive(id, active) {
     document.getElementById('blinkingEnabledCheckbox').checked         = (JS_CUSTOM.ucBlinkingEnabled == 1);
     document.getElementById('stopQuranBeforeAzanButton').innerHTML     = JS_CUSTOM.ucStopQuranBeforeAzanDelay + 's';
     document.getElementById('stopQuranBeforeAzanCheckbox').checked     = (JS_CUSTOM.ucStopQuranBeforeAzan == 1);
+    document.getElementById('stopQuranBeforeAzanJomoaButton').innerHTML = JS_CUSTOM.ucStopQuranBeforeAzanDelayJomoa + 'min';
     document.getElementById('startQuranBeforeAzanCheckbox').checked    = (JS_CUSTOM.ucStartQuranBeforeAzan == 1);
 
     // -- Checkbox : rotation des versets/ayats --
@@ -5207,6 +5231,24 @@ function editStopQuranBeforeAzanDelayFunction() {
     JS_CUSTOM.ucStopQuranBeforeAzanDelay = val;
     saveCustomSettingsFunction();
     document.getElementById('stopQuranBeforeAzanButton').innerHTML = val + 's';
+    _sqbFired = false;   // recalculer immédiatement avec le nouveau seuil
+}
+
+// Réglage dédié Jumu'a (minutes) : 0 = désactivé/repli sur
+// ucStopQuranBeforeAzanDelay ci-dessus -- contrairement au générique, 0 est
+// une valeur valide ici (pas de minimum à 10, cf. editStopQuranBeforeAzanDelayFunction).
+function editStopQuranBeforeAzanDelayJomoaFunction() {
+    if (!isInputDialogOpen) {
+        inputDialogValue  = '';
+        isInputDialogOpen = false;
+        openInputDialogFunction(_dlgT('stopQuranBeforeAzanJomoa'), JS_CUSTOM.ucStopQuranBeforeAzanDelayJomoa, 'editStopQuranBeforeAzanDelayJomoaFunction()', true);
+        return;
+    }
+    let val = parseInt(inputDialogValue);
+    if (isNaN(val) || val < 0) val = 0;
+    JS_CUSTOM.ucStopQuranBeforeAzanDelayJomoa = val;
+    saveCustomSettingsFunction();
+    document.getElementById('stopQuranBeforeAzanJomoaButton').innerHTML = val + 'min';
     _sqbFired = false;   // recalculer immédiatement avec le nouveau seuil
 }
 
@@ -13418,6 +13460,11 @@ function forceHijriSyncFunction() {
     ucOn(UC_EVT.AZAN_TIME, function(e) {
         if (e.isDohaPrayer)                     return;   // shuruq : pas d'audio long
 
+        // jomoaAudioMuted : true si Jumu'a (DOHR le vendredi) ET jomoaAzanCheckbox
+        // décochée -- cf. usages plus bas (ne PAS early-return : le popup doit
+        // quand même s'afficher, juste sans son, demande explicite du 21/08/2026).
+        var jomoaAudioMuted = (e.prayer === 'DOHR' && isFriday && JS_DATA.ucActivateJomoaAzan != 1);
+
         // jomoaAzanCheckbox (JS_DATA.ucActivateJomoaAzan) : le cœur ne
         // consulte ce flag QUE dans playAzanSoundFunction() (m2body.js
         // L2284), jamais appelée ici -- ce handler court-circuite entièrement
@@ -13428,26 +13475,22 @@ function forceHijriSyncFunction() {
         // jumelé dans _sendToNative ci-dessous). Constaté en log Supabase :
         // azan-doukali.ogg joué à l'heure de Jumu'ah malgré la case décochée.
         //
-        // Placé EN PREMIER, avant le branchement "mode silencieux" ci-dessous
-        // (déplacé le 21/08/2026) : ce garde-fou était auparavant après le
-        // "return" du mode silencieux (ucAzanIqamaByVoice != 1), donc jamais
-        // atteint dès que le mode voix était désactivé -- dans ce cas précis,
-        // le popup d'azan s'affichait quand même et restait maintenu 180s à
-        // l'heure de Jumu'ah, checkbox décochée ou non (constaté en log
-        // Supabase, mosquée tn.monastir.aboubakr, 21/08/2026 : popup DOHR
-        // affiché puis fermé par le timeout 180s à l'heure exacte de
-        // Jumu'ah, alors que jomoaAzanCheckbox était décochée -- coïncidence
-        // avec un changement de mode voix juste avant qui a permis de le
-        // repérer, mais le même popup se serait affiché même sans ce
-        // changement puisque ce garde-fou n'était de toute façon jamais
-        // atteint par cette branche).
-        if (e.prayer === 'DOHR' && isFriday && JS_DATA.ucActivateJomoaAzan != 1) {
-            _L('AZAN','WEBVIEW_AUDIO_SKIP',{prayer:e.prayer,reason:'jomoa_azan_disabled'});
-            return;
-        }
+        // RÉVISÉ le 21/08/2026 (demande explicite) : ce garde-fou faisait
+        // auparavant un "return" immédiat ici (aucun popup affiché du tout).
+        // Nouveau comportement voulu : le popup DOIT quand même s'afficher,
+        // pour la durée RÉELLE du son azan lié (comme s'il jouait), mais sans
+        // son audible -- jomoaAudioMuted (calculé tout en haut de ce handler)
+        // force donc le passage direct au chemin "voix complète" ci-dessous
+        // (bypasse mode silencieux ET azan court, cf. les 2 checks suivants),
+        // avec une coupure du son forcée plus bas (audioEl.muted). Le natif
+        // (AzanPlaybackService) reste correctement bloqué côté programmation
+        // (_sendToNative, inchangé) : aucun son réel n'est donc jamais
+        // audible, sur aucun chemin, quand la case est décochée.
 
-        // mode silencieux : popup maintenu 180 s (= ~3min audio)
-        if (JS_DATA.ucAzanIqamaByVoice != 1) {
+        // mode silencieux : popup maintenu 180 s (= ~3min audio) -- sauté si
+        // jomoaAudioMuted (cf. commentaire ci-dessus : la durée doit alors
+        // suivre le son réel, pas ce délai fixe générique).
+        if (JS_DATA.ucAzanIqamaByVoice != 1 && !jomoaAudioMuted) {
             if (e.isDohaPrayer) return;
             if (_ucBlockAzanHide) return;
             _ucBlockAzanHide = true;
@@ -13459,7 +13502,7 @@ function forceHijriSyncFunction() {
             _L('AZAN','WEBVIEW_AUDIO_SKIP',{prayer:e.prayer,reason:'voice_disabled',popup_hold:'180s'});
             return;
         }
-        if (JS_DATA.ucShortAzanActive  ==  1)   return;   // azan court : durée connue d'avance
+        if (JS_DATA.ucShortAzanActive == 1 && !jomoaAudioMuted) return;   // azan court : durée connue d'avance
 
         var isFajr   = (e.prayer === 'FAJR');
         var audioEl  = document.getElementById(isFajr ? 'audioFajrElement' : 'audioAzanElement');
@@ -13478,9 +13521,12 @@ function forceHijriSyncFunction() {
         // "voix complete" (ucAzanIqamaByVoice==1, ucShortAzanActive!=1, cf. les
         // 2 "return" ci-dessus) : azan court/bip restent sur l'ancien
         // comportement (JS foreground uniquement, natif background seulement).
-        audioEl.muted = !!window.AndroidMobile;
+        // jomoaAudioMuted force la coupure ICI aussi (en plus du blocage déjà
+        // fait côté natif via _sendToNative) : garantit qu'aucun son n'est
+        // audible sur aucun chemin quand jomoaAzanCheckbox est décochée.
+        audioEl.muted = jomoaAudioMuted || !!window.AndroidMobile;
         _L('AZAN','AUDIO_SOURCE',{prayer:e.prayer,muted:audioEl.muted,
-            reason:(audioEl.muted ? 'native_takeover' : 'no_native_bridge')});
+            reason:(jomoaAudioMuted ? 'jomoa_azan_disabled' : (audioEl.muted ? 'native_takeover' : 'no_native_bridge'))});
 
         // Nettoyer une éventuelle session précédente
         if (_ucLastAzanAudioEl && _ucAzanReleaseFunc) {
@@ -13500,7 +13546,20 @@ function forceHijriSyncFunction() {
         // 'ended' de ce <audio> JS (muted côté natif) ne ferme plus la popup
         // directement : il ne fait que déclencher l'attente de la fin RÉELLE
         // côté natif (cf. _ucWaitNativeThenRelease ci-dessus).
-        _ucAzanReleaseFunc  = function() { _ucWaitNativeThenRelease('audio_ended'); };
+        //
+        // EXCEPTION jomoaAudioMuted : aucune lecture native n'a lieu dans ce
+        // cas (_sendToNative ne programme jamais l'alarme pour ce cycle), donc
+        // _ucWaitNativeThenRelease ne verrait JAMAIS isAzanCurrentlyPlaying()
+        // passer à true -- elle sonderait indéfiniment jusqu'au filet de
+        // sécurité 300s (5 min), bien au-delà de la durée réelle du fichier
+        // audio chargé (muet mais bien joué). Le <audio> JS EST ici la seule
+        // source de vérité (rien à réconcilier avec un natif qui ne joue
+        // rien) : on relâche donc directement sur son propre 'ended' réel,
+        // qui correspond exactement à la durée du son lié (demande explicite
+        // du 21/08/2026).
+        _ucAzanReleaseFunc  = jomoaAudioMuted
+            ? function() { _ucReleaseAzanBlock('jomoa_muted_ended'); }
+            : function() { _ucWaitNativeThenRelease('audio_ended'); };
 
         audioEl.addEventListener('ended', _ucAzanReleaseFunc);
         audioEl.addEventListener('error', _ucAzanFallbackOrHold);
@@ -13519,7 +13578,8 @@ function forceHijriSyncFunction() {
         // dépendre de la fidélité du <audio> JS. Le 'ended' ci-dessus reste
         // en place comme déclencheur redondant (sans risque : _ucReleaseAzanBlock
         // et le suivi par génération, cf. plus haut, sont idempotents).
-        if (audioEl.muted && _ucHasNative('isAzanCurrentlyPlaying')) {
+        // jomoaAudioMuted : sauté, cf. commentaire ci-dessus (pas de natif à sonder).
+        if (!jomoaAudioMuted && audioEl.muted && _ucHasNative('isAzanCurrentlyPlaying')) {
             _ucWaitNativeThenRelease('native_poll_immediate');
         }
 
@@ -20637,6 +20697,169 @@ function selectQPTakbir() {
 
 })();
 
+// ═════════════════════════════════════════════════════════════════════════════
+// HADITH DE REPLI JUMU'A — s'affiche 30s après la fermeture du popup azan de
+// Jumu'a (calqué sur _installPostAzanDoua ci-dessus, même mécanique
+// show/fade/forceHide), demande explicite du 21/08/2026. postAzanDoua
+// exclut déjà JOMOA de ses 5 prières canoniques (_5PRAYERS ci-dessus) : pas
+// de conflit d'affichage simultané entre les deux overlays.
+// ═════════════════════════════════════════════════════════════════════════════
+(function _installJomoaHadithFallback() {
+
+    var _jhVisible    = false;
+    var _fadeTimer     = null;
+    var _fallbackTimer = null;
+
+    _ucRegisterCleanup(function() {
+        if (_fadeTimer)     { clearTimeout(_fadeTimer);     _fadeTimer     = null; }
+        if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
+    });
+
+    // -- Injection CSS -------------------------------------------------------
+    var _css = document.createElement('style');
+    _css.id  = 'ucJomoaHadithStyle';
+    _css.textContent =
+        '#ucJomoaHadithOverlay {' +
+        '    position: fixed;' +
+        '    top: 0; left: 0; right: 0; bottom: 0;' +
+        '    z-index: 99997;' +
+        '    display: flex;' +
+        '    flex-direction: column;' +
+        '    align-items: center;' +
+        '    justify-content: center;' +
+        '    text-align: center;' +
+        '    direction: rtl;' +
+        '    background-color: #121212;' +
+        '    opacity: 0;' +
+        '    pointer-events: none;' +
+        '    transition: opacity 0.8s ease-in;' +
+        '}' +
+        '#ucJomoaHadithOverlay.ucJH-visible {' +
+        '    opacity: 1;' +
+        '    pointer-events: auto;' +
+        '}' +
+        '#ucJomoaHadithOverlay.ucJH-fading {' +
+        '    opacity: 0 !important;' +
+        '    transition: opacity 2.0s ease-out;' +
+        '}' +
+        '#ucJomoaHadithBox {' +
+        '    display: flex;' +
+        '    flex-direction: column;' +
+        '    align-items: center;' +
+        '    padding: 3em 4em;' +
+        '    max-width: 92vw;' +
+        '}' +
+        '.ucJH-item {' +
+        '    font-family: var(--csvar_azkarFONT), serif;' +
+        '    text-shadow: var(--CLK_SHDW);' +
+        '    direction: rtl;' +
+        '    text-align: center;' +
+        '    width: 100%;' +
+        '    font-size: 4.4vw;' +
+        '    font-weight: 400;' +
+        '    color: #dde8f5;' +
+        '    line-height: 1.90;' +
+        '}';
+    document.head.appendChild(_css);
+
+    // -- Injection DOM -------------------------------------------------------
+    var _overlay = document.createElement('div');
+    _overlay.id  = 'ucJomoaHadithOverlay';
+    _overlay.innerHTML =
+        '<div id="ucJomoaHadithBox">' +
+            '<div class="ucJH-item">' +
+                'عَنْ أَبِي هُرَيْرَةَ رضي الله عنه، أَنَّ رَسُولَ اللَّهِ ﷺ قَالَ:<br>' +
+                '«إِذَا قُلْتَ لِصَاحِبِكَ أَنْصِتْ يَوْمَ الْجُمُعَةِ وَالإِمَامُ يَخْطُبُ فَقَدْ لَغَوْتَ»' +
+            '</div>' +
+        '</div>';
+    document.body.appendChild(_overlay);
+
+    // -- Clic pour fermer ---------------------------------------------------
+    _overlay.addEventListener('click', function() { _forceHide(); });
+
+    // -- Helpers -------------------------------------------------------------
+    function _clearTimers() {
+        if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
+        if (_fadeTimer)     { clearTimeout(_fadeTimer);     _fadeTimer     = null; }
+    }
+
+    function _startFade() {
+        if (!_jhVisible) return;
+        _clearTimers();
+        _overlay.classList.remove('ucJH-visible');
+        _overlay.classList.add('ucJH-fading');
+        _fadeTimer = setTimeout(function() {
+            _overlay.classList.remove('ucJH-fading');
+            _jhVisible = false;
+            _fadeTimer = null;
+            _L('JHADITH', 'HIDE', { item: 'jomoaHadith' });
+        }, 2000);
+    }
+
+    function _forceHide() {
+        _clearTimers();
+        _overlay.classList.remove('ucJH-visible', 'ucJH-fading');
+        _jhVisible = false;
+        _L('JHADITH', 'HIDE', { item: 'jomoaHadith', reason: 'forced' });
+    }
+
+    function _show() {
+        if (_jhVisible) return;
+        _jhVisible = true;
+        _overlay.classList.remove('ucJH-fading');
+        _overlay.classList.add('ucJH-visible');
+        _L('JHADITH', 'SHOW', { item: 'jomoaHadith' });
+        // Fermeture automatique après 30s (demande explicite)
+        _fallbackTimer = setTimeout(_startFade, 30000);
+    }
+
+    // Vrai si l'overlay hadith avant iqama (_installIqamaHadithOverlay, plus
+    // haut dans ce fichier) est actuellement affiché -- condition "pas déjà
+    // un hadith prévu" demandée explicitement. Ce chevauchement reste
+    // improbable en pratique (l'overlay iqama ne se déclenche que dans les
+    // 40-58 dernières secondes avant l'iqama, très éloigné temporellement de
+    // la fermeture du popup azan pour une prière avec khutba) mais gardé par
+    // sécurité.
+    function _isIqamaHadithShowing() {
+        var el = document.getElementById('ucIqamaHadithOverlay');
+        return !!(el && el.classList.contains('ucIH-visible'));
+    }
+
+    // -- Déclenchement : AZAN_HIDE, uniquement pour Jumu'a -------------------
+    ucOn(UC_EVT.AZAN_HIDE, function() {
+        if (_ucCurrentPrayerKey() !== 'JOMOA') return;
+        // Même garde anti-écho tardif que postAzanDoua ci-dessus.
+        var _msSinceResync = Date.now() - (window._ucLastResyncCloseAt || 0);
+        if (_msSinceResync < 5000) {
+            _L('JHADITH', 'SKIP', { item: 'jomoaHadith', reason: 'stale_echo_after_resync', msSinceResync: _msSinceResync });
+            return;
+        }
+        if (_isIqamaHadithShowing()) {
+            _L('JHADITH', 'SKIP', { item: 'jomoaHadith', reason: 'iqama_hadith_already_showing' });
+            return;
+        }
+        _show();
+    });
+
+    // -- Fermer si l'iqama démarre -------------------------------------------
+    ucOn(UC_EVT.IQAMA_SHOW, function() {
+        if (_jhVisible) _forceHide();
+    });
+
+    // -- Test console : jomoaHadithTest() ------------------------------------
+    window.jomoaHadithTest = function() {
+        _jhVisible = false;
+        _show();
+    };
+
+    // Même raisonnement que window._ucForceHidePostAzanDoua ci-dessus (retour
+    // au premier plan après une mise en arrière-plan pendant les 30s).
+    window._ucForceHideJomoaHadithOverlay = _forceHide;
+
+    _L('JHADITH', 'INIT', { item: 'jomoaHadith' });
+
+})();
+
 
 // ==========================================================================
 // -- BADGE EID (haut-droite des overlays) ----------------------------------
@@ -21654,6 +21877,7 @@ function selectQPTakbir() {
     window.editIqamaZeroBlinkDurFunction            = editIqamaZeroBlinkDurFunction;
     window.toggleStopQuranBeforeAzanFunction        = toggleStopQuranBeforeAzanFunction;
     window.editStopQuranBeforeAzanDelayFunction     = editStopQuranBeforeAzanDelayFunction;
+    window.editStopQuranBeforeAzanDelayJomoaFunction = editStopQuranBeforeAzanDelayJomoaFunction;
     window.toggleStartQuranBeforeAzanFunction       = toggleStartQuranBeforeAzanFunction;
     window.toggleStartQuranBeforeAzanPrayerDayFunction = toggleStartQuranBeforeAzanPrayerDayFunction;
     window.editStartQuranBeforeAzanDelayFunction    = editStartQuranBeforeAzanDelayFunction;

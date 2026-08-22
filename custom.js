@@ -4,11 +4,76 @@
 
 // Stub global _L disponible avant injectTechOptionsUI (~ligne 1328).
 // La definition locale dans injectTechOptionsUI la masquera pour le code interne.
+//
+// FIX 22/08/2026 : ce fichier contient DEUX définitions indépendantes de
+// _L() (celle-ci, et la version "complète" plus bas avec _ucHumanLog +
+// horodatage) -- en test réel (boîtier .119), certaines fermetures
+// lexicales du fichier (ex. window.ucTestLight, définie très tôt) résolvent
+// bare `_L` vers CETTE version stub plutôt que la version complète plus
+// bas, même après que tout le fichier ait fini de charger (confirmé par le
+// format du log observé : sans le préfixe [HH:MM:SS] que seule la version
+// complète ajoute). Plutôt que de dépendre de laquelle des deux un site
+// d'appel donné utilise réellement (fragile, pas garanti convergent), la
+// logique de persistance native (_UC_PERSIST_RULES/_ucShouldPersist,
+// définis juste en dessous) est dupliquée ICI AUSSI, pour que le
+// comportement de persistance soit identique quelle que soit la version de
+// _L() effectivement utilisée par un site d'appel donné.
 if (typeof _L === 'undefined') {
     function _L(cat, verb, ctx) {
         var p = Object.keys(ctx || {}).map(function(k){return k+'='+ctx[k];});
         console.log('[' + cat + '] ' + verb + (p.length ? ' ' + p.join(' ') : ''));
+        if (typeof _ucShouldPersist === 'function' && _ucShouldPersist(cat, verb) &&
+            window.AndroidMobile && typeof window.AndroidMobile.logPrayerEvent === 'function') {
+            try { window.AndroidMobile.logPrayerEvent(cat, verb + (p.length ? ' ' + p.join(' ') : '')); } catch (e) {}
+        }
     }
+}
+
+// ── Persistance native automatique (survit crash/reboot) des JALONS du
+// cycle de prière -- cf. incident déclencheur (22/08/2026, mosquée
+// tn.monastir.aboubakr) : ampliIntOn (catégorie LIGHTS, JS pur, jamais écrit
+// sur disque) introuvable a posteriori après un crash survenu plus tard dans
+// la même journée, contrairement à AZAN (déjà natif) qui restait
+// consultable. Plutôt que d'annoter individuellement des dizaines de sites
+// d'appel _L(...) à la main (source d'oubli -- exactement le trou constaté),
+// la vraie définition de _L() (plus bas dans ce fichier) consulte cette
+// table déclarative CAT -> `true` (catégorie entière, par nature peu
+// bavarde) ou Set de VERBES précis (catégorie bavarde : ne retenir que les
+// jalons, pas le détail bas niveau qui n'apporte rien de plus qu'un
+// FIRE/SKIP déjà persisté juste avant) pour décider quoi dupliquer vers
+// MobileJsBridge.logPrayerEvent(). Toute nouvelle catégorie ajoutée plus
+// tard dans ce fichier reste NON persistée par défaut tant qu'elle n'est pas
+// explicitement ajoutée ici -- effet de bord volontaire : le journal natif
+// partage le même plafond MAX_ENTRIES=300 (NativeEventLog.kt) que
+// AZAN/SYS/HADITH, y déverser sans discernement (ex. TICK par seconde,
+// détail HTTP par requête) évincerait les entrées utiles au lieu de combler
+// le trou.
+//
+// PLACÉ ICI (tout en haut du fichier), PAS à côté de la vraie définition de
+// _L() : cette dernière est un simple `function`, donc déjà hoisted et
+// appelable dès le tout début de l'exécution synchrone du script -- de
+// nombreux _L(...) sont en fait appelés BIEN AVANT que le fichier n'atteigne
+// la ligne où _UC_PERSIST_RULES serait autrement déclaré. Un `var` n'est lui
+// PAS hoisted avec sa valeur (seul le nom l'est, initialisé à `undefined`
+// jusqu'à ce que sa ligne d'assignation s'exécute) -- le déclarer plus bas
+// causait donc un throw ("Cannot read property 'AUDIO' of undefined") dès le
+// premier _L() appelé avant ce point, qui interrompait l'exécution
+// synchrone du RESTE du fichier -- y compris la définition de UC_EVT/ucOn
+// bien plus loin, d'où la cascade de ReferenceError observée en test réel
+// (boîtier .119) sur du code pourtant sans rapport avec ce changement.
+var _UC_PERSIST_RULES = {
+    EVT:    true,                                            // AZAN_TIME/SHOW/HIDE, IQAMA_TIME/SHOW/HIDE, BLACK_SHOW/HIDE -- COUNTDOWN_TICK déjà exclu par _ucFire lui-même
+    LIGHTS: { FIRE:1, SKIP:1, SKIP_DEFERRED:1, STOP:1, WARN:1 }, // exclut HTTP_CALL/HTTP_OK/HTTP_ERR/HTTP_SENT/RETRY_*/INFO (détail réseau, trop fréquent)
+    POPUP:  { SHOW:1, HIDE:1, FIRE:1, SKIP:1, FORCE_HIDE:1, DISMISS:1 }, // salatNabi, jomoa_adab, hadith_iqama, hadith_15s, texte_iqama...
+    PAD:    { SHOW:1, HIDE:1, SKIP:1 },                       // doua post-azan
+    CTR:    { START:1 },                                      // début du compte à rebours iqama -- TICK (par seconde) volontairement exclu
+    AUDIO:  { STOP:1 },                                       // arrêt Coran (avant azan, salatNabi, sécurité) -- FIRE/INFO/WARN exclus (chargement fichiers, trop bavard)
+    RESYNC: true                                              // resync/cold-start/rattrapages Jumu'a -- rare par nature (jamais par tick)
+};
+function _ucShouldPersist(cat, verb) {
+    var rule = _UC_PERSIST_RULES[cat];
+    if (!rule) return false;
+    return (rule === true) || !!rule[verb];
 }
 
 // Langue courante de l'UI, code majuscule (ex. 'AR'/'FR'/'EN'/'DE'/'TR'...) --
@@ -283,7 +348,8 @@ function _ucBindGuidedInput(el, type) {
             FR: "Impossible de synchroniser automatiquement la date et l'heure. Veuillez connecter le boîtier à internet pour synchroniser la date et l'heure, sinon l'application ne pourra pas fonctionner correctement.",
             EN: 'Automatic date/time sync failed. Please connect the box to the internet to sync the date and time, otherwise the app will not be able to work correctly.'
         },
-        wifiBtn: { AR: 'فتح إعدادات واي فاي', FR: 'Ouvrir les réglages Wi-Fi', EN: 'Open Wi-Fi settings' }
+        wifiBtn: { AR: 'فتح إعدادات واي فاي', FR: 'Ouvrir les réglages Wi-Fi', EN: 'Open Wi-Fi settings' },
+        dismissBtn: { AR: 'تجاهل والعودة إلى التطبيق', FR: "Ignorer et revenir à l'application", EN: 'Dismiss and return to the app' }
     };
     function _clkT(key, ssid) {
         var row = L_CLOCK[key];
@@ -308,7 +374,18 @@ function _ucBindGuidedInput(el, type) {
             + 'background:#3a6ea5;color:#fff;border-radius:6px;cursor:pointer;'
             + 'font-size:0.95em;';
 
-    var _ov = null, _msgEl = null, _btnEl = null, _pollTimer = null;
+    var _ov = null, _msgEl = null, _btnEl = null, _dismissBtnEl = null, _pollTimer = null;
+    // FIX 21/08/2026 (retour terrain, boîtier X88Pro20/.33 fraîchement
+    // échangé) : cet overlay bloquait tout l'écran SANS aucune échappatoire
+    // si la reprise Wi-Fi échoue ou traîne (le bouton wifiBtn ouvre les
+    // réglages système Android, mais rien ne permet de revenir simplement à
+    // l'app -- confirmé : aucune boîte de dialogue Android native n'était en
+    // cause, mCurrentFocus pointait bien sur notre propre activité).
+    // Bouton "ignorer" ajouté : masque l'overlay et arrête le sondage pour
+    // le reste de cette session app (jusqu'au prochain rechargement), sans
+    // désactiver le mécanisme lui-même -- il se redéclenchera normalement à
+    // la prochaine ouverture si l'horloge est encore fausse.
+    var _dismissed = false;
 
     function _buildOverlay() {
         if (_ov) return;
@@ -320,6 +397,7 @@ function _ucBindGuidedInput(el, type) {
                 '<div style="font-size:2em;margin-bottom:10px;">&#9200;</div>' +
                 '<p id="ucClockGuardMsg" style="margin:0;"></p>' +
                 '<span id="ucClockGuardWifiBtn" style="' + BTN + 'display:none;">' + _clkT('wifiBtn') + '</span>' +
+                '<span id="ucClockGuardDismissBtn" style="' + BTN + 'background:#555;margin-left:8px;margin-right:8px;">' + _clkT('dismissBtn') + '</span>' +
             '</div>';
         // Appendé à <html> (pas <body>) : le body porte un transform pour la
         // rotation horizontal/vertical (vrRIGHT/vrLEFT) qui casse position:fixed
@@ -330,14 +408,21 @@ function _ucBindGuidedInput(el, type) {
         document.documentElement.appendChild(_ov);
         _msgEl = document.getElementById('ucClockGuardMsg');
         _btnEl = document.getElementById('ucClockGuardWifiBtn');
+        _dismissBtnEl = document.getElementById('ucClockGuardDismissBtn');
         _btnEl.addEventListener('click', function() {
             if (window.AndroidMobile && typeof window.AndroidMobile.openWifiSettings === 'function') {
                 window.AndroidMobile.openWifiSettings();
             }
         });
+        _dismissBtnEl.addEventListener('click', function() {
+            _dismissed = true;
+            if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+            _hide();
+            _L('SYS', 'CLOCK_GUARD_DISMISSED', {});
+        });
     }
 
-    function _show() { _buildOverlay(); _ov.style.display = 'flex'; }
+    function _show() { if (_dismissed) return; _buildOverlay(); _ov.style.display = 'flex'; }
     function _hide() { if (_ov) _ov.style.display = 'none'; }
 
     // ssid fourni -> affiche "tentative : XXX" (défile réseau par réseau à
@@ -364,6 +449,7 @@ function _ucBindGuidedInput(el, type) {
     }
 
     function _poll() {
+        if (_dismissed) { if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; } return; }
         if (window.AndroidMobile.isSystemClockPlausible()) {
             _hide();
             clearInterval(_pollTimer);
@@ -2850,6 +2936,13 @@ window._ucForceCloseAllCounterOverlays = function () {
         if (typeof window.checkAndRestoreIqamaCounter === 'function') {
             window.checkAndRestoreIqamaCounter();
         }
+        // cf. definition de _ucJomoaBlackScreenCatchUp plus bas dans ce fichier
+        // (hoisting : declaration function top-level, disponible ici malgre
+        // l'ordre d'ecriture) -- meme resync que checkAndRestoreIqamaCounter()
+        // juste au-dessus, mais pour le rideau noir specifique a Jumu'a.
+        if (typeof _ucJomoaBlackScreenCatchUp === 'function') {
+            _ucJomoaBlackScreenCatchUp();
+        }
 
         // Diagnostic APRES nettoyage : confirme que rien n'est reste bloque
         // (a comparer avec STATE_BEFORE plus haut -- tout doit etre a false ici).
@@ -3667,10 +3760,18 @@ function _buildLightTriggerTableHtml(item) {
 
 // Retourne true si l'item est autorisé pour la prière donnée
 function _lightPrayerAllowed(item, prayerKey) {
+    // FIX 21/08/2026 (régression confirmée en log réel boîtier .24,
+    // reason=mask_blocked sur ampliExtOff) : un item SANS aucun masque
+    // (ni prayersMaskSetting ni jomoaMaskSetting -- ex. ampliExtOff,
+    // structurellement rollerClose) doit rester inconditionnellement actif,
+    // comme avant l'ajout de jomoaMaskSetting. Ce check doit donc passer
+    // AVANT le branchement JOMOA ci-dessous, qui sinon le bloque à tort.
+    if (!item.prayersMaskSetting && !item.jomoaMaskSetting) return true;
     // JOMOA n'est pas dans _LIGHT_PRAYER_KEYS (masque 5 prières) : sans
-    // jomoaMaskSetting, un item reste bloqué pour Jumu'a comme avant (SHRQ
-    // aussi, jamais concerné). Avec jomoaMaskSetting défini (cf. mihrabOn/
-    // mihrabOff), une colonne dédiée décide indépendamment du masque 5 prières.
+    // jomoaMaskSetting, un item AVEC un prayersMaskSetting reste bloqué pour
+    // Jumu'a comme avant (SHRQ aussi, jamais concerné). Avec jomoaMaskSetting
+    // défini (cf. mihrabOn/mihrabOff), une colonne dédiée décide
+    // indépendamment du masque 5 prières.
     if (prayerKey === 'JOMOA') {
         return item.jomoaMaskSetting ? (JS_CUSTOM[item.jomoaMaskSetting] == 1) : false;
     }
@@ -9294,6 +9395,9 @@ function _L(cat, verb, ctx) {
         _ucBootMilestoneCount++;
         _ucReportBootProgress(Math.min(95, Math.round(_ucBootMilestoneCount / _UC_BOOT_TOTAL_MILESTONES * 100)));
     }
+    if (_ucShouldPersist(cat, verb) && window.AndroidMobile && typeof window.AndroidMobile.logPrayerEvent === 'function') {
+        try { window.AndroidMobile.logPrayerEvent(cat, verb + (parts.length ? ' ' + parts.join(' ') : '')); } catch (e) {}
+    }
 }
 
 // ── Dispatcher interne ────────────────────────────────────────────────────
@@ -12763,7 +12867,7 @@ function forceHijriSyncFunction() {
         '<span id="debugConsoleCopyBtn" style="cursor:pointer;" title="Tap to copy logs">DEBUG CONSOLE</span>' +
         '  <span style="font-size:0.8em;opacity:0.55;">(tap to close)</span>' +
         '  <span id="debugConsoleSendBtn" style="cursor:pointer;margin-left:14px;padding:2px 8px;border:1px solid #4af;border-radius:10px;" title="Envoyer ce rapport au developpeur">✉ إرسال للمطوّر</span>' +
-        '  <span id="debugConsoleClearNativeBtn" style="cursor:pointer;margin-left:10px;padding:2px 8px;border:1px solid #888;border-radius:10px;" title="Effacer l\'historique natif enregistre (azan/premier-plan) pour repartir sur une journee vierge">🗑 natif</span>' +
+        '  <span id="debugConsoleClearBtn" style="cursor:pointer;float:right;padding:2px 8px;border:1px solid #f84;border-radius:10px;" title="Effacer le texte affiche dans cette console (garde une trace du moment ou elle a ete effacee)">🧹 effacer</span>' +
         '</div>' +
         '<div id="debugConsoleContent"></div>';
     document.body.appendChild(_overlay);
@@ -12853,9 +12957,23 @@ function forceHijriSyncFunction() {
             });
         }
 
+        // Copie brute et complete du journal natif persistant (survit aux
+        // crash/reboot, cf. NativeEventLog.kt), en plus de log_text ci-dessus
+        // (qui ne contient que le buffer JS en memoire _dbgLogs, fusionne au
+        // dernier chargement de page -- peut avoir tronque/perdu des entrees
+        // natives plus anciennes, ou etre carrement absent si un crash a eu
+        // lieu apres la fusion mais avant l'envoi). Cf. incident 22/08/2026
+        // mosquee tn.monastir.aboubakr : impossible de confirmer a distance
+        // si ampliIntOn s'etait declenche pour Fajr, faute de cette copie.
+        var nativeEventLog = null;
+        if (window.AndroidMobile && typeof window.AndroidMobile.getNativeEventLog === 'function') {
+            try { nativeEventLog = JSON.parse(window.AndroidMobile.getNativeEventLog()); } catch(e) {}
+        }
+
         var payload = {
             mosque_id: mosqueId,
             log_text: _dbgLogs.map(function(e) { return e.text; }).join('\n'),
+            native_event_log: nativeEventLog,
             device_info: {
                 userAgent: navigator.userAgent,
                 screen: screen.width + 'x' + screen.height,
@@ -12920,20 +13038,37 @@ function forceHijriSyncFunction() {
     // alimenté en continu par _capture() ci-dessous, overlay visible ou non).
     window._ucSendDebugReport = _sendReport;
 
-    // ── Effacer l'historique natif persistant (NativeEventLog cote Android) ──
-    // N'efface PAS les logs JS deja affiches dans cette session (_dbgLogs) :
-    // seulement le stockage natif, pour qu'un prochain rechargement de page
-    // ne re-fusionne pas les entrees d'avant.
-    var _clearNativeBtn = document.getElementById('debugConsoleClearNativeBtn');
-    if (_clearNativeBtn) {
-        _clearNativeBtn.addEventListener('click', function(e) {
+    // NOTE (21/08/2026) : le bouton "🗑 natif" qui appelait ici
+    // window.AndroidMobile.clearNativeEventLog() a été retiré de cette UI --
+    // il n'apportait rien à un admin de mosquée (aucun moyen de CONSULTER ce
+    // journal natif depuis l'appli, seulement de l'effacer ; utile
+    // uniquement au développeur via CDP pour repartir sur un historique
+    // vierge pendant un test). Le bridge natif MobileJsBridge.clearNativeEventLog()
+    // reste en place et reste appelable manuellement (window.AndroidMobile.
+    // clearNativeEventLog()) pour cet usage développeur.
+
+    // ── Effacer le texte affiché dans CETTE console (contrairement au bouton
+    //    "natif" ci-dessus, qui efface l'historique persistant côté Android
+    //    sans toucher _dbgLogs) : vide le buffer en mémoire pour repartir sur
+    //    un écran vierge, mais y laisse UNE entrée marquant l'effacement (avec
+    //    horodatage) pour qu'un examen ultérieur sache qu'un vidage manuel a
+    //    eu lieu à ce moment plutôt que de croire à un simple silence.
+    //    Mutation en place (_dbgLogs.length = 0 puis push) : _dbgLogs est une
+    //    const capturée par _render()/_copyLogs()/_sendReport() ci-dessus,
+    //    une réaffectation casserait leur référence.
+    var _clearBtn = document.getElementById('debugConsoleClearBtn');
+    if (_clearBtn) {
+        _clearBtn.addEventListener('click', function(e) {
             e.stopPropagation();
-            if (window.AndroidMobile && typeof window.AndroidMobile.clearNativeEventLog === 'function') {
-                window.AndroidMobile.clearNativeEventLog();
-                console.log('[AZAN] historique natif efface (nouveau depart)');
-                var _L_CLEARED = { AR: 'تم مسح السجل الأصلي', FR: 'Historique natif effacé', EN: 'Native history cleared' };
-                if (window._ucToast) window._ucToast(_L_CLEARED[_ucLang()] || _L_CLEARED.EN, 'ok');
-            }
+            var now = new Date();
+            var ts  = now.getHours()  .toString().padStart(2, '0') + ':' +
+                      now.getMinutes().toString().padStart(2, '0') + ':' +
+                      now.getSeconds().toString().padStart(2, '0');
+            _dbgLogs.length = 0;
+            _dbgLogs.push({ text: '[' + ts + '] 🧹 Console effacée manuellement par l\'utilisateur — nouveau départ', isError: false });
+            _render();
+            var _L_CLEARED = { AR: 'تم مسح وحدة التحكم', FR: 'Console effacée', EN: 'Console cleared' };
+            if (window._ucToast) window._ucToast(_L_CLEARED[_ucLang()] || _L_CLEARED.EN, 'ok');
         });
     }
 
@@ -13601,6 +13736,30 @@ function forceHijriSyncFunction() {
 
         audioEl.addEventListener('ended', _ucAzanReleaseFunc);
         audioEl.addEventListener('error', _ucAzanFallbackOrHold);
+
+        // jomoaAudioMuted : core saute ENTIEREMENT playAzanSoundFunction()
+        // dans ce cas (m2body.js L2281-2285 : if(ucActivateJomoaAzan==1)
+        // playAzanSoundFunction(); -- rien sinon), donc
+        // redirectToAudioHandlerFunction()/_patchRedirectAudioForAzan
+        // (ci-dessus) qui appelle normalement audioEl.play() n'est JAMAIS
+        // atteint sur ce chemin. Confirme en conditions reelles (boitier .24,
+        // inspection audioAzanElement) : currentTime=0/paused=true malgre
+        // readyState=4/duration=247.1s -- le fichier est charge (src deja
+        // redirigee par 1a) mais jamais joue, donc 'ended' ne se declenche
+        // jamais et la popup ne se fermait que via le filet 300s (constate :
+        // POPUP_FORCE_CLOSE reason=safety_timeout_300s exactement 5min apres
+        // AZAN_TIME). On demarre nous-memes cette lecture (deja coupee via
+        // audioEl.muted plus haut) : 'ended' arrive alors a la duree REELLE
+        // du fichier, comme demande explicitement le 21/08/2026.
+        if (jomoaAudioMuted) {
+            audioEl.currentTime = 0;
+            var _jomoaPlayPromise = audioEl.play();
+            if (_jomoaPlayPromise && typeof _jomoaPlayPromise.catch === 'function') {
+                _jomoaPlayPromise.catch(function(err) {
+                    _L('AZAN','JOMOA_MUTED_PLAY_ERR',{prayer:e.prayer,err:String(err)});
+                });
+            }
+        }
 
         // Repli robuste (retour utilisateur, 27/07/2026) : constaté en
         // pratique (journal natif) -- le <audio> JS muet (simple minuteur
@@ -14561,6 +14720,92 @@ function forceHijriSyncFunction() {
     }, 4500);
 })();
 
+// ── FIX 21/08/2026 (bug rapporté via test réel boîtier .24, bascule wifi
+//    pendant Jumu'a) : un compte à rebours iqama STANDARD apparaissait après
+//    un retour au premier plan pendant la fenêtre de Jumu'a, alors que
+//    Jumu'a n'en a jamais un normalement (cf. m2body.js L2204-2217 : le
+//    vendredi, le tick horloge normal bascule entièrement sur son propre
+//    mécanisme écran noir dohrTimeInMinutes+ucJomoaDimmBefore/After, sans
+//    jamais passer par startIqamaCounterFunction ni startIqamaSequenceFunction).
+//
+//    Cause : DEUX chemins ignorent isFriday et démarrent quand même ce
+//    compteur standard pour DOHR lors d'un resync (retour au premier plan) :
+//      1) checkAndRestoreIqamaCounter() du CŒUR (m2body.js ~L8254) : son cas
+//         DOHR compare seulement currentTimeInMinutes à dohrTimeInMinutes/
+//         +ucIqamaDOHR, sans jamais vérifier isFriday.
+//      2) Notre propre _installIqamaCounterExactMinuteRestoreFix ci-dessus
+//         (fix distinct, pour un autre bug) a la même lacune sur son cas DOHR.
+//    Les deux finissent par appeler startIqamaCounterFunction() -- point de
+//    passage commun aux deux chemins. On l'intercepte donc ici : toute
+//    tentative de démarrage alors qu'on est vendredi ET dans la fenêtre
+//    d'iqama de Dhuhr (qui, ce jour-là, est en réalité la fenêtre de Jumu'a)
+//    est ignorée. Aucune restauration manuelle n'est nécessaire : le
+//    mécanisme écran noir natif est stateless (comparaison d'horloge à
+//    chaque tick) et se rattrape de lui-même en <=1s, comme si le resync
+//    n'avait jamais eu lieu.
+(function _installJomoaIqamaCounterResyncGuard() {
+    if (typeof window.startIqamaCounterFunction !== 'function') return;
+    var _origStartIqamaCounter = window.startIqamaCounterFunction;
+    window.startIqamaCounterFunction = function (iqamaMinutes, prayerDuration, forcedCounterSeconds) {
+        if (typeof isFriday !== 'undefined' && isFriday &&
+            typeof currentTimeInMinutes !== 'undefined' && typeof dohrTimeInMinutes !== 'undefined' &&
+            currentTimeInMinutes >= dohrTimeInMinutes &&
+            currentTimeInMinutes < (dohrTimeInMinutes + JS_DATA.ucIqamaDOHR)) {
+            _L('RESYNC', 'JOMOA_COUNTER_START_BLOCKED', {
+                currentTimeInMinutes: currentTimeInMinutes, dohrTimeInMinutes: dohrTimeInMinutes,
+                ucIqamaDOHR: JS_DATA.ucIqamaDOHR
+            });
+            return;
+        }
+        return _origStartIqamaCounter.apply(this, arguments);
+    };
+})();
+
+// ── FIX 22/08/2026 (rideau noir de Jumu'a absent meme apres le fix ci-dessus
+//    sur l'epoch iqama, confirme en direct boitier .33) : m2body.js compare
+//    currentTimeInMinutes par EGALITE STRICTE a chaque tick pour ouvrir/fermer
+//    le rideau noir de Jumu'a (L2207/L2212, dohrTimeInMinutes+ucJomoaDimmBefore/
+//    After), sans aucun rattrapage. Si l'appli demarre, reprend ou recharge
+//    APRES que cette minute exacte soit deja passee -- exactement ce qui arrive
+//    a chaque reinstallation/redemarrage pendant un test, ou apres tout
+//    resync/arriere-plan couvrant cette minute -- l'ouverture n'a alors plus
+//    JAMAIS lieu pour le reste du cycle (confirme : currentTimeInMinutes=802,
+//    fenetre [797,798) deja depassee, blackScreenVertical/Horizontal a "").
+//    Meme classe de bug que celui deja corrige pour le compteur iqama
+//    (_installIqamaCounterExactMinuteRestoreFix/ColdStartRestoreFix un peu
+//    plus haut dans ce fichier) mais jamais couvert pour ce mecanisme Jumu'a
+//    specifique, qui ne passe par aucun des deux (bypass total de
+//    startIqamaCounterFunction/startIqamaSequenceFunction le vendredi).
+//    Corrige en revalidant nous-memes l'etat correct (actif dans la fenetre,
+//    inactif hors fenetre) a chaque chargement de page ET a chaque retour au
+//    premier plan (cf. appel ajoute dans _ucResyncPrayerSequence, tout en haut
+//    de ce fichier, juste apres checkAndRestoreIqamaCounter()) -- sans jamais
+//    dependre du tick exact du coeur. Declaration function top-level (pas
+//    dans une IIFE) : hoisting requis pour etre appelable depuis ce point du
+//    fichier situe PLUS HAUT que cette definition.
+function _ucJomoaBlackScreenCatchUp() {
+    if (typeof isFriday === 'undefined' || !isFriday) return;
+    if (typeof dohrTimeInMinutes === 'undefined' || typeof currentTimeInMinutes === 'undefined') return;
+    if (typeof JS_DATA === 'undefined') return;
+    var from = dohrTimeInMinutes + JS_DATA.ucJomoaDimmBefore;
+    var to   = dohrTimeInMinutes + JS_DATA.ucJomoaDimmAfter;
+    var inWindow = (currentTimeInMinutes >= from && currentTimeInMinutes < to);
+    var el = document.getElementById('blackScreenVertical');
+    var isActive = !!(el && el.style.transform === 'scaleX(1)');
+    if (inWindow && !isActive) {
+        if (typeof activateBlackScreenIfEnabled === 'function') activateBlackScreenIfEnabled();
+        _L('RESYNC', 'JOMOA_BLACKSCREEN_CATCHUP', { action: 'activate', currentTimeInMinutes: currentTimeInMinutes, from: from, to: to });
+    } else if (!inWindow && isActive) {
+        if (typeof deactivateBlackScreen === 'function') deactivateBlackScreen();
+        _L('RESYNC', 'JOMOA_BLACKSCREEN_CATCHUP', { action: 'deactivate', currentTimeInMinutes: currentTimeInMinutes, from: from, to: to });
+    }
+}
+window._ucJomoaBlackScreenCatchUp = _ucJomoaBlackScreenCatchUp;
+// Chargement de page (froid) : meme delai que _installIqamaCounterColdStartRestoreFix
+// (calculateAndDisplayTimesFunction/dohrTimeInMinutes fiables ~4.5s apres le debut
+// du chargement, cf. commentaire de ce fix un peu plus haut).
+setTimeout(_ucJomoaBlackScreenCatchUp, 4500);
+
 /* ═══════════════════════════════════════════════════════════════════════════
    SÉQUENCE HADITH AVANT IQAMA
    • 58s → 40s : nouveau hadith (marche vers la prière) via ucIqamaHadithOverlay
@@ -14768,6 +15013,26 @@ function forceHijriSyncFunction() {
     /* ── 2. Intercept activateBlackScreenIfEnabled pour retarder le rideau ── */
     var _origActivate = window.activateBlackScreenIfEnabled;
     window.activateBlackScreenIfEnabled = function () {
+        // FIX 22/08/2026 (rideau noir de Jumu'a totalement muet, confirme en
+        // conditions reelles boitier .33 : blackScreenVertical/Horizontal
+        // restaient a "" indefiniment). Cause : le vendredi, le coeur appelle
+        // CETTE MEME fonction directement depuis son tick horloge dedie
+        // (m2body.js L2207-2210, dohrTimeInMinutes+ucJomoaDimmBefore), sans
+        // jamais passer par startIqamaSequenceFunction() ni par consequent par
+        // _ucActiveIqamaSeqEpoch (seul _installJomoaIqamaSuppress plus haut le
+        // met a jour, uniquement pour la simulation SIMUL(6) -- jamais pour ce
+        // chemin tick reel). _ucActiveIqamaSeqEpoch reste donc a sa valeur
+        // initiale (-1) toute la journee, alors que _ucIqamaSeqEpoch demarre a
+        // 0 et s'incremente au moindre resync -- _ucIqamaSeqStale() renvoie
+        // alors TOUJOURS true pour Jumu'a, avalant l'appel sans jamais
+        // atteindre _origActivate() (confirme en direct : _ucIqamaSeqEpoch=0,
+        // _ucActiveIqamaSeqEpoch=-1). Cette notion de "sequence iqama perimee"
+        // n'a de toute facon aucun sens pour Jumu'a (_delayBlackScreen,
+        // juste en dessous, n'est lui-meme jamais mis a true que par la
+        // fermeture d'un popup IQAMA_IDS -- jamais declenche le vendredi) :
+        // on bypasse donc entierement ce garde-fou quand isFriday, sans
+        // toucher au comportement pour les 5 autres prieres.
+        if (typeof isFriday !== 'undefined' && isFriday) { _origActivate(); return; }
         if (_ucIqamaSeqStale()) { _delayBlackScreen = false; return; }
         if (_delayBlackScreen) {
             _delayBlackScreen = false;
@@ -20648,6 +20913,21 @@ function selectQPTakbir() {
     // -- Helpers -------------------------------------------------------------
     var _5PRAYERS = { 'FAJR': 1, 'DOHR': 1, 'ASSR': 1, 'MGRB': 1, 'ISHA': 1 };
 
+    // FIX 21/08/2026 : l'ancien garde anti-echo comparait Date.now() a
+    // window._ucLastResyncCloseAt, horodate a LA FIN de _ucResyncPrayerSequence
+    // (tout en haut du fichier) -- OR checkAndRestoreIqamaCounter(), appelee
+    // PLUS TOT dans cette meme fonction (avant cet horodatage), peut deja
+    // provoquer un premier echo AZAN_HIDE : ce premier echo passait donc a
+    // travers le garde (rien a comparer encore), seul un echo ULTERIEUR etait
+    // bloque. Remplace par un drapeau par cycle (meme famille que le cooldown
+    // deja fiable de _installLightAfterAzanHide) : n'affiche qu'une fois par
+    // cycle azan, quel que soit le nombre d'echos AZAN_HIDE recus, et se
+    // reinitialise proprement au AZAN_TIME suivant.
+    var _padFiredThisCycle = false;
+    ucOn(UC_EVT.AZAN_TIME, function(e) {
+        if (_5PRAYERS[e.prayer]) _padFiredThisCycle = false;
+    });
+
     function _clearTimers() {
         if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
         if (_fadeTimer)     { clearTimeout(_fadeTimer);     _fadeTimer     = null; }
@@ -20698,16 +20978,14 @@ function selectQPTakbir() {
             _L('PAD', 'SKIP', { item: 'postAzanDoua', prayer: prayer, reason: 'not_5prayers' });
             return;
         }
-        // AZAN_HIDE tardif issu du setTimeout('hideAzanPopupFunction()', ...)
-        // non annulable du CORE (cf. _ucLastResyncCloseAt tout en haut du
-        // fichier, _installResyncOnResume) : si ce resync vient JUSTE de tout
-        // nettoyer, ignorer cet echo perime plutot que de rouvrir la doua
-        // juste apres l'avoir fermee de force.
-        var _msSinceResync = Date.now() - (window._ucLastResyncCloseAt || 0);
-        if (_msSinceResync < 5000) {
-            _L('PAD', 'SKIP', { item: 'postAzanDoua', prayer: prayer, reason: 'stale_echo_after_resync', msSinceResync: _msSinceResync });
+        // Drapeau par cycle (cf. commentaire sur _padFiredThisCycle plus haut) :
+        // un ou plusieurs echos AZAN_HIDE peuvent survenir pour le meme cycle
+        // (resync, setTimeout core non annulable...) -- un seul affichage.
+        if (_padFiredThisCycle) {
+            _L('PAD', 'SKIP', { item: 'postAzanDoua', prayer: prayer, reason: 'already_fired_this_cycle' });
             return;
         }
+        _padFiredThisCycle = true;
         _show();
     });
 
@@ -20735,168 +21013,16 @@ function selectQPTakbir() {
 
 })();
 
-// ═════════════════════════════════════════════════════════════════════════════
-// HADITH DE REPLI JUMU'A — s'affiche 30s après la fermeture du popup azan de
-// Jumu'a (calqué sur _installPostAzanDoua ci-dessus, même mécanique
-// show/fade/forceHide), demande explicite du 21/08/2026. postAzanDoua
-// exclut déjà JOMOA de ses 5 prières canoniques (_5PRAYERS ci-dessus) : pas
-// de conflit d'affichage simultané entre les deux overlays.
-// ═════════════════════════════════════════════════════════════════════════════
-(function _installJomoaHadithFallback() {
-
-    var _jhVisible    = false;
-    var _fadeTimer     = null;
-    var _fallbackTimer = null;
-
-    _ucRegisterCleanup(function() {
-        if (_fadeTimer)     { clearTimeout(_fadeTimer);     _fadeTimer     = null; }
-        if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
-    });
-
-    // -- Injection CSS -------------------------------------------------------
-    var _css = document.createElement('style');
-    _css.id  = 'ucJomoaHadithStyle';
-    _css.textContent =
-        '#ucJomoaHadithOverlay {' +
-        '    position: fixed;' +
-        '    top: 0; left: 0; right: 0; bottom: 0;' +
-        '    z-index: 99997;' +
-        '    display: flex;' +
-        '    flex-direction: column;' +
-        '    align-items: center;' +
-        '    justify-content: center;' +
-        '    text-align: center;' +
-        '    direction: rtl;' +
-        '    background-color: #121212;' +
-        '    opacity: 0;' +
-        '    pointer-events: none;' +
-        '    transition: opacity 0.8s ease-in;' +
-        '}' +
-        '#ucJomoaHadithOverlay.ucJH-visible {' +
-        '    opacity: 1;' +
-        '    pointer-events: auto;' +
-        '}' +
-        '#ucJomoaHadithOverlay.ucJH-fading {' +
-        '    opacity: 0 !important;' +
-        '    transition: opacity 2.0s ease-out;' +
-        '}' +
-        '#ucJomoaHadithBox {' +
-        '    display: flex;' +
-        '    flex-direction: column;' +
-        '    align-items: center;' +
-        '    padding: 3em 4em;' +
-        '    max-width: 92vw;' +
-        '}' +
-        '.ucJH-item {' +
-        '    font-family: var(--csvar_azkarFONT), serif;' +
-        '    text-shadow: var(--CLK_SHDW);' +
-        '    direction: rtl;' +
-        '    text-align: center;' +
-        '    width: 100%;' +
-        '    font-size: 4.4vw;' +
-        '    font-weight: 400;' +
-        '    color: #dde8f5;' +
-        '    line-height: 1.90;' +
-        '}';
-    document.head.appendChild(_css);
-
-    // -- Injection DOM -------------------------------------------------------
-    var _overlay = document.createElement('div');
-    _overlay.id  = 'ucJomoaHadithOverlay';
-    _overlay.innerHTML =
-        '<div id="ucJomoaHadithBox">' +
-            '<div class="ucJH-item">' +
-                'عَنْ أَبِي هُرَيْرَةَ رضي الله عنه، أَنَّ رَسُولَ اللَّهِ ﷺ قَالَ:<br>' +
-                '«إِذَا قُلْتَ لِصَاحِبِكَ أَنْصِتْ يَوْمَ الْجُمُعَةِ وَالإِمَامُ يَخْطُبُ فَقَدْ لَغَوْتَ»' +
-            '</div>' +
-        '</div>';
-    document.body.appendChild(_overlay);
-
-    // -- Clic pour fermer ---------------------------------------------------
-    _overlay.addEventListener('click', function() { _forceHide(); });
-
-    // -- Helpers -------------------------------------------------------------
-    function _clearTimers() {
-        if (_fallbackTimer) { clearTimeout(_fallbackTimer); _fallbackTimer = null; }
-        if (_fadeTimer)     { clearTimeout(_fadeTimer);     _fadeTimer     = null; }
-    }
-
-    function _startFade() {
-        if (!_jhVisible) return;
-        _clearTimers();
-        _overlay.classList.remove('ucJH-visible');
-        _overlay.classList.add('ucJH-fading');
-        _fadeTimer = setTimeout(function() {
-            _overlay.classList.remove('ucJH-fading');
-            _jhVisible = false;
-            _fadeTimer = null;
-            _L('JHADITH', 'HIDE', { item: 'jomoaHadith' });
-        }, 2000);
-    }
-
-    function _forceHide() {
-        _clearTimers();
-        _overlay.classList.remove('ucJH-visible', 'ucJH-fading');
-        _jhVisible = false;
-        _L('JHADITH', 'HIDE', { item: 'jomoaHadith', reason: 'forced' });
-    }
-
-    function _show() {
-        if (_jhVisible) return;
-        _jhVisible = true;
-        _overlay.classList.remove('ucJH-fading');
-        _overlay.classList.add('ucJH-visible');
-        _L('JHADITH', 'SHOW', { item: 'jomoaHadith' });
-        // Fermeture automatique après 30s (demande explicite)
-        _fallbackTimer = setTimeout(_startFade, 30000);
-    }
-
-    // Vrai si l'overlay hadith avant iqama (_installIqamaHadithOverlay, plus
-    // haut dans ce fichier) est actuellement affiché -- condition "pas déjà
-    // un hadith prévu" demandée explicitement. Ce chevauchement reste
-    // improbable en pratique (l'overlay iqama ne se déclenche que dans les
-    // 40-58 dernières secondes avant l'iqama, très éloigné temporellement de
-    // la fermeture du popup azan pour une prière avec khutba) mais gardé par
-    // sécurité.
-    function _isIqamaHadithShowing() {
-        var el = document.getElementById('ucIqamaHadithOverlay');
-        return !!(el && el.classList.contains('ucIH-visible'));
-    }
-
-    // -- Déclenchement : AZAN_HIDE, uniquement pour Jumu'a -------------------
-    ucOn(UC_EVT.AZAN_HIDE, function() {
-        if (_ucCurrentPrayerKey() !== 'JOMOA') return;
-        // Même garde anti-écho tardif que postAzanDoua ci-dessus.
-        var _msSinceResync = Date.now() - (window._ucLastResyncCloseAt || 0);
-        if (_msSinceResync < 5000) {
-            _L('JHADITH', 'SKIP', { item: 'jomoaHadith', reason: 'stale_echo_after_resync', msSinceResync: _msSinceResync });
-            return;
-        }
-        if (_isIqamaHadithShowing()) {
-            _L('JHADITH', 'SKIP', { item: 'jomoaHadith', reason: 'iqama_hadith_already_showing' });
-            return;
-        }
-        _show();
-    });
-
-    // -- Fermer si l'iqama démarre -------------------------------------------
-    ucOn(UC_EVT.IQAMA_SHOW, function() {
-        if (_jhVisible) _forceHide();
-    });
-
-    // -- Test console : jomoaHadithTest() ------------------------------------
-    window.jomoaHadithTest = function() {
-        _jhVisible = false;
-        _show();
-    };
-
-    // Même raisonnement que window._ucForceHidePostAzanDoua ci-dessus (retour
-    // au premier plan après une mise en arrière-plan pendant les 30s).
-    window._ucForceHideJomoaHadithOverlay = _forceHide;
-
-    _L('JHADITH', 'INIT', { item: 'jomoaHadith' });
-
-})();
+// NOTE (21/08/2026) : un hadith de repli Jumu'a avait été ajouté ici
+// (_installJomoaHadithFallback), déclenché sur AZAN_HIDE + JOMOA -- mais un
+// mécanisme équivalent PRÉEXISTANT couvrait déjà exactement ce cas :
+// _initJomoaAdabOverlay (#jomoaAdabOverlay, plus haut dans ce fichier),
+// déclenché sur le même AZAN_HIDE + _ucCurrentPrayerKey()==='JOMOA', qui
+// affiche DEUX hadiths (dont le même "أنصت... فقد لغوت" ajouté ici en
+// double, plus celui sur le fait de toucher les cailloux pendant la
+// khoutba). Doublon confirmé par l'utilisateur -- supprimé entièrement
+// plutôt que fusionné, jomoaAdabOverlay restant la seule source pour ce
+// rappel.
 
 
 // ==========================================================================

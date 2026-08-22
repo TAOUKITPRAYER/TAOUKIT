@@ -7609,53 +7609,77 @@ function _qpSavePosition() {
         history.back();
     };
 
-    window.addEventListener('popstate', function() {
-        if (_pendingPops > 0) { _pendingPops--; return; }
+    // ── Ferme la modale de premier plan (z-index décroissant) ────────────────
+    // Extrait du listener popstate (refactor 23/08/2026, demande explicite :
+    // généraliser le contournement natif du bouton retour -- posé au départ
+    // pour mainMenuContainer seul dans MainActivity.kt, cf. son commentaire --
+    // à TOUTE modale de ce fichier, sans avoir à le redemander une par une).
+    // Fonction UNIQUE partagée par les deux chemins de fermeture :
+    //   1) le listener popstate ci-dessous (flux normal : _pushBack() à
+    //      l'ouverture -> webView.canGoBack()==true -> goBack() natif ->
+    //      popstate) -- consumeHistory=false, l'entrée d'historique vient
+    //      déjà d'être consommée par le goBack() qui a déclenché ce popstate.
+    //   2) MainActivity.kt (handleOnBackPressed, evaluateJavascript) appelle
+    //      DIRECTEMENT window._ucCloseTopmostBackTarget() en court-circuitant
+    //      tout le mécanisme canGoBack()/popstate (constaté peu fiable sur au
+    //      moins un appareil réel, cf. retour utilisateur -- mainMenuContainer
+    //      ne se fermait pas malgré le mécanisme déjà en place) --
+    //      consumeHistory=true : cette fermeture n'étant PAS passée par
+    //      goBack(), l'entrée poussée à l'ouverture (_pushBack) resterait
+    //      sinon dans l'historique WebView, faussant le prochain appui retour
+    //      (canGoBack() resterait vrai à tort). _popBack() la consomme ici
+    //      pour garder les deux compteurs en phase, exactement comme pour
+    //      toute autre fermeture ne passant pas par le bouton retour (croix,
+    //      clic outside...).
+    // Toute NOUVELLE modale à couvrir : lui ajouter un cas ici suffit --
+    // aucun changement natif nécessaire, le contournement s'applique
+    // automatiquement.
+    function _ucCloseTopmostBackTarget(consumeHistory) {
+        var closed = false;
 
-        // ── Ferme la modale de premier plan (z-index décroissant) ────────────
         // 0. Barre flottante du logo (cf. _installLogoQuickBar) : jamais visible
         // en même temps qu'une autre modale (elle se ferme elle-même avant
         // d'ouvrir sa cible), donc son ordre ici n'a pas d'importance.
         var lqbOverlay = document.getElementById('ucLogoQuickBarOverlay');
-        if (lqbOverlay && !lqbOverlay.classList.contains('ucLQBHidden')) {
+        if (!closed && lqbOverlay && !lqbOverlay.classList.contains('ucLQBHidden')) {
             lqbOverlay.classList.add('ucLQBHidden');
-            return;
+            closed = true;
         }
         // 1. Carte (z-index 999999999)
         var mapOverlay = document.getElementById('mapLocatorOverlay');
-        if (mapOverlay && !mapOverlay.classList.contains('mlHidden')) {
+        if (!closed && mapOverlay && !mapOverlay.classList.contains('mlHidden')) {
             mapOverlay.classList.add('mlHidden');
-            return;
+            closed = true;
         }
         // 1bis. Qibla (z-index 999999999, même plan que la carte)
         // NB : on ne rappelle pas closeQiblaModal() ici — elle appelle _popBack()
         // (donc history.back()), ce qui déclencherait un second popstate. On
         // reproduit seulement son effet visuel, comme pour mapOverlay ci-dessus.
         var qiblaOverlay = document.getElementById('qiblaOverlay');
-        if (qiblaOverlay && !qiblaOverlay.classList.contains('qbHidden')) {
+        if (!closed && qiblaOverlay && !qiblaOverlay.classList.contains('qbHidden')) {
             qiblaOverlay.classList.add('qbHidden');
             if (typeof window._qbStopCompassForBack === 'function') window._qbStopCompassForBack();
             var _qbFrame = document.getElementById('qiblaMapIframe');
             if (_qbFrame) _qbFrame.src = 'about:blank';
-            return;
+            closed = true;
         }
         // 1ter. Azan Catalog (z-index 999999999, même plan que la carte/Qibla)
         // NB : même raison qu'au-dessus — pas d'appel à closeAzanCatalogModal().
         var azanCatOverlay = document.getElementById('azanCatalogOverlay');
-        if (azanCatOverlay && !azanCatOverlay.classList.contains('acHidden')) {
+        if (!closed && azanCatOverlay && !azanCatOverlay.classList.contains('acHidden')) {
             azanCatOverlay.classList.add('acHidden');
             if (typeof window._acStopPreviewForBack === 'function') window._acStopPreviewForBack();
-            return;
+            closed = true;
         }
         // 1quater. QR code agrandi (z-index 999999999, même plan que la carte/Qibla/Azan)
         var qrCodeOverlay = document.getElementById('qrCodeOverlay');
-        if (qrCodeOverlay && !qrCodeOverlay.classList.contains('qcHidden')) {
+        if (!closed && qrCodeOverlay && !qrCodeOverlay.classList.contains('qcHidden')) {
             qrCodeOverlay.classList.add('qcHidden');
-            return;
+            closed = true;
         }
         // 2. Modal Coran (z-index 10000)
         var qpOverlay = document.getElementById('quranPlayerOverlay');
-        if (qpOverlay && !qpOverlay.classList.contains('qpHidden')) {
+        if (!closed && qpOverlay && !qpOverlay.classList.contains('qpHidden')) {
             qpOverlay.classList.add('qpHidden');
             var _mtB = document.getElementById('menuToggleButton');
             if (_mtB) _mtB.style.display = '';
@@ -7666,14 +7690,14 @@ function _qpSavePosition() {
             // section ouverte en même temps que le lecteur Coran (rare mais
             // possible via le bouton retour) verrait le bouton réapparaître à tort.
             if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
-            return;
+            closed = true;
         }
         // 3. Infos mosquée
         var infoModal = document.getElementById('ucMosqueInfoModal');
-        if (infoModal && infoModal.classList.contains('ucMosqueModalOpen')) {
+        if (!closed && infoModal && infoModal.classList.contains('ucMosqueModalOpen')) {
             infoModal.classList.remove('ucMosqueModalOpen');
             if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
-            return;
+            closed = true;
         }
         // 3bis. Sections du menu (modalPopupClass : locationSectionId,
         // optionsSectionId, techOptionsSectionId, lightProgrammingSectionId,
@@ -7683,14 +7707,16 @@ function _qpSavePosition() {
         // à l'ouverture par _installMenuSectionsBackPush (plus haut). Ferme
         // la première trouvée (en pratique une seule à la fois — ouvrir une
         // section referme d'abord le menu, et rouvrir le menu referme
-        // d'abord toute section via _closeAllMenuSections) SANS _popBack()
-        // (déjà géré par ce popstate en cours).
-        var openModals = document.querySelectorAll('.modalPopupClass');
-        for (var _mi = 0; _mi < openModals.length; _mi++) {
-            if (openModals[_mi].style.visibility === 'visible') {
-                openModals[_mi].style.visibility = 'hidden';
-                if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
-                return;
+        // d'abord toute section via _closeAllMenuSections).
+        if (!closed) {
+            var openModals = document.querySelectorAll('.modalPopupClass');
+            for (var _mi = 0; _mi < openModals.length; _mi++) {
+                if (openModals[_mi].style.visibility === 'visible') {
+                    openModals[_mi].style.visibility = 'hidden';
+                    if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
+                    closed = true;
+                    break;
+                }
             }
         }
         // 4. Menu principal (mainMenuContainer, z-index 99998) — demande
@@ -7698,20 +7724,34 @@ function _qpSavePosition() {
         // lieu de laisser Android afficher "Quitter l'application ?", cf.
         // MainActivity.kt) quand il est ouvert. Entrée d'historique poussée à
         // l'ouverture par _installMenuBackAndOutsideClose (plus haut dans ce
-        // fichier). Reproduit ici l'effet de closeMenuFunction() SANS son
-        // propre _popBack() (déjà géré par ce popstate en cours) — même
-        // raison que Qibla/Azan Catalog ci-dessus (éviter un second
-        // history.back()).
+        // fichier). Reproduit ici l'effet de closeMenuFunction().
         var mainMenuEl = document.getElementById('mainMenuContainer');
-        if (mainMenuEl && mainMenuEl.style.visibility === 'visible') {
+        if (!closed && mainMenuEl && mainMenuEl.style.visibility === 'visible') {
             isMenuOpen = true;   // toujours "fermé" (naming inversé, cf. _patchCloseMenu)
             hideElementByIdFunction('mainMenuContainer');
             var _mlBm = document.getElementById('ucSettingsButtonVertical');
             if (_mlBm) _mlBm.style.display = '';
             if (typeof window._ucSyncSettingsBtnVisibility === 'function') window._ucSyncSettingsBtnVisibility();
-            return;
+            closed = true;
         }
+
+        if (closed && consumeHistory && typeof window._popBack === 'function') window._popBack();
+        return closed;
+    }
+
+    window.addEventListener('popstate', function() {
+        if (_pendingPops > 0) { _pendingPops--; return; }
+        _ucCloseTopmostBackTarget(false);
     });
+
+    // Appelé DIRECTEMENT par MainActivity.kt (handleOnBackPressed), en
+    // court-circuit du mécanisme canGoBack()/popstate ci-dessus -- cf.
+    // commentaire de _ucCloseTopmostBackTarget. Retourne true/false (converti
+    // en chaîne "true"/"false" par evaluateJavascript) pour que le natif
+    // sache s'il doit encore se rabattre sur canGoBack()/la boîte de dialogue.
+    window._ucNativeBackClose = function() {
+        return _ucCloseTopmostBackTarget(true);
+    };
 })();
 
 // ── Ouvrir / Fermer ───────────────────────────────────────────────────────

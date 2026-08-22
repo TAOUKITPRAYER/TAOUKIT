@@ -1442,6 +1442,33 @@
     font-size: 8.0vh !important;
 }
 
+/* ── BANDE FLOUTÉE derrière le marquee azan ─────────────────────────────────
+   FIX 22/08/2026 (retour utilisateur : lisibilité du marquee indépendante du
+   fond de la page azan, qui varie beaucoup selon la prière -- dômes ciel/or,
+   ou noir uni en vertical). Fond semi-opaque + flou de la zone SOUS le
+   texte -- contraste garanti quel que soit ce qu'il y a derrière, sans
+   dépendre de la couleur du fond. backdrop-filter est une amélioration
+   progressive : si le WebView (boîtier bon marché) ne le supporte pas, le
+   fond semi-opaque seul (sans flou) reste appliqué -- déjà une nette
+   amélioration de contraste, jamais un état cassé. Couleur du texte forcée
+   en blanc (!important, l'inline style par-prière posé par _showAzanTicker,
+   custom.js, a une spécificité plus forte) : cette bande est volontairement
+   sombre pour TOUTES les prières, les couleurs par-prière (pensées pour le
+   fond dôme/ciel, pas cette bande) n'y seraient pas forcément lisibles. */
+#marqueeContainerHorizontal.ucAzanLargeText,
+#marqueeContainerVertical.ucAzanLargeText {
+    background: rgba(0, 0, 0, 0.42);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+#marqueeContainerHorizontal.ucAzanLargeText #marqueeTextHorizontal,
+#marqueeContainerVertical.ucAzanLargeText #marqueeTextVertical {
+    color: #ffffff !important;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7) !important;
+}
+
 /* ── Azan vertical (portrait) : bloc texte dans la zone ciel ────────────── */
 /* En paysage le dome est a droite → justify-content:center est ideal.       */
 /* En portrait le dome occupe le centre/bas de l'ecran → on passe en         */
@@ -4063,6 +4090,33 @@
 }
 #marqueeContainerVertical.ucAzanLargeText #marqueeTextVertical {
     font-size: 8.0vh !important;
+}
+
+/* ── BANDE FLOUTÉE derrière le marquee azan ─────────────────────────────────
+   FIX 22/08/2026 (retour utilisateur : lisibilité du marquee indépendante du
+   fond de la page azan, qui varie beaucoup selon la prière -- dômes ciel/or,
+   ou noir uni en vertical). Fond semi-opaque + flou de la zone SOUS le
+   texte -- contraste garanti quel que soit ce qu'il y a derrière, sans
+   dépendre de la couleur du fond. backdrop-filter est une amélioration
+   progressive : si le WebView (boîtier bon marché) ne le supporte pas, le
+   fond semi-opaque seul (sans flou) reste appliqué -- déjà une nette
+   amélioration de contraste, jamais un état cassé. Couleur du texte forcée
+   en blanc (!important, l'inline style par-prière posé par _showAzanTicker,
+   custom.js, a une spécificité plus forte) : cette bande est volontairement
+   sombre pour TOUTES les prières, les couleurs par-prière (pensées pour le
+   fond dôme/ciel, pas cette bande) n'y seraient pas forcément lisibles. */
+#marqueeContainerHorizontal.ucAzanLargeText,
+#marqueeContainerVertical.ucAzanLargeText {
+    background: rgba(0, 0, 0, 0.42);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+#marqueeContainerHorizontal.ucAzanLargeText #marqueeTextHorizontal,
+#marqueeContainerVertical.ucAzanLargeText #marqueeTextVertical {
+    color: #ffffff !important;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7) !important;
 }
 
 /* ── Azan vertical (portrait) : bloc texte dans la zone ciel ────────────── */

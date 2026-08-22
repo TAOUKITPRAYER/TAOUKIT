@@ -991,6 +991,27 @@ if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l
         });
     }
 }
+// ── DÉSACTIVE LE CERCLE DE MISE EN AVANT DE LA PRIÈRE COURANTE ─────────────
+// Demande explicite (22/08/2026) : le cœur (m2body.js) affiche, pendant une
+// période après l'azan, un cercle/badge par-dessus la case de la prière du
+// tableau des horaires -- positionHighlightBar() (m2body.js), qui redimensionne
+// #highlightBarHorizontal/Vertical en carré (width=height, donc rond via
+// border-radius/image de fond circulaire, cf. style1.css) et lui ajoute la
+// classe highlightedCellClass sur la cellule concernée. Appelé par
+// highlightPrayerRow() (elle-même appelée à AZAN_TIME pour chaque prière,
+// cf. m2body.js) ET directement par checkAndRestoreIqamaCounter() lors d'un
+// resync -- neutraliser positionHighlightBar() lui-même (plutôt que
+// highlightPrayerRow(), qui appelle aussi showAzanPopup() -- à ne surtout
+// pas toucher) couvre les deux chemins d'un seul coup, sans toucher au
+// popup azan lui-même. resetPrayerRowsStyleFunction() (qui masque ce cercle
+// après coup) n'a rien à faire ici : il reste inoffensif si le cercle n'a
+// jamais été affiché.
+(function _disablePrayerRowHighlightCircle() {
+    if (typeof window.positionHighlightBar !== 'function') return;
+    window.positionHighlightBar = function() {};
+    _L('SYS', 'PATCH', { fn: 'positionHighlightBar', for: 'disabled_prayer_row_highlight_circle' });
+})();
+
 // ── STOCKAGE INDÉPENDANT des réglages custom ──────────────────────────────
 // (totalement séparé de JS_DATA pour ne jamais interférer avec les updates)
 

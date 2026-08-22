@@ -6339,8 +6339,20 @@ window.cycleReciterDirFunction          = cycleReciterDirFunction;
 function applyCustomIconsVisibility() {
     const sp = document.getElementById('customSpeakerIcon');
     const qr = document.getElementById('customQuranIcon');
-    if (sp) sp.style.visibility = (JS_CUSTOM.ucShowSpeakerIcon == 1) ? 'visible' : 'hidden';
-    if (qr) qr.style.visibility = (JS_CUSTOM.ucShowQuranIcon  == 1) ? 'visible' : 'hidden';
+    // Masqués sur la page principale en mode TÉLÉPHONE/VERTICAL uniquement
+    // (retour utilisateur 23/08/2026) : déjà accessibles via
+    // ucSettingsButtonVertical (barre flottante du logo, cf.
+    // _installLogoQuickBar) dans ce contexte précis -- redondants. Boîtier TV
+    // (vertical ou non) et téléphone en horizontal non concernés. Le réglage
+    // stocké (ucShowSpeakerIcon/ucShowQuranIcon) et ses cases à cocher dans le
+    // menu réglages restent inchangés : seule la VISIBILITÉ est forcée ici,
+    // pas la préférence elle-même (reprend effet dès un passage en horizontal).
+    // #customSpeakerIcon.spPlaying (égaliseur pendant la lecture de l'azan,
+    // cf. _installAzanEqAnimation) force sa propre visibilité malgré ce
+    // masquage -- volontaire, cf. commentaire CSS associé (custom.css).
+    const _hidePhoneVertical = _ucIsRealPhone && !isHorizontalOrientation;
+    if (sp) sp.style.visibility = (!_hidePhoneVertical && JS_CUSTOM.ucShowSpeakerIcon == 1) ? 'visible' : 'hidden';
+    if (qr) qr.style.visibility = (!_hidePhoneVertical && JS_CUSTOM.ucShowQuranIcon  == 1) ? 'visible' : 'hidden';
     const spCb = document.getElementById('showSpeakerIconCheckbox');
     const qrCb = document.getElementById('showQuranIconCheckbox');
     if (spCb) spCb.checked = (JS_CUSTOM.ucShowSpeakerIcon == 1);
@@ -6716,10 +6728,15 @@ function applyCustomIconsVisibility() {
     }, 300);
 
     // Debounce resize : on attend la fin des événements pour repositionner
+    // (+ réévaluer la visibilité téléphone/vertical ci-dessus : isHorizontalOrientation
+    // peut changer sur une rotation d'écran réelle, contrairement au boîtier TV).
     var _posTimer = null;
     window.addEventListener('resize', function() {
         clearTimeout(_posTimer);
-        _posTimer = setTimeout(positionCustomIcons, 150);
+        _posTimer = setTimeout(function() {
+            positionCustomIcons();
+            applyCustomIconsVisibility();
+        }, 150);
     });
 
 })();

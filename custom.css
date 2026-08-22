@@ -712,6 +712,14 @@
    `currentColor`/var(--esCLOCK) (pensés pour la page principale, pas ces
    fonds-là). */
 #customSpeakerIcon.spPlaying {
+    /* !important sur visibility : applyCustomIconsVisibility() (custom.js)
+       masque #customSpeakerIcon via style.visibility='hidden' (inline, donc
+       prioritaire sur une règle de classe normale) en mode téléphone/vertical
+       -- retour utilisateur 23/08/2026 -- mais l'égaliseur pendant la lecture
+       de l'azan doit rester visible malgré ce masquage (déjà couvert par le
+       même contraste que sur boîtier TV, cf. commentaire de la section
+       "VISIBILITÉ SUR LA PAGE AZAN" plus haut). */
+    visibility: visible !important;
     z-index: 99997;
     opacity: 1;
     color: #ffffff;
@@ -3441,6 +3449,14 @@
    `currentColor`/var(--esCLOCK) (pensés pour la page principale, pas ces
    fonds-là). */
 #customSpeakerIcon.spPlaying {
+    /* !important sur visibility : applyCustomIconsVisibility() (custom.js)
+       masque #customSpeakerIcon via style.visibility='hidden' (inline, donc
+       prioritaire sur une règle de classe normale) en mode téléphone/vertical
+       -- retour utilisateur 23/08/2026 -- mais l'égaliseur pendant la lecture
+       de l'azan doit rester visible malgré ce masquage (déjà couvert par le
+       même contraste que sur boîtier TV, cf. commentaire de la section
+       "VISIBILITÉ SUR LA PAGE AZAN" plus haut). */
+    visibility: visible !important;
     z-index: 99997;
     opacity: 1;
     color: #ffffff;

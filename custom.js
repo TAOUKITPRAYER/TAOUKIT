@@ -3188,6 +3188,16 @@ window._ucForceCloseAllCounterOverlays = function () {
         // rafraîchir, seul l'appui long doit le faire desormais.
         el.onclick = null;
 
+        // Image affichée : ps.png -> qrmosquee.png en mode TÉLÉPHONE/VERTICAL
+        // uniquement (retour utilisateur 23/08/2026) -- indice visuel qu'un
+        // appui ouvre la modale QR, sans quoi rien ne le suggère. Boîtier TV
+        // en vertical/kiosque non concerné (garde ps.png) : ce n'est pas
+        // l'utilisateur qui scanne sur un écran fixe, seul le comportement
+        // au clic (déjà installé plus bas, indépendant de l'appareil) importe
+        // là-bas. Dimensions inchangées : mêmes règles CSS #psFlagImageVertical,
+        // seul l'attribut src change.
+        if (_ucIsRealPhone) el.src = QR_SRC;
+
         var LONG_PRESS_DELAY = 600;
         var _psPressTimer = null;
         var _psLongPressFired = false;

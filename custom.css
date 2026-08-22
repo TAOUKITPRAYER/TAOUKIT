@@ -84,6 +84,81 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   ISOLATION GPU — HORLOGE / COMPTEUR SECONDES (redessin chaque seconde)
+   ─────────────────────────────────────────────────────────────────────────
+   FIX 22/08/2026 (retour utilisateur : marquee saccadé ~10 img/s sur boîtier
+   TV). Cause : MainActivity.kt forçait LAYER_TYPE_SOFTWARE sur tout le
+   WebView pour contourner un artefact visuel (petit carré/point vert, bug du
+   compositeur GPU du pilote SoC bon marché) constaté près de l'horloge, ce
+   qui plafonnait TOUTE animation CSS de la page (dont ce marquee) à ~10fps.
+   MainActivity.kt repasse désormais en LAYER_TYPE_HARDWARE (rendu GPU normal
+   partout) ; en échange, les éléments redessinés chaque seconde (suspects
+   d'origine de l'artefact) sont isolés ici sur leur propre couche de
+   composition -- même technique déjà validée dans ce projet pour
+   #quranPlayerOverlay, même famille de bug.
+
+   PRÉCISION 22/08/2026 (retour utilisateur : bug constaté UNIQUEMENT sur les
+   boîtiers en mode HORIZONTAL) : #countdownDisplayVertical, cité dans le
+   commentaire d'origine (MainActivity.kt, 17/08/2026), n'existe dans aucun
+   asset du projet (vérifié) -- et un bug horizontal-only ne peut de toute
+   façon pas venir d'un id "...Vertical". Coupable bien plus probable :
+   #fullScreenCounterMiniClockHorizontal (mini horloge affichée UNIQUEMENT
+   dans le compteur plein écran horizontal, cf. correspondance.csv/style1.css
+   -- aucun équivalent Vertical n'existe, ce qui correspond exactement à
+   l'observation "horizontal only") -- même text-shadow (style1.css) que les
+   autres éléments ci-dessous, mise à jour chaque seconde. Ajouté à la liste
+   ci-dessous ; les autres id (Vertical compris) restent isolés par
+   précaution, sans risque ni coût de perf a garder.
+
+   PRÉCISION 2 (22/08/2026, retour utilisateur -- scintillement localisé plus
+   précisément autour de #miniClockTimeDisplayHorizontal /
+   #miniClockSecondsDisplayHorizontal / #fullClockContainerHorizontal, ou un
+   de leurs sous-éléments) : ajout des CONTENEURS parents (fullClockContainer*,
+   miniClockContainer*) en plus de leurs enfants, et des éléments SECONDES
+   (fullClockSecondsDisplay*, miniClockSecondsDisplay*, mis à jour CHAQUE
+   seconde -- encore plus fréquemment que l'affichage heure -- et donc
+   suspects encore plus probables que celui-ci) ainsi que AmPmDisplay*
+   (même conteneur). Isoler le conteneur plutôt que seulement les enfants
+   feuilles regroupe tout le sous-arbre horloge sur UNE seule couche de
+   composition stable, au lieu de laisser chaque enfant se disputer sa
+   propre promotion de couche (source possible de bug de tuilage GPU sur
+   pilote bon marché). Note (sans lien direct, découvert en marge) :
+   m2body.js déclare miniClockSecondsVertical/Horizontal avec les cibles
+   getElementById INVERSÉES (la variable "...Vertical" pointe vers l'id
+   "...Horizontal" et réciproquement, L1913-1914) -- sans conséquence
+   fonctionnelle ici (les deux vrais id sont bien réécrits chaque seconde,
+   l'un via chaque variable), mais à garder en tête si un futur bug touche
+   spécifiquement les secondes d'une seule orientation.
+   À VÉRIFIER EN CONDITIONS RÉELLES sur boîtier TV horizontal (l'artefact ne
+   se constate qu'à l'œil) : si le carré vert revient malgré cette isolation,
+   cf. MainActivity.kt::setupWebView() pour revenir à LAYER_TYPE_SOFTWARE.
+   ═══════════════════════════════════════════════════════════════════════════ */
+#fullClockContainerVertical,
+#fullClockContainerHorizontal,
+#fullClockTimeDisplayVertical,
+#fullClockTimeDisplayHorizontal,
+#fullClockSecondsDisplayVertical,
+#fullClockSecondsDisplayHorizontal,
+#fullClockAmPmDisplayVertical,
+#fullClockAmPmDisplayHorizontal,
+#miniClockContainerVertical,
+#miniClockContainerHorizontal,
+#miniClockTimeDisplayVertical,
+#miniClockTimeDisplayHorizontal,
+#miniClockSecondsDisplayVertical,
+#miniClockSecondsDisplayHorizontal,
+#secondCounterContainerVertical,
+#secondCounterContainerHorizontal,
+#fullScreenCounterMiniClockHorizontal,
+#fullScreenCounterTimeDisplayVertical,
+#fullScreenCounterTimeDisplayHorizontal {
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    LECTEUR QURAN
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -544,6 +619,15 @@
 #autoplayUnlockBtn:hover  { background: #e8c060; }
 #autoplayUnlockBtn:active { transform: scale(.96); }
 
+/* ── tawkitNameDisplayHorizontal : mention "(نسخة خاصة)" sur la même ligne ──
+   FIX 22/08/2026 (retour utilisateur) : #tawkitNameDisplayHorizontal (core,
+   style1.css) est une boîte étroite (width:11%) sans white-space:nowrap --
+   le texte "9.63 (نسخة خاصة)" (custom.js, ajout de la mention) y repassait
+   à la ligne. overflow laissé au défaut (visible) : élément position:absolute
+   sans contrainte à droite, un léger débordement horizontal au-delà de 11%
+   ne perturbe aucun autre élément. */
+#tawkitNameDisplayHorizontal { white-space: nowrap; }
+
 /* ── ÉGALISEUR ICÔNE CORAN ──────────────────────────────────────────────── */
 #customQuranIcon .qpBookSvg    { width: 100%; height: 100%; }
 #customQuranIcon .qpEqWrap {
@@ -574,33 +658,69 @@
 #customQuranIcon.qpCssAnim .qpEqBar:nth-child(5) { animation: qpBar .55s ease-in-out infinite alternate; animation-delay: .07s; }
 @keyframes qpBar { from { height: 14%; } to { height: 92%; } }
 
-/* ── ÉGALISEUR AZAN (overlay fixe, même position que customQuranIcon) ── */
-#azanEqOverlay {
+/* ── ÉGALISEUR ICÔNE HAUT-PARLEUR (azan) ──────────────────────────────────
+   FIX 22/08/2026 (retour utilisateur : même comportement visuel que
+   customQuranIcon voulu) : structure et classes identiques à l'égaliseur
+   Coran ci-dessus (spIconSvg/spEqWrap/spEqBar/spPlaying/spCssAnim au lieu de
+   qpBookSvg/qpEqWrap/qpEqBar/qpPlaying/qpCssAnim), même @keyframes qpBar
+   réutilisée telle quelle. Remplace l'ancien #azanEqOverlay (overlay
+   position:fixed positionné par-dessus customQuranIcon via getBoundingClientRect
+   -- bonne apparence, mauvais élément : jamais l'icône haut-parleur
+   elle-même, cf. _installAzanEqAnimation, custom.js). ────────────────────── */
+#customSpeakerIcon .spIconSvg { width: 100%; height: 100%; }
+#customSpeakerIcon .spEqWrap {
     display: none;
-    position: fixed;
-    z-index: 10001;
     align-items: flex-end;
     justify-content: space-between;
+    width: 100%;
+    height: 100%;
     padding: 6% 3%;
     box-sizing: border-box;
     gap: 1.5px;
-    pointer-events: none;
 }
-#azanEqOverlay.azanEqActive { display: flex; }
-.azanEqBar {
+#customSpeakerIcon.spPlaying .spIconSvg { display: none; }
+#customSpeakerIcon.spPlaying .spEqWrap  { display: flex; }
+
+.spEqBar {
     flex: 1;
-    background: #ffffff;
+    background: currentColor;
     border-radius: 1px 1px 0 0;
     height: 20%;
     transform-origin: bottom;
-    animation: azanBar .50s ease-in-out infinite alternate;
 }
-#azanEqOverlay .azanEqBar:nth-child(1) { animation-duration: .50s; animation-delay: .00s; }
-#azanEqOverlay .azanEqBar:nth-child(2) { animation-duration: .38s; animation-delay: .10s; }
-#azanEqOverlay .azanEqBar:nth-child(3) { animation-duration: .62s; animation-delay: .04s; }
-#azanEqOverlay .azanEqBar:nth-child(4) { animation-duration: .44s; animation-delay: .14s; }
-#azanEqOverlay .azanEqBar:nth-child(5) { animation-duration: .55s; animation-delay: .07s; }
-@keyframes azanBar { from { height: 14%; } to { height: 92%; } }
+#customSpeakerIcon.spCssAnim .spEqBar:nth-child(1) { animation: qpBar .50s ease-in-out infinite alternate; animation-delay: .00s; }
+#customSpeakerIcon.spCssAnim .spEqBar:nth-child(2) { animation: qpBar .38s ease-in-out infinite alternate; animation-delay: .10s; }
+#customSpeakerIcon.spCssAnim .spEqBar:nth-child(3) { animation: qpBar .62s ease-in-out infinite alternate; animation-delay: .04s; }
+#customSpeakerIcon.spCssAnim .spEqBar:nth-child(4) { animation: qpBar .44s ease-in-out infinite alternate; animation-delay: .14s; }
+#customSpeakerIcon.spCssAnim .spEqBar:nth-child(5) { animation: qpBar .55s ease-in-out infinite alternate; animation-delay: .07s; }
+
+/* ── VISIBILITÉ SUR LA PAGE AZAN ────────────────────────────────────────────
+   FIX 22/08/2026 (retour utilisateur) : #customSpeakerIcon est en temps normal
+   z-index:9999 / opacity:0.15 (.customSideIcon, style1.css core) -- SOUS le
+   popup azan (#azanPopupVertical/Horizontal, z-index:99991) qui le recouvre
+   entièrement pendant toute la page azan. Résultat par défaut : totalement
+   invisible sur la page azan, PLAYING ou non -- le but demandé (indicateur
+   visuel "l'azan joue-t-il en ce moment ?" pendant que la page est affichée)
+   ne peut donc fonctionner qu'en dépassant ce z-index, et UNIQUEMENT pendant
+   .spPlaying (sciemment restreint à ce sélecteur : hors lecture, l'icône doit
+   rester invisible sur la page azan -- "ne pas même montrer l'icône" -- donc
+   pas de changement au z-index/opacity par défaut, qui reste sous le popup).
+   Contraste : les fonds de la page azan varient énormément selon la prière
+   (dômes ciel/or #_ucDomeImageForPrayer, ou noir uni en vertical) -- couleur
+   forcée blanche + fond circulaire semi-opaque sombre (garantit la lisibilité
+   quelle que soit la couleur/luminosité du fond dessous), plutôt que
+   `currentColor`/var(--esCLOCK) (pensés pour la page principale, pas ces
+   fonds-là). */
+#customSpeakerIcon.spPlaying {
+    z-index: 99997;
+    opacity: 1;
+    color: #ffffff;
+    background: rgba(0, 0, 0, 0.45);
+    border-radius: 50%;
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+    padding: 15%;
+    box-sizing: border-box;
+}
 
 /* ── NO-MOBILE REMINDER OVERLAY ─────────────────────────────────────────── */
 #nmrOverlay {
@@ -1439,7 +1559,12 @@
     flex-shrink: 0;
 }
 
-/* Ligne 2 — hadith principal */
+/* Ligne 2 — hadith principal
+   white-space:nowrap (retour utilisateur : le mot "لَغَوْتَ" passait à la
+   ligne suivante) -- une seule ligne garantie ; le JS (_initJomoaAdabOverlay,
+   custom.js) mesure scrollWidth vs la largeur disponible a l'affichage et
+   reduit encore le font-size si necessaire (couvre toutes les tailles
+   d'ecran/boitiers, le clamp ci-dessous ne suffit pas a lui seul partout). */
 #jomoaAdabOverlay .joa-l2 {
     color: #f5edda;
     font-size: 18px; /* fallback (no min()/clamp() on old WebView) */
@@ -1447,6 +1572,7 @@
     line-height: 1.7;
     text-align: center;
     max-width: 90%;
+    white-space: nowrap;
     text-shadow: 0 1px 10px rgba(0, 0, 0, 0.7);
 }
 
@@ -2660,6 +2786,81 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   ISOLATION GPU — HORLOGE / COMPTEUR SECONDES (redessin chaque seconde)
+   ─────────────────────────────────────────────────────────────────────────
+   FIX 22/08/2026 (retour utilisateur : marquee saccadé ~10 img/s sur boîtier
+   TV). Cause : MainActivity.kt forçait LAYER_TYPE_SOFTWARE sur tout le
+   WebView pour contourner un artefact visuel (petit carré/point vert, bug du
+   compositeur GPU du pilote SoC bon marché) constaté près de l'horloge, ce
+   qui plafonnait TOUTE animation CSS de la page (dont ce marquee) à ~10fps.
+   MainActivity.kt repasse désormais en LAYER_TYPE_HARDWARE (rendu GPU normal
+   partout) ; en échange, les éléments redessinés chaque seconde (suspects
+   d'origine de l'artefact) sont isolés ici sur leur propre couche de
+   composition -- même technique déjà validée dans ce projet pour
+   #quranPlayerOverlay, même famille de bug.
+
+   PRÉCISION 22/08/2026 (retour utilisateur : bug constaté UNIQUEMENT sur les
+   boîtiers en mode HORIZONTAL) : #countdownDisplayVertical, cité dans le
+   commentaire d'origine (MainActivity.kt, 17/08/2026), n'existe dans aucun
+   asset du projet (vérifié) -- et un bug horizontal-only ne peut de toute
+   façon pas venir d'un id "...Vertical". Coupable bien plus probable :
+   #fullScreenCounterMiniClockHorizontal (mini horloge affichée UNIQUEMENT
+   dans le compteur plein écran horizontal, cf. correspondance.csv/style1.css
+   -- aucun équivalent Vertical n'existe, ce qui correspond exactement à
+   l'observation "horizontal only") -- même text-shadow (style1.css) que les
+   autres éléments ci-dessous, mise à jour chaque seconde. Ajouté à la liste
+   ci-dessous ; les autres id (Vertical compris) restent isolés par
+   précaution, sans risque ni coût de perf a garder.
+
+   PRÉCISION 2 (22/08/2026, retour utilisateur -- scintillement localisé plus
+   précisément autour de #miniClockTimeDisplayHorizontal /
+   #miniClockSecondsDisplayHorizontal / #fullClockContainerHorizontal, ou un
+   de leurs sous-éléments) : ajout des CONTENEURS parents (fullClockContainer*,
+   miniClockContainer*) en plus de leurs enfants, et des éléments SECONDES
+   (fullClockSecondsDisplay*, miniClockSecondsDisplay*, mis à jour CHAQUE
+   seconde -- encore plus fréquemment que l'affichage heure -- et donc
+   suspects encore plus probables que celui-ci) ainsi que AmPmDisplay*
+   (même conteneur). Isoler le conteneur plutôt que seulement les enfants
+   feuilles regroupe tout le sous-arbre horloge sur UNE seule couche de
+   composition stable, au lieu de laisser chaque enfant se disputer sa
+   propre promotion de couche (source possible de bug de tuilage GPU sur
+   pilote bon marché). Note (sans lien direct, découvert en marge) :
+   m2body.js déclare miniClockSecondsVertical/Horizontal avec les cibles
+   getElementById INVERSÉES (la variable "...Vertical" pointe vers l'id
+   "...Horizontal" et réciproquement, L1913-1914) -- sans conséquence
+   fonctionnelle ici (les deux vrais id sont bien réécrits chaque seconde,
+   l'un via chaque variable), mais à garder en tête si un futur bug touche
+   spécifiquement les secondes d'une seule orientation.
+   À VÉRIFIER EN CONDITIONS RÉELLES sur boîtier TV horizontal (l'artefact ne
+   se constate qu'à l'œil) : si le carré vert revient malgré cette isolation,
+   cf. MainActivity.kt::setupWebView() pour revenir à LAYER_TYPE_SOFTWARE.
+   ═══════════════════════════════════════════════════════════════════════════ */
+#fullClockContainerVertical,
+#fullClockContainerHorizontal,
+#fullClockTimeDisplayVertical,
+#fullClockTimeDisplayHorizontal,
+#fullClockSecondsDisplayVertical,
+#fullClockSecondsDisplayHorizontal,
+#fullClockAmPmDisplayVertical,
+#fullClockAmPmDisplayHorizontal,
+#miniClockContainerVertical,
+#miniClockContainerHorizontal,
+#miniClockTimeDisplayVertical,
+#miniClockTimeDisplayHorizontal,
+#miniClockSecondsDisplayVertical,
+#miniClockSecondsDisplayHorizontal,
+#secondCounterContainerVertical,
+#secondCounterContainerHorizontal,
+#fullScreenCounterMiniClockHorizontal,
+#fullScreenCounterTimeDisplayVertical,
+#fullScreenCounterTimeDisplayHorizontal {
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    LECTEUR QURAN
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -3120,6 +3321,15 @@
 #autoplayUnlockBtn:hover  { background: #e8c060; }
 #autoplayUnlockBtn:active { transform: scale(.96); }
 
+/* ── tawkitNameDisplayHorizontal : mention "(نسخة خاصة)" sur la même ligne ──
+   FIX 22/08/2026 (retour utilisateur) : #tawkitNameDisplayHorizontal (core,
+   style1.css) est une boîte étroite (width:11%) sans white-space:nowrap --
+   le texte "9.63 (نسخة خاصة)" (custom.js, ajout de la mention) y repassait
+   à la ligne. overflow laissé au défaut (visible) : élément position:absolute
+   sans contrainte à droite, un léger débordement horizontal au-delà de 11%
+   ne perturbe aucun autre élément. */
+#tawkitNameDisplayHorizontal { white-space: nowrap; }
+
 /* ── ÉGALISEUR ICÔNE CORAN ──────────────────────────────────────────────── */
 #customQuranIcon .qpBookSvg    { width: 100%; height: 100%; }
 #customQuranIcon .qpEqWrap {
@@ -3150,33 +3360,69 @@
 #customQuranIcon.qpCssAnim .qpEqBar:nth-child(5) { animation: qpBar .55s ease-in-out infinite alternate; animation-delay: .07s; }
 @keyframes qpBar { from { height: 14%; } to { height: 92%; } }
 
-/* ── ÉGALISEUR AZAN (overlay fixe, même position que customQuranIcon) ── */
-#azanEqOverlay {
+/* ── ÉGALISEUR ICÔNE HAUT-PARLEUR (azan) ──────────────────────────────────
+   FIX 22/08/2026 (retour utilisateur : même comportement visuel que
+   customQuranIcon voulu) : structure et classes identiques à l'égaliseur
+   Coran ci-dessus (spIconSvg/spEqWrap/spEqBar/spPlaying/spCssAnim au lieu de
+   qpBookSvg/qpEqWrap/qpEqBar/qpPlaying/qpCssAnim), même @keyframes qpBar
+   réutilisée telle quelle. Remplace l'ancien #azanEqOverlay (overlay
+   position:fixed positionné par-dessus customQuranIcon via getBoundingClientRect
+   -- bonne apparence, mauvais élément : jamais l'icône haut-parleur
+   elle-même, cf. _installAzanEqAnimation, custom.js). ────────────────────── */
+#customSpeakerIcon .spIconSvg { width: 100%; height: 100%; }
+#customSpeakerIcon .spEqWrap {
     display: none;
-    position: fixed;
-    z-index: 10001;
     align-items: flex-end;
     justify-content: space-between;
+    width: 100%;
+    height: 100%;
     padding: 6% 3%;
     box-sizing: border-box;
     gap: 1.5px;
-    pointer-events: none;
 }
-#azanEqOverlay.azanEqActive { display: flex; }
-.azanEqBar {
+#customSpeakerIcon.spPlaying .spIconSvg { display: none; }
+#customSpeakerIcon.spPlaying .spEqWrap  { display: flex; }
+
+.spEqBar {
     flex: 1;
-    background: #ffffff;
+    background: currentColor;
     border-radius: 1px 1px 0 0;
     height: 20%;
     transform-origin: bottom;
-    animation: azanBar .50s ease-in-out infinite alternate;
 }
-#azanEqOverlay .azanEqBar:nth-child(1) { animation-duration: .50s; animation-delay: .00s; }
-#azanEqOverlay .azanEqBar:nth-child(2) { animation-duration: .38s; animation-delay: .10s; }
-#azanEqOverlay .azanEqBar:nth-child(3) { animation-duration: .62s; animation-delay: .04s; }
-#azanEqOverlay .azanEqBar:nth-child(4) { animation-duration: .44s; animation-delay: .14s; }
-#azanEqOverlay .azanEqBar:nth-child(5) { animation-duration: .55s; animation-delay: .07s; }
-@keyframes azanBar { from { height: 14%; } to { height: 92%; } }
+#customSpeakerIcon.spCssAnim .spEqBar:nth-child(1) { animation: qpBar .50s ease-in-out infinite alternate; animation-delay: .00s; }
+#customSpeakerIcon.spCssAnim .spEqBar:nth-child(2) { animation: qpBar .38s ease-in-out infinite alternate; animation-delay: .10s; }
+#customSpeakerIcon.spCssAnim .spEqBar:nth-child(3) { animation: qpBar .62s ease-in-out infinite alternate; animation-delay: .04s; }
+#customSpeakerIcon.spCssAnim .spEqBar:nth-child(4) { animation: qpBar .44s ease-in-out infinite alternate; animation-delay: .14s; }
+#customSpeakerIcon.spCssAnim .spEqBar:nth-child(5) { animation: qpBar .55s ease-in-out infinite alternate; animation-delay: .07s; }
+
+/* ── VISIBILITÉ SUR LA PAGE AZAN ────────────────────────────────────────────
+   FIX 22/08/2026 (retour utilisateur) : #customSpeakerIcon est en temps normal
+   z-index:9999 / opacity:0.15 (.customSideIcon, style1.css core) -- SOUS le
+   popup azan (#azanPopupVertical/Horizontal, z-index:99991) qui le recouvre
+   entièrement pendant toute la page azan. Résultat par défaut : totalement
+   invisible sur la page azan, PLAYING ou non -- le but demandé (indicateur
+   visuel "l'azan joue-t-il en ce moment ?" pendant que la page est affichée)
+   ne peut donc fonctionner qu'en dépassant ce z-index, et UNIQUEMENT pendant
+   .spPlaying (sciemment restreint à ce sélecteur : hors lecture, l'icône doit
+   rester invisible sur la page azan -- "ne pas même montrer l'icône" -- donc
+   pas de changement au z-index/opacity par défaut, qui reste sous le popup).
+   Contraste : les fonds de la page azan varient énormément selon la prière
+   (dômes ciel/or #_ucDomeImageForPrayer, ou noir uni en vertical) -- couleur
+   forcée blanche + fond circulaire semi-opaque sombre (garantit la lisibilité
+   quelle que soit la couleur/luminosité du fond dessous), plutôt que
+   `currentColor`/var(--esCLOCK) (pensés pour la page principale, pas ces
+   fonds-là). */
+#customSpeakerIcon.spPlaying {
+    z-index: 99997;
+    opacity: 1;
+    color: #ffffff;
+    background: rgba(0, 0, 0, 0.45);
+    border-radius: 50%;
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+    padding: 15%;
+    box-sizing: border-box;
+}
 
 /* ── NO-MOBILE REMINDER OVERLAY ─────────────────────────────────────────── */
 #nmrOverlay {
@@ -3936,7 +4182,12 @@
     flex-shrink: 0;
 }
 
-/* Ligne 2 — hadith principal */
+/* Ligne 2 — hadith principal
+   white-space:nowrap (retour utilisateur : le mot "لَغَوْتَ" passait à la
+   ligne suivante) -- une seule ligne garantie ; le JS (_initJomoaAdabOverlay,
+   custom.js) mesure scrollWidth vs la largeur disponible a l'affichage et
+   reduit encore le font-size si necessaire (couvre toutes les tailles
+   d'ecran/boitiers, le clamp ci-dessous ne suffit pas a lui seul partout). */
 #jomoaAdabOverlay .joa-l2 {
     color: #f5edda;
     font-size: 18px; /* fallback (no min()/clamp() on old WebView) */
@@ -3944,6 +4195,7 @@
     line-height: 1.7;
     text-align: center;
     max-width: 90%;
+    white-space: nowrap;
     text-shadow: 0 1px 10px rgba(0, 0, 0, 0.7);
 }
 

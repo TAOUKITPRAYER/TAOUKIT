@@ -940,12 +940,15 @@ if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l
         if (el) el.innerHTML = el.innerHTML.replace('9.63', CUSTOM_APP_VERSION);
     });
 
-    // Hors page principale (menu latéral, page "À propos") : précise qu'il
-    // s'agit d'une version spécifique (build personnalisé pour cette mosquée,
-    // cf. spec/mosquee.js), pas juste le numéro de version générique.
+    // Page principale ET hors page principale (menu latéral, page "À propos") :
+    // précise qu'il s'agit d'une version spécifique (build personnalisé pour
+    // cette mosquée, cf. spec/mosquee.js), pas juste le numéro de version
+    // générique. tawkitNameDisplayHorizontal ajouté ici (retour utilisateur
+    // 22/08/2026) -- initialement exclu (cf. commentaire ci-dessus, "écran vu
+    // en continu") mais demande explicite de l'y ajouter aussi désormais.
     var SPECIFIC_VERSION_NOTE = ' (نسخة خاصة)';
     var _applySpecificVersionNote = function() {
-        ['aboutAppTitle', 'menuVersionDisplay'].forEach(function(id) {
+        ['aboutAppTitle', 'menuVersionDisplay', 'tawkitNameDisplayHorizontal'].forEach(function(id) {
             var el = document.getElementById(id);
             if (el && el.innerHTML.indexOf(SPECIFIC_VERSION_NOTE) === -1) {
                 el.innerHTML = el.innerHTML.replace('9.63', CUSTOM_APP_VERSION) + SPECIFIC_VERSION_NOTE;
@@ -980,7 +983,7 @@ if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l
     // MutationObserver réagit à TOUT changement de contenu, quelle qu'en soit
     // la cause exacte, garantissant la mention dès le tout premier rendu.
     if (typeof MutationObserver === 'function') {
-        ['aboutAppTitle', 'menuVersionDisplay'].forEach(function(id) {
+        ['aboutAppTitle', 'menuVersionDisplay', 'tawkitNameDisplayHorizontal'].forEach(function(id) {
             var el = document.getElementById(id);
             if (!el) return;
             var mo = new MutationObserver(function() { _applySpecificVersionNote(); });
@@ -6407,10 +6410,22 @@ function applyCustomIconsVisibility() {
         <path d="M18 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/>
     </svg>`;
     // ── Création ─────────────────────────────────────────────────────────
+    // Structure spIconSvg/spEqWrap identique à qpBookSvg/qpEqWrap (Coran,
+    // juste en dessous) -- retour utilisateur 22/08/2026 : même comportement
+    // visuel que customQuranIcon voulu (icône -> égaliseur pendant la
+    // lecture de l'azan, retour systématique à l'icône dès l'arrêt). Bascule
+    // désormais directement sur cet élément (cf. _installAzanEqAnimation,
+    // plus bas dans ce fichier) au lieu de l'ancien overlay flottant
+    // positionné par-dessus customQuranIcon.
     const speakerEl      = document.createElement('div');
     speakerEl.id         = 'customSpeakerIcon';
     speakerEl.className  = 'customSideIcon';
-    speakerEl.innerHTML  = SVG_SPEAKER;
+    speakerEl.innerHTML =
+        '<div class="spIconSvg">' + SVG_SPEAKER + '</div>' +
+        '<div class="spEqWrap">' +
+        '<div class="spEqBar"></div><div class="spEqBar"></div><div class="spEqBar"></div>' +
+        '<div class="spEqBar"></div><div class="spEqBar"></div>' +
+        '</div>';
     document.body.appendChild(speakerEl);
 
     const quranEl        = document.createElement('div');
@@ -9688,6 +9703,14 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
 (function _installLightAfterAzanShow() {
     ucOn(UC_EVT.AZAN_SHOW, function(e) {
         _lastAzanPrayer = e.prayer || '';
+        // Garde-fou Jumu'ah désactivée (même pattern que _installLightAfterAzanHide/
+        // _applyLightTriggers, retour utilisateur 22/08/2026 : mosquée qui n'assure
+        // pas la salat du vendredi, jomoaOnHrCheckbox décoché -- manquait ici,
+        // seul afterAzanHide l'avait). _ucCurrentPrayerKey() substitue DOHR->JOMOA
+        // le vendredi INDÉPENDAMMENT de ucJomoaOnHRscreen (cf. son propre
+        // commentaire) : sans ce garde, l'automatisation afterAzanShow (ampliExtOn,
+        // mihrabOn...) se déclenchait quand même le vendredi malgré la case décochée.
+        if (_ucCurrentPrayerKey() === 'JOMOA' && JS_DATA.ucJomoaOnHRscreen != 1) return;
         _lightProgramConfig.forEach(function(item) {
             if (item.trigger !== 'afterAzanShow') return;
             var _ctx = { item: item.key, evt: 'AZAN_SHOW', prayer: e.prayer };
@@ -9851,6 +9874,13 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
 (function _installLightAfterBlackHide() {
     ucOn(UC_EVT.BLACK_HIDE, function() {
         if (_ucCurrentPrayerKey() === 'SHRQ') return;   // Doha : aucun déclenchement lumières
+        // Garde-fou Jumu'ah désactivée (cf. commentaire identique dans
+        // _installLightAfterAzanShow un peu plus haut) : le rideau noir du
+        // vendredi (BLACK_SHOW/BLACK_HIDE, cœur m2body.js) se déclenche sur
+        // isFriday SEUL, sans jamais vérifier ucJomoaOnHRscreen -- sans ce
+        // garde, afterBlackHide (ampliIntOff, mihrabOff, rollerClose...) se
+        // déclenchait donc aussi malgré la case décochée.
+        if (_ucCurrentPrayerKey() === 'JOMOA' && JS_DATA.ucJomoaOnHRscreen != 1) return;
         _lightProgramConfig.forEach(function(item) {
             if (item.trigger !== 'afterBlackHide') return;
             var _ctx = { item: item.key, evt: 'BLACK_HIDE', prayer: _ucCurrentPrayerKey() };
@@ -9877,6 +9907,13 @@ function _runStrobe(urlOn, urlOff, durationSec, label, endWithOn) {
 (function _installLightAfterBlackShow() {
     ucOn(UC_EVT.BLACK_SHOW, function() {
         if (_ucCurrentPrayerKey() === 'SHRQ') return;   // Doha : aucun déclenchement lumières
+        // Garde-fou Jumu'ah désactivée (cf. commentaire identique dans
+        // _installLightAfterAzanShow un peu plus haut) : le rideau noir du
+        // vendredi (BLACK_SHOW/BLACK_HIDE, cœur m2body.js) se déclenche sur
+        // isFriday SEUL, sans jamais vérifier ucJomoaOnHRscreen -- sans ce
+        // garde, afterBlackShow (ampliIntOn, mihrabOn...) se déclenchait donc
+        // aussi malgré la case décochée.
+        if (_ucCurrentPrayerKey() === 'JOMOA' && JS_DATA.ucJomoaOnHRscreen != 1) return;
         _lightProgramConfig.forEach(function(item) {
             if (item.trigger !== 'afterBlackShow') return;
             var _ctx = { item: item.key, evt: 'BLACK_SHOW', prayer: _ucCurrentPrayerKey() };
@@ -10555,6 +10592,11 @@ function _doAudioUnlock() {
 
     // Cache les deux conteneurs marquee (horizontal + vertical)
     function _hideMarquee() {
+        // Garde-fou : ce mecanisme ne concerne QUE le compte a rebours iqama.
+        // Si le ticker azan (sounna, cf. plus bas dans ce fichier) est actif,
+        // ne jamais le geler -- stopMarqueeAnimation() agit sur l'element
+        // marqueeElement PARTAGE, quel que soit son contenu actuel.
+        if (typeof window._ucIsAzanMarqueeActive === 'function' && window._ucIsAzanMarqueeActive()) return;
         var hrC = document.getElementById('marqueeContainerHorizontal');
         var vrC = document.getElementById('marqueeContainerVertical');
         if (hrC) hrC.style.display = 'none';
@@ -11306,15 +11348,58 @@ function _doAudioUnlock() {
     document.documentElement.appendChild(_overlay);
 
     var _hideTimer = null;
+    var _blackScreenTimer = null;
     _ucRegisterCleanup(function() {
         if (_hideTimer) { clearTimeout(_hideTimer); _hideTimer = null; }
+        if (_blackScreenTimer) { clearTimeout(_blackScreenTimer); _blackScreenTimer = null; }
     });
+
+    // Reduit encore le font-size de .joa-l2 si, malgre le clamp CSS, le mot
+    // le plus a droite (ex. "لَغَوْتَ") deborde toujours de la largeur
+    // disponible (retour utilisateur : constate sur boitier TV). white-space:
+    // nowrap (custom.css) empeche le retour a la ligne -- sans ce filet,
+    // le texte deborderait silencieusement au lieu de wrapper. scrollWidth
+    // n'est fiable qu'une fois l'element mis en page (toujours vrai ici,
+    // l'overlay est display:flex en permanence, seule son opacite change),
+    // donc mesurable meme avant le premier _show().
+    function _fitJoaL2() {
+        var el = _overlay.querySelector('.joa-l2');
+        if (!el) return;
+        el.style.fontSize = '';   // repart de la taille CSS (clamp) avant de mesurer
+        // Largeur de contenu reellement disponible pour un enfant flex de
+        // _overlay : clientWidth INCLUT le padding (4% 6%, custom.css) alors
+        // que max-width:90% (CSS) se resout sur la largeur de contenu du
+        // conteneur, PADDING DEJA RETIRE -- reproduit ce calcul ici plutot
+        // que d'utiliser clientWidth brut (sinon marge sous-estimee d'environ
+        // 12%, un cas de bord pourrait encore deborder legerement).
+        var _cs = getComputedStyle(_overlay);
+        var _contentWidth = _overlay.clientWidth - parseFloat(_cs.paddingLeft || 0) - parseFloat(_cs.paddingRight || 0);
+        var maxWidth = _contentWidth * 0.9;   // == max-width:90% du CSS
+        var actualWidth = el.scrollWidth;
+        if (maxWidth > 0 && actualWidth > maxWidth) {
+            var computedPx = parseFloat(getComputedStyle(el).fontSize) || 18;
+            var newPx = Math.max(10, Math.floor(computedPx * (maxWidth / actualWidth) * 0.97));
+            el.style.fontSize = newPx + 'px';
+        }
+    }
 
     function _show() {
         clearTimeout(_hideTimer);
+        clearTimeout(_blackScreenTimer);
+        _fitJoaL2();
         _overlay.classList.add('joa-visible');
         _L('POPUP','SHOW',{item:'jomoa_adab',duration:'10s'});
-        _hideTimer = setTimeout(_hide, 10000);
+        _hideTimer = setTimeout(_hide, _UC_JOMOA_ADAB_AUTOHIDE_MS);
+
+        // Rideau noir Jumu'a : ouvre juste avant la fermeture PLANIFIÉE de
+        // cette modale (retour utilisateur 22/08/2026 -- remplace l'ancien
+        // déclenchement dohrTime+ucJomoaDimmBefore, dimmerBeforeValue masqué
+        // et ignoré, cf. _ucJomoaBlackScreenCatchUp/_UC_JOMOA_ADAB_LS_KEY
+        // plus bas dans ce fichier pour le détail et le rattrapage resync).
+        try { localStorage.setItem(_UC_JOMOA_ADAB_LS_KEY, Date.now().toString()); } catch(e) {}
+        _blackScreenTimer = setTimeout(function() {
+            window._ucJomoaTriggerBlackScreenForAdab();
+        }, _UC_JOMOA_ADAB_AUTOHIDE_MS - _UC_JOMOA_ADAB_LEAD_MS);
     }
 
     function _hide() {
@@ -12183,6 +12268,17 @@ function _ucDomeImageForPrayer(prayer) {
             if (azanPopupBgVertical) {
                 azanPopupBgVertical.style.background = '#000';
             }
+            // FIX (retour utilisateur) : _applyDomeBackground (ci-dessus) pose
+            // aussi la classe ucNoDomeCentered (heure/nom de priere recentres
+            // quand ucAzanBgUseDome=0) -- oubliee ici jusqu'ici. Chaque
+            // reapplication du theme pendant que le popup azan est ouvert
+            // (ex. bascule jour/nuit en plein milieu de la page azan de
+            // Jumu'a) restaurait le fond "sans dome" correct mais laissait le
+            // texte se replacer comme si le dome etait affiche -- saut visuel
+            // vers la gauche juste avant la fermeture de la page.
+            var _noDome = (JS_CUSTOM.ucAzanBgUseDome != 1);
+            if (azanPopupHorizontalElement) azanPopupHorizontalElement.classList.toggle('ucNoDomeCentered', _noDome);
+            if (azanPopupVerticalElement)   azanPopupVerticalElement.classList.toggle('ucNoDomeCentered', _noDome);
             _L('SYS', 'DOME_RESTORE', {prayer: _domeActivePrayer});
         }
     };
@@ -13840,6 +13936,7 @@ function forceHijriSyncFunction() {
      */
    
     var _azanMarqueeActive = false;
+    window._ucIsAzanMarqueeActive = function() { return _azanMarqueeActive; };
 
     // Bloquer les appels à updateMarqueeDisplayFunction pendant l'azan
     var _origUpdateMarqueeDisplay = window.updateMarqueeDisplayFunction;
@@ -13847,6 +13944,34 @@ function forceHijriSyncFunction() {
         if (_azanMarqueeActive) return;
         if (typeof _origUpdateMarqueeDisplay === 'function') _origUpdateMarqueeDisplay.apply(this, arguments);
     };
+
+    // Garde-fou (retour utilisateur : le défilement s'arrête après ~1 min
+    // pendant la page azan de Jumu'a) : stopMarqueeAnimation() agit sur
+    // l'element marqueeElement PARTAGE avec le reste de l'appli (core +
+    // autres patches custom.js) -- n'importe quel appel exterieur (ex. un
+    // resync apres un blip onPause/onResume du boitier TV, cf.
+    // _ucResyncPrayerSequence) peut le figer sans jamais repasser par
+    // _hideAzanTicker(), donc sans jamais redemarrer l'animation. Watchdog
+    // independant : tant que le ticker azan est actif, verifie regulierement
+    // que l'animation tourne toujours et la relance sinon -- garantit le
+    // defilement jusqu'a la fermeture reelle de la page (AZAN_HIDE),
+    // quelle qu'en soit la cause d'interruption.
+    var _azanTickerWatchdog = null;
+    function _startAzanTickerWatchdog() {
+        if (_azanTickerWatchdog) return;
+        _azanTickerWatchdog = setInterval(function() {
+            if (!_azanMarqueeActive || !marqueeElement) return;
+            var _anim = marqueeElement.style.animation || '';
+            if (!_anim || _anim === 'none') {
+                _L('MARQUEE', 'WATCHDOG_RESTART', { reason: 'animation_stopped_unexpectedly' });
+                initMarqueePosition(marqueeElement);
+                startMarqueeAnimation();
+            }
+        }, 3000);
+    }
+    function _stopAzanTickerWatchdog() {
+        if (_azanTickerWatchdog) { clearInterval(_azanTickerWatchdog); _azanTickerWatchdog = null; }
+    }
 
     function _showAzanTicker(prayer) {
         _azanMarqueeActive = true;
@@ -13884,6 +14009,7 @@ function forceHijriSyncFunction() {
         setMarqueeDirection('right');   // texte arabe → défilement de droite à gauche (RTL)
         initMarqueePosition(textEl);
         startMarqueeAnimation();
+        _startAzanTickerWatchdog();
 
         _L('POPUP','SHOW',{item:'marquee_azan'});
     }
@@ -13891,6 +14017,7 @@ function forceHijriSyncFunction() {
     function _hideAzanTicker() {
         if (!_azanMarqueeActive) return;  // garde anti-double appel
         _azanMarqueeActive = false;
+        _stopAzanTickerWatchdog();
         stopMarqueeAnimation();
 
         // Remettre le z-index normal + taille normale des conteneurs
@@ -13948,33 +14075,42 @@ function forceHijriSyncFunction() {
     })();
 
     // ──────────────────────────────────────────────────────────────────────
-    // 4. Égaliseur animé dans la fenêtre AZAN pendant la lecture audio
-    //    Barres blanches, même style CSS que customQuranIcon.
-    // ──────────────────────────────────────────────────────────────────────
+    // 4. Égaliseur animé DANS customSpeakerIcon pendant la lecture audio azan
+    //    (retour utilisateur 22/08/2026 : même comportement visuel que
+    //    customQuranIcon voulu -- icône -> égaliseur -> retour systématique
+    //    à l'icône dès l'arrêt). Bascule directement les classes
+    //    spPlaying/spCssAnim sur #customSpeakerIcon lui-même (structure
+    //    spIconSvg/spEqWrap posée dans createCustomSideIcons ci-dessus,
+    //    identique à qpBookSvg/qpEqWrap du Coran) -- remplace l'ancien
+    //    overlay #azanEqOverlay positionné par-dessus customQuranIcon (bonne
+    //    apparence mais mauvais élément, jamais l'icône haut-parleur
+    //    elle-même). Pas de pilotage Web Audio API (contrairement au Coran,
+    //    _qpStartEq) : le <audio> JS de l'azan est MUET en mode voix
+    //    complète (source audio réelle côté natif, cf. schedulePrayerNotifications/
+    //    AzanPlaybackService) -- brancher un AnalyserNode dessus n'aurait
+    //    aucune donnée de fréquence à lire. CSS pur seulement, comme le
+    //    faisait déjà l'ancien overlay.
     (function _installAzanEqAnimation() {
-        // Élément overlay indépendant : position:fixed, mêmes coords que customQuranIcon
-        var _eq = document.createElement('div');
-        _eq.id = 'azanEqOverlay';
-        _eq.innerHTML =
-            '<div class="azanEqBar"></div><div class="azanEqBar"></div>' +
-            '<div class="azanEqBar"></div><div class="azanEqBar"></div>' +
-            '<div class="azanEqBar"></div>';
-        document.body.appendChild(_eq);
-
-        function _syncPos() {
-            var icon = document.getElementById('customQuranIcon');
-            if (!icon) return;
-            var r = icon.getBoundingClientRect();
-            _eq.style.left   = r.left   + 'px';
-            _eq.style.top    = r.top    + 'px';
-            _eq.style.width  = r.width  + 'px';
-            _eq.style.height = r.height + 'px';
-        }
-
         function _setAzanEq(on) {
-            if (on) { _syncPos(); _eq.classList.add('azanEqActive'); }
-            else    { _eq.classList.remove('azanEqActive'); }
+            var icon = document.getElementById('customSpeakerIcon');
+            if (!icon) return;
+            if (on) {
+                icon.classList.add('spPlaying', 'spCssAnim');
+            } else {
+                // Retour SYSTÉMATIQUE à l'état initial (icône haut-parleur) :
+                // retire les classes ET réinitialise la hauteur des barres,
+                // même garantie que _qpStopEq() pour le Coran -- sans ça, une
+                // barre resterait visuellement figée à sa dernière hauteur
+                // (transition CSS) au lieu de disparaître proprement avec
+                // .spEqWrap (display:none).
+                icon.classList.remove('spPlaying', 'spCssAnim');
+                icon.querySelectorAll('.spEqBar').forEach(function(b) { b.style.height = '20%'; });
+            }
         }
+        // Exposé pour un reset explicite depuis d'autres chemins d'arrêt azan
+        // (cf. AZAN_HIDE ci-dessous) -- même filet de sécurité que le reste
+        // de cette appli (systématique = pas uniquement les events audio).
+        window._ucSetAzanSpeakerEq = _setAzanEq;
 
         function _attachAzanAudio(el) {
             if (!el) return;
@@ -13986,6 +14122,14 @@ function forceHijriSyncFunction() {
 
         _attachAzanAudio(document.getElementById('audioAzanElement'));
         _attachAzanAudio(document.getElementById('audioFajrElement'));
+        _attachAzanAudio(document.getElementById('audioShortAzanElement'));
+
+        // Filet de sécurité : toute fermeture de la page azan (normale ou
+        // via _stopAzanAudio, cf. _installAzanAudioForceStop plus bas) doit
+        // garantir le retour à l'état initial, même si un des <audio>
+        // ci-dessus n'a jamais émis son propre event 'pause' (ex. jamais
+        // démarré côté JS, azan 100% natif).
+        ucOn(UC_EVT.AZAN_HIDE, function() { _setAzanEq(false); });
     })();
 
     // -----------------------------------------------------------------
@@ -14783,21 +14927,90 @@ function forceHijriSyncFunction() {
 //    dependre du tick exact du coeur. Declaration function top-level (pas
 //    dans une IIFE) : hoisting requis pour etre appelable depuis ce point du
 //    fichier situe PLUS HAUT que cette definition.
+//
+//    REVISION 22/08/2026 (demande utilisateur : masquer dimmerBeforeValue et
+//    ne plus s'en servir pour le declenchement) : l'ouverture n'est plus
+//    ancree sur dohrTimeInMinutes+ucJomoaDimmBefore. Elle est desormais
+//    pilotee par _initJomoaAdabOverlay (cf. plus bas dans ce fichier), qui
+//    ouvre le rideau juste avant la fermeture planifiee (10s) de la modale
+//    hadith post-azan de Jumu'a -- _UC_JOMOA_ADAB_LS_KEY memorise l'instant
+//    d'affichage de cette modale (meme pattern que _ampliIntBlackShowAt,
+//    watchdog ampliIntOff plus bas) pour que ce rattrapage puisse determiner,
+//    meme apres un reload qui a perdu l'etat JS en memoire, si ce
+//    declenchement aurait deja du avoir lieu. La fermeture (After/
+//    dimmerAfterValue) reste inchangee, toujours ancree sur
+//    dohrTimeInMinutes+ucJomoaDimmAfter.
+var _UC_JOMOA_ADAB_LS_KEY        = '_ucJomoaAdabShownAt';
+var _UC_JOMOA_ADAB_LEAD_MS       = 1000;    // ouvre le rideau 1s avant la fermeture planifiee de la modale
+var _UC_JOMOA_ADAB_AUTOHIDE_MS   = 10000;   // duree d'affichage de la modale (cf. _initJomoaAdabOverlay._show)
+var _UC_JOMOA_ADAB_LS_MAX_AGE_MS = 30 * 60 * 1000;   // marqueur valide 30 min (meme borne que _ampliIntBlackShowAt)
+
+// Garde-fou : bloque toute ouverture du rideau de Jumu'a qui ne passerait pas
+// par window._ucJomoaTriggerBlackScreenForAdab() ci-dessous (donc l'ancien
+// tick coeur dohrTime+ucJomoaDimmBefore, desormais ignore intentionnellement).
+// N'affecte aucune autre priere : activateBlackScreenIfEnabled() est une
+// fonction generique partagee, le garde ne s'active que isFriday+JOMOA.
+window._ucJomoaBlackScreenAllowOpen = false;
+(function _installJomoaBlackScreenOpenGuard() {
+    if (typeof window.activateBlackScreenIfEnabled !== 'function') return;
+    var _origActivate = window.activateBlackScreenIfEnabled;
+    window.activateBlackScreenIfEnabled = function () {
+        if (typeof isFriday !== 'undefined' && isFriday &&
+            typeof _ucCurrentPrayerKey === 'function' && _ucCurrentPrayerKey() === 'JOMOA' &&
+            !window._ucJomoaBlackScreenAllowOpen) {
+            _L('RESYNC', 'JOMOA_BLACKSCREEN_OPEN_BLOCKED', { reason: 'dimmBefore_disabled_use_adab_trigger' });
+            return;
+        }
+        return _origActivate.apply(this, arguments);
+    };
+})();
+
+// Point d'entree UNIQUE pour ouvrir le rideau de Jumu'a (appele par
+// _initJomoaAdabOverlay au bon moment, et par le rattrapage ci-dessous apres
+// un resync/reload survenu APRES ce moment).
+window._ucJomoaTriggerBlackScreenForAdab = function () {
+    if (typeof _ucCurrentPrayerKey !== 'function' || _ucCurrentPrayerKey() !== 'JOMOA') return;
+    if (typeof activateBlackScreenIfEnabled !== 'function') return;
+    window._ucJomoaBlackScreenAllowOpen = true;
+    activateBlackScreenIfEnabled();
+    window._ucJomoaBlackScreenAllowOpen = false;
+    _L('LIGHTS', 'FIRE', { item: 'jomoaBlackScreen', trigger: 'adab_modal_closing' });
+};
+
+// true si l'instant memorise (localStorage) montre que la modale hadith a
+// ete affichee il y a assez longtemps pour que son declenchement (T-1s de
+// ses 10s d'affichage) ait deja du avoir lieu -- utilise par le rattrapage
+// pour un resync/reload survenu APRES ce moment (etat JS en memoire perdu).
+function _ucJomoaAdabTriggerShouldHaveFired() {
+    var stored;
+    try { stored = localStorage.getItem(_UC_JOMOA_ADAB_LS_KEY); } catch (e) { return false; }
+    if (!stored) return false;
+    var shownAt = parseInt(stored, 10);
+    if (isNaN(shownAt)) return false;
+    var elapsed = Date.now() - shownAt;
+    if (elapsed < 0 || elapsed > _UC_JOMOA_ADAB_LS_MAX_AGE_MS) return false;
+    return elapsed >= (_UC_JOMOA_ADAB_AUTOHIDE_MS - _UC_JOMOA_ADAB_LEAD_MS);
+}
+
 function _ucJomoaBlackScreenCatchUp() {
     if (typeof isFriday === 'undefined' || !isFriday) return;
     if (typeof dohrTimeInMinutes === 'undefined' || typeof currentTimeInMinutes === 'undefined') return;
     if (typeof JS_DATA === 'undefined') return;
-    var from = dohrTimeInMinutes + JS_DATA.ucJomoaDimmBefore;
-    var to   = dohrTimeInMinutes + JS_DATA.ucJomoaDimmAfter;
-    var inWindow = (currentTimeInMinutes >= from && currentTimeInMinutes < to);
+    var to = dohrTimeInMinutes + JS_DATA.ucJomoaDimmAfter;
+    var pastAfter = (currentTimeInMinutes >= to);
     var el = document.getElementById('blackScreenVertical');
     var isActive = !!(el && el.style.transform === 'scaleX(1)');
-    if (inWindow && !isActive) {
-        if (typeof activateBlackScreenIfEnabled === 'function') activateBlackScreenIfEnabled();
-        _L('RESYNC', 'JOMOA_BLACKSCREEN_CATCHUP', { action: 'activate', currentTimeInMinutes: currentTimeInMinutes, from: from, to: to });
-    } else if (!inWindow && isActive) {
-        if (typeof deactivateBlackScreen === 'function') deactivateBlackScreen();
-        _L('RESYNC', 'JOMOA_BLACKSCREEN_CATCHUP', { action: 'deactivate', currentTimeInMinutes: currentTimeInMinutes, from: from, to: to });
+
+    if (pastAfter) {
+        if (isActive) {
+            if (typeof deactivateBlackScreen === 'function') deactivateBlackScreen();
+            _L('RESYNC', 'JOMOA_BLACKSCREEN_CATCHUP', { action: 'deactivate', reason: 'past_after', currentTimeInMinutes: currentTimeInMinutes, to: to });
+        }
+        return;
+    }
+    if (!isActive && _ucJomoaAdabTriggerShouldHaveFired()) {
+        window._ucJomoaTriggerBlackScreenForAdab();
+        _L('RESYNC', 'JOMOA_BLACKSCREEN_CATCHUP', { action: 'activate', reason: 'adab_trigger_already_due', currentTimeInMinutes: currentTimeInMinutes, to: to });
     }
 }
 window._ucJomoaBlackScreenCatchUp = _ucJomoaBlackScreenCatchUp;
@@ -14805,6 +15018,25 @@ window._ucJomoaBlackScreenCatchUp = _ucJomoaBlackScreenCatchUp;
 // (calculateAndDisplayTimesFunction/dohrTimeInMinutes fiables ~4.5s apres le debut
 // du chargement, cf. commentaire de ce fix un peu plus haut).
 setTimeout(_ucJomoaBlackScreenCatchUp, 4500);
+
+// Nettoyage du marqueur localStorage : fin de cycle (fermeture reelle du
+// rideau) ou nouveau cycle azan (evite un rattrapage perime la semaine
+// suivante si, pour une raison quelconque, le nettoyage BLACK_HIDE n'avait
+// pas eu lieu).
+ucOn(UC_EVT.BLACK_HIDE, function () { try { localStorage.removeItem(_UC_JOMOA_ADAB_LS_KEY); } catch (e) {} });
+ucOn(UC_EVT.AZAN_TIME,  function () { try { localStorage.removeItem(_UC_JOMOA_ADAB_LS_KEY); } catch (e) {} });
+
+// Masque le réglage dimmerBeforeValue (+ son libellé et ses boutons +/-) :
+// demande utilisateur 22/08/2026, ce réglage n'est plus utilisé (cf.
+// ci-dessus, ouverture désormais pilotée par la fermeture de la modale
+// hadith). Cache toute la ligne <tr> du tableau plutôt que la seule cellule
+// valeur, pour ne pas laisser un libellé/boutons orphelins visibles.
+(function _hideJomoaDimmerBeforeRow() {
+    var valueCell = document.getElementById('dimmerBeforeValue');
+    var row = valueCell && valueCell.closest ? valueCell.closest('tr') : null;
+    if (row) row.style.display = 'none';
+    _L('SYS', 'PATCH', { fn: 'dimmerBeforeValue', for: 'hidden_unused_jomoa_open_trigger' });
+})();
 
 /* ═══════════════════════════════════════════════════════════════════════════
    SÉQUENCE HADITH AVANT IQAMA
@@ -15284,6 +15516,17 @@ setTimeout(_ucJomoaBlackScreenCatchUp, 4500);
 
     // ── Helper : envoyer ampliIntOff si les conditions sont remplies ─────
     function _fireAmpliOff(reason) {
+        // Garde-fou Jumu'ah désactivée (retour utilisateur 22/08/2026, cf.
+        // même garde dans _installLightAfterAzanShow/AfterBlackShow/AfterBlackHide
+        // un peu plus haut) : ce watchdog s'arme à CHAQUE BLACK_SHOW/BLACK_HIDE
+        // (toutes prières confondues), y compris le vendredi -- sans ce garde,
+        // il forcerait quand même ampliIntOff 5 min après BLACK_HIDE même si
+        // afterBlackHide l'a correctement ignoré pour une mosquée qui n'assure
+        // pas la salat du vendredi (masque prière incluant quand même JOMOA).
+        if (_ucCurrentPrayerKey() === 'JOMOA' && JS_DATA.ucJomoaOnHRscreen != 1) {
+            _L('LIGHTS','SKIP',{item:'ampliIntOff',evt:reason,reason:'jomoa_disabled'});
+            return;
+        }
         if (JS_CUSTOM.ucLightAmpliIntOffEnabled != 1) {
             _L('LIGHTS','SKIP',{item:'ampliIntOff',evt:reason,reason:'disabled'});
             return;

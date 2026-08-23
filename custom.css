@@ -733,7 +733,15 @@
     background: rgba(0, 0, 0, 0.45);
     border-radius: 50%;
     box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
-    padding: 15%;
+    /* padding fixe (px), PAS en % : un pourcentage se resout par rapport a la
+       largeur du containing block (ici body, ~1400px+), pas par rapport a la
+       taille de l'icone elle-meme -- 15% valait donc ~200px de padding, et
+       avec box-sizing:border-box (qui ne peut pas ramener le contenu sous 0),
+       le navigateur agrandissait la boite pour l'accueillir -- d'ou l'enorme
+       cercle qui ecrasait toujours width/max-width ci-dessous, sur Android
+       ET Windows/Chrome (comportement CSS standard, pas un bug webview) --
+       retour utilisateur 23/08/2026. */
+    padding: 4px;
     box-sizing: border-box;
     /* Taille fixe, decouplee du dimensionnement JS (positionCustomIcons,
        custom.js -- 8vmin en vertical/2.5vmin en horizontal, pense pour la
@@ -3489,7 +3497,15 @@
     background: rgba(0, 0, 0, 0.45);
     border-radius: 50%;
     box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
-    padding: 15%;
+    /* padding fixe (px), PAS en % : un pourcentage se resout par rapport a la
+       largeur du containing block (ici body, ~1400px+), pas par rapport a la
+       taille de l'icone elle-meme -- 15% valait donc ~200px de padding, et
+       avec box-sizing:border-box (qui ne peut pas ramener le contenu sous 0),
+       le navigateur agrandissait la boite pour l'accueillir -- d'ou l'enorme
+       cercle qui ecrasait toujours width/max-width ci-dessous, sur Android
+       ET Windows/Chrome (comportement CSS standard, pas un bug webview) --
+       retour utilisateur 23/08/2026. */
+    padding: 4px;
     box-sizing: border-box;
     /* Taille fixe, decouplee du dimensionnement JS (positionCustomIcons,
        custom.js -- 8vmin en vertical/2.5vmin en horizontal, pense pour la

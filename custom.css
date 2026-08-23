@@ -722,12 +722,31 @@
     visibility: visible !important;
     z-index: 99997;
     opacity: 1;
-    color: #ffffff;
+    /* !important sur color/filter : sans ça, .customIconActive (icone verte
+       #39FF14 !important + drop-shadow, cf. plus haut -- reglage "iqama
+       annoncee par voix") ecrase le blanc voulu ici quand les deux classes
+       coexistent sur #customSpeakerIcon pendant la lecture -- retour
+       utilisateur 23/08/2026 : cercle vert au lieu du petit egaliseur blanc
+       attendu. */
+    color: #ffffff !important;
+    filter: none !important;
     background: rgba(0, 0, 0, 0.45);
     border-radius: 50%;
     box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
     padding: 15%;
     box-sizing: border-box;
+    /* Taille fixe, decouplee du dimensionnement JS (positionCustomIcons,
+       custom.js -- 8vmin en vertical/2.5vmin en horizontal, pense pour la
+       cible tactile de la page principale) : ici c'est un simple indicateur
+       "l'azan joue-t-il ?" sur la page azan, pas une cible tactile -- reste
+       petit quelle que soit la taille appliquee par le JS (source du cercle
+       demesure signale le 23/08/2026). */
+    width: 3.4vmin !important;
+    height: 3.4vmin !important;
+    max-width: 34px;
+    max-height: 34px;
+    min-width: 20px;
+    min-height: 20px;
 }
 
 /* ── NO-MOBILE REMINDER OVERLAY ─────────────────────────────────────────── */
@@ -3459,12 +3478,31 @@
     visibility: visible !important;
     z-index: 99997;
     opacity: 1;
-    color: #ffffff;
+    /* !important sur color/filter : sans ça, .customIconActive (icone verte
+       #39FF14 !important + drop-shadow, cf. plus haut -- reglage "iqama
+       annoncee par voix") ecrase le blanc voulu ici quand les deux classes
+       coexistent sur #customSpeakerIcon pendant la lecture -- retour
+       utilisateur 23/08/2026 : cercle vert au lieu du petit egaliseur blanc
+       attendu. */
+    color: #ffffff !important;
+    filter: none !important;
     background: rgba(0, 0, 0, 0.45);
     border-radius: 50%;
     box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
     padding: 15%;
     box-sizing: border-box;
+    /* Taille fixe, decouplee du dimensionnement JS (positionCustomIcons,
+       custom.js -- 8vmin en vertical/2.5vmin en horizontal, pense pour la
+       cible tactile de la page principale) : ici c'est un simple indicateur
+       "l'azan joue-t-il ?" sur la page azan, pas une cible tactile -- reste
+       petit quelle que soit la taille appliquee par le JS (source du cercle
+       demesure signale le 23/08/2026). */
+    width: 3.4vmin !important;
+    height: 3.4vmin !important;
+    max-width: 34px;
+    max-height: 34px;
+    min-width: 20px;
+    min-height: 20px;
 }
 
 /* ── NO-MOBILE REMINDER OVERLAY ─────────────────────────────────────────── */

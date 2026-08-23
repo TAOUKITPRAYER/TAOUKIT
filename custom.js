@@ -14179,9 +14179,27 @@ function forceHijriSyncFunction() {
     //    aucune donnée de fréquence à lire. CSS pur seulement, comme le
     //    faisait déjà l'ancien overlay.
     (function _installAzanEqAnimation() {
-        function _setAzanEq(on) {
+        // _eqOn : suivi de l'état affiché pour ne logguer QUE les vraies
+        // transitions (retour utilisateur 24/08/2026 : soupçon que
+        // l'égaliseur se cache plus tôt que prévu -- 3 <audio> distincts
+        // (audioAzanElement/audioFajrElement/audioShortAzanElement) sont
+        // chacun câblés indépendamment sur ce même #customSpeakerIcon
+        // partagé plus bas ; un pause/ended/error parasite sur un <audio>
+        // INACTIF pendant le cycle en cours éteindrait l'égaliseur sans
+        // rapport avec l'audio réellement en train de jouer, ni avec
+        // AZAN_HIDE (fermeture du popup, elle alignée sur le sondage natif,
+        // cf. NATIVE_PLAY_END_COMPLETED). meta.source identifie l'élement
+        // <audio> (ou 'AZAN_HIDE' pour le filet de sécurité) responsable de
+        // chaque transition -- de quoi trancher au prochain azan réel).
+        // Le reset visuel (classes + hauteur des barres) reste, lui,
+        // SYSTEMATIQUE (inconditionnel) quel que soit _eqOn : seul le LOG
+        // est dédupliqué, pas l'action.
+        var _eqOn = false;
+        function _setAzanEq(on, meta) {
             var icon = document.getElementById('customSpeakerIcon');
             if (!icon) return;
+            var changed = (on !== _eqOn);
+            _eqOn = on;
             if (on) {
                 icon.classList.add('spPlaying', 'spCssAnim');
             } else {
@@ -14194,6 +14212,7 @@ function forceHijriSyncFunction() {
                 icon.classList.remove('spPlaying', 'spCssAnim');
                 icon.querySelectorAll('.spEqBar').forEach(function(b) { b.style.height = '20%'; });
             }
+            if (changed) _L('AZAN', on ? 'EQ_SHOW' : 'EQ_HIDE', meta || {});
         }
         // Exposé pour un reset explicite depuis d'autres chemins d'arrêt azan
         // (cf. AZAN_HIDE ci-dessous) -- même filet de sécurité que le reste
@@ -14202,10 +14221,11 @@ function forceHijriSyncFunction() {
 
         function _attachAzanAudio(el) {
             if (!el) return;
-            el.addEventListener('playing', function() { _setAzanEq(true);  });
-            el.addEventListener('pause',   function() { _setAzanEq(false); });
-            el.addEventListener('ended',   function() { _setAzanEq(false); });
-            el.addEventListener('error',   function() { _setAzanEq(false); });
+            var srcId = el.id || 'unknown';
+            el.addEventListener('playing', function() { _setAzanEq(true,  { source: srcId, evt: 'playing' }); });
+            el.addEventListener('pause',   function() { _setAzanEq(false, { source: srcId, evt: 'pause'   }); });
+            el.addEventListener('ended',   function() { _setAzanEq(false, { source: srcId, evt: 'ended'   }); });
+            el.addEventListener('error',   function() { _setAzanEq(false, { source: srcId, evt: 'error'   }); });
         }
 
         _attachAzanAudio(document.getElementById('audioAzanElement'));
@@ -14217,7 +14237,7 @@ function forceHijriSyncFunction() {
         // garantir le retour à l'état initial, même si un des <audio>
         // ci-dessus n'a jamais émis son propre event 'pause' (ex. jamais
         // démarré côté JS, azan 100% natif).
-        ucOn(UC_EVT.AZAN_HIDE, function() { _setAzanEq(false); });
+        ucOn(UC_EVT.AZAN_HIDE, function() { _setAzanEq(false, { source: 'AZAN_HIDE', evt: 'popup_close' }); });
     })();
 
     // -----------------------------------------------------------------

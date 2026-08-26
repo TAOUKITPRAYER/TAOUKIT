@@ -926,7 +926,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '13.8';
+var CUSTOM_APP_VERSION = '13.9';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1200,6 +1200,10 @@ const JS_CUSTOM_DEFAULTS = {
     ucMuteAfterAzanEnabled:      1,
     ucMuteAfterAzanMinutes:      5,
     ucSilentAfterAzanMinutes:    30,  // minutes après l'azan où la sonnerie est remise (jauge 1-180)
+    // Vibreur pendant la coupure du son (avant ET après azan, cf.
+    // SilentModeReceiver.kt) : 0 = silence total (RINGER_MODE_SILENT,
+    // comportement historique), 1 = vibreur actif (RINGER_MODE_VIBRATE).
+    ucSilentModeKeepVibrate:     0,
     // ── Onglet "تعديل الأذان" : volume au maximum juste avant l'azan ─────────
     // 1 minute avant l'azan de chaque prière, monte le volume (musique +
     // alarme) de la box au maximum (cf. MobileJsBridge.scheduleVolumeBoostAlarms
@@ -2073,6 +2077,39 @@ window._ucCurrentMosqueId = function () {
     // donc _applyMosqueConfig() sautera ce bloc => pas de boucle infinie.
     console.log('[CFG] Rechargement automatique pour appliquer la config initiale...');
     setTimeout(function() { location.reload(); }, 200);
+})();
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BANDEAU "CE N'EST PAS VOTRE MOSQUÉE" (modèle générique/anonyme uniquement)
+// ─────────────────────────────────────────────────────────────────────────────
+// Repli silencieux vers 'anonymous.generic' (cf. _installMosqueSelector plus
+// bas, _ucFirstRunFallbackAnonymous) quand aucune mosquée n'est choisie/
+// trouvée au premier lancement -- l'app reste utilisable immédiatement, mais
+// rien n'invitait explicitement l'utilisateur à corriger ça ensuite (seul
+// recours : retrouver soi-même l'item dans le menu). Bandeau permanent,
+// discret, non intrusif (ne masque aucun horaire) : visible tant que le
+// modèle anonyme est actif, disparaît de lui-même dès qu'une vraie mosquée
+// est choisie (sélection = location.reload(), cf. _finishSelectMosque).
+(function _installAnonymousMosqueBanner() {
+    var mosqueId = typeof window._ucCurrentMosqueId === 'function' ? window._ucCurrentMosqueId() : null;
+    if (typeof _ucIsAnonymousMosqueId !== 'function' || !_ucIsAnonymousMosqueId(mosqueId)) return;
+
+    var L_ANON_BANNER = {
+        AR: 'هذا نموذج عام، ليس مسجدك؟ اضغط هنا للبحث عن مسجدك ←',
+        FR: "Ceci est un modèle générique, pas votre mosquée ? Recherchez la vôtre ←",
+        EN: 'This is a generic model, not your mosque? Search for yours ←',
+    };
+    var banner = document.createElement('div');
+    banner.id = 'ucAnonMosqueBanner';
+    banner.dir = (typeof _ucIsRtl === 'function' && _ucIsRtl()) ? 'rtl' : 'ltr';
+    banner.textContent = L_ANON_BANNER[(typeof _ucLang === 'function' && _ucLang()) || 'EN'] || L_ANON_BANNER.EN;
+    banner.addEventListener('click', function() {
+        if (typeof window._ucOpenMosqueSelector === 'function') window._ucOpenMosqueSelector();
+    });
+    document.documentElement.appendChild(banner);
+
+    _L('CUSTOM', 'INIT', { item: 'anonymousMosqueBanner' });
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -6951,10 +6988,14 @@ function _qpSavePosition() {
 
             <!-- Onglet القراءة : texte du Coran, multi-riwaya (Hafs/Qaloun/Warsh) -->
             <div id="qpReadTabBody" style="display:none;">
-                <div id="qpReadRiwayaRow"></div>
                 <div id="qpReadNavRow">
                     <div id="qrFahrasBtn" title="الفهرس">&#128214; الفهرس</div>
-                    <div id="qrTajweedToggleBtn" title="تلوين أحكام التجويد (تجريبي، قالون فقط)">&#127912; تجويد</div>
+                    <!-- Choix de riwaya (Hafs/Qaloun/Warsh) : ex-<select> (peu pratique au
+                         doigt), remplacé par un bouton affichant la riwaya active (ou le
+                         libellé générique multilingue tant qu'aucune n'est encore installée,
+                         ex. première installation/après reset) qui ouvre #qrRiwayaPanel --
+                         cf. _qrRenderRiwayaButton()/_qrOpenRiwayaPanel() (custom.js). -->
+                    <div id="qpReadRiwayaBtn" title="الرواية"></div>
                     <input id="qpReadSearchInput" type="text" placeholder="بحث في القرآن..." />
                     <div id="qpReadSearchBtn" title="بحث">&#128269;</div>
                 </div>
@@ -6987,6 +7028,16 @@ function _qpSavePosition() {
                         <div id="qrTajInfoTitle">ألوان أحكام التجويد</div>
                     </div>
                     <div id="qrTajInfoBody"></div>
+                </div>
+                <!-- Modale de choix de riwaya (Hafs/Qaloun/Warsh), ouverte via
+                     qpReadRiwayaBtn -- cf. _qrOpenRiwayaPanel()/_qrCloseRiwayaPanel()/
+                     _qrRenderRiwayaModalBody() plus bas dans ce fichier. -->
+                <div id="qrRiwayaPanel" class="qrFahrasHidden">
+                    <div id="qrRiwayaHeader">
+                        <div id="qrRiwayaClose" title="إغلاق">&#10006;</div>
+                        <div id="qrRiwayaTitle">الرواية</div>
+                    </div>
+                    <div id="qrRiwayaBody"></div>
                 </div>
             </div>
 
@@ -7160,6 +7211,15 @@ function _qpSavePosition() {
     if (_qpTabReadBtn)     _qpTabReadBtn.addEventListener('click',     function() { _qpSwitchTab('read');     });
     if (_qpTabSettingsBtn) _qpTabSettingsBtn.addEventListener('click', function() { _qpSwitchTab('settings'); });
 
+    // ── Choix de riwaya (Hafs/Qaloun/Warsh) ───────────────────────────────────
+    // Bouton statique du gabarit (jamais régénéré) -- ouvre la modale
+    // #qrRiwayaPanel, dont le corps est reconstruit à chaque ouverture par
+    // _qrOpenRiwayaPanel() (cf. plus bas dans ce fichier).
+    var _qpReadRiwayaBtnEl = document.getElementById('qpReadRiwayaBtn');
+    if (_qpReadRiwayaBtnEl) _qpReadRiwayaBtnEl.addEventListener('click', function() { _qrOpenRiwayaPanel(); });
+    var _qrRiwayaCloseEl = document.getElementById('qrRiwayaClose');
+    if (_qrRiwayaCloseEl) _qrRiwayaCloseEl.addEventListener('click', function() { _qrCloseRiwayaPanel(); });
+
     var _qpReadSearchBtn = document.getElementById('qpReadSearchBtn');
     if (_qpReadSearchBtn) {
         _qpReadSearchBtn.addEventListener('click', function() {
@@ -7186,17 +7246,9 @@ function _qpSavePosition() {
             btn.addEventListener('click', function() { _qrSwitchFahrasTab(btn.getAttribute('data-ftab')); });
         })(_qrFahrasTabBtns[_fti]);
     }
-    // ── Coloration tajwid (expérimental, Qaloun uniquement) ───────────────────
-    var _qrTajweedToggleBtnEl = document.getElementById('qrTajweedToggleBtn');
-    if (_qrTajweedToggleBtnEl) {
-        _qrTajweedToggleBtnEl.classList.toggle('qrTajweedToggleOn', !!JS_CUSTOM.ucQrTajweedColors);
-        _qrTajweedToggleBtnEl.addEventListener('click', function() {
-            JS_CUSTOM.ucQrTajweedColors = JS_CUSTOM.ucQrTajweedColors ? 0 : 1;
-            saveCustomSettingsFunction();
-            _qrTajweedToggleBtnEl.classList.toggle('qrTajweedToggleOn', !!JS_CUSTOM.ucQrTajweedColors);
-            if (_qrActiveData) _qrRenderPage(_qrCurrentPage);
-        });
-    }
+    // NB : la bascule تجويد (#qrTajweedToggleBtn) vit désormais dans #qrTopBar,
+    // régénérée à chaque page -- son écoute est faite dans _qrRenderPage()
+    // (à côté de qrBookmarkToggle), pas ici.
 
     // ── Confort de lecture : boutons A−/A+ (onglet القراءة uniquement) ────────
     // Mêmes conventions que _QP_LARGE_KEY (clé localStorage tawkit_*, état
@@ -7240,7 +7292,9 @@ function _qpSavePosition() {
     });
 
     // ── Plein-texte : cache/restaure les barres au-dessus de qpReadTextArea ──
-    // Cibles : #quranPlayerTabs + #qpReadRiwayaRow + #qpReadNavRow.
+    // Cibles : #quranPlayerTabs + #qpReadNavRow (le choix de riwaya vit
+    // maintenant DANS qpReadNavRow, cf. qpReadRiwayaBtn -- plus de rangée
+    // séparée à cacher séparément).
     // #quranPlayerHeader reste toujours visible (contient le bouton lui-même).
     // Convention de nommage et de persistance identique à _QP_LARGE_KEY /
     // _QR_FONT_KEY (clé localStorage tawkit_*).
@@ -7250,11 +7304,9 @@ function _qpSavePosition() {
     }
     function _qrApplyNavHidden(hidden) {
         var tabs      = document.getElementById('quranPlayerTabs');
-        var riwayaRow = document.getElementById('qpReadRiwayaRow');
         var navRow    = document.getElementById('qpReadNavRow');
         var btn       = document.getElementById('qpReadNavToggle');
         if (tabs)      tabs.style.display      = hidden ? 'none' : '';
-        if (riwayaRow) riwayaRow.style.display = hidden ? 'none' : '';
         if (navRow)    navRow.style.display    = hidden ? 'none' : '';
         if (btn) {
             btn.innerHTML = hidden ? '&#9660;' : '&#9650;';
@@ -7895,6 +7947,58 @@ var _QR_SAJDAH=[[6,205],[12,14],[15,49],[16,108],[18,57],[21,17],[21,76],[24,59]
 var _QR_HIZB_AYAHS=[[0,0,"rub"],[1,25,"nusf"],[1,43,"tlt"],[1,59,"hizb"],[1,74,"rub"],[1,91,"nusf"],[1,105,"tlt"],[1,123,"hizb"],[1,141,"rub"],[1,157,"nusf"],[1,176,"tlt"],[1,188,"hizb"],[1,202,"rub"],[1,218,"nusf"],[1,232,"tlt"],[1,242,"hizb"],[1,252,"rub"],[1,262,"nusf"],[1,271,"tlt"],[1,282,"hizb"],[2,14,"rub"],[2,32,"nusf"],[2,51,"tlt"],[2,74,"hizb"],[2,92,"rub"],[2,112,"nusf"],[2,132,"tlt"],[2,152,"hizb"],[2,170,"rub"],[2,185,"nusf"],[3,0,"tlt"],[3,11,"hizb"],[3,23,"rub"],[3,35,"nusf"],[3,57,"tlt"],[3,73,"hizb"],[3,87,"rub"],[3,99,"nusf"],[3,113,"tlt"],[3,134,"hizb"],[3,147,"rub"],[3,162,"nusf"],[4,0,"tlt"],[4,11,"hizb"],[4,26,"rub"],[4,40,"nusf"],[4,50,"tlt"],[4,66,"hizb"],[4,81,"rub"],[4,96,"nusf"],[4,108,"tlt"],[5,12,"hizb"],[5,35,"rub"],[5,58,"nusf"],[5,73,"tlt"],[5,94,"hizb"],[5,110,"rub"],[5,126,"nusf"],[5,140,"tlt"],[5,150,"hizb"],[6,0,"rub"],[6,30,"nusf"],[6,46,"tlt"],[6,64,"hizb"],[6,87,"rub"],[6,116,"nusf"],[6,141,"tlt"],[6,155,"hizb"],[6,170,"rub"],[6,188,"nusf"],[7,0,"tlt"],[7,21,"hizb"],[7,40,"rub"],[7,60,"nusf"],[8,0,"tlt"],[8,18,"hizb"],[8,33,"rub"],[8,45,"nusf"],[8,59,"tlt"],[8,74,"hizb"],[8,92,"rub"],[8,110,"nusf"],[8,121,"tlt"],[9,10,"hizb"],[9,25,"rub"],[9,52,"nusf"],[9,70,"tlt"],[9,89,"hizb"],[10,5,"rub"],[10,23,"nusf"],[10,40,"tlt"],[10,60,"hizb"],[10,83,"rub"],[10,107,"nusf"],[11,6,"tlt"],[11,29,"hizb"],[11,52,"rub"],[11,76,"nusf"],[11,100,"tlt"],[12,4,"hizb"],[12,18,"rub"],[12,34,"nusf"],[13,9,"tlt"],[13,27,"hizb"],[14,0,"rub"],[14,48,"nusf"],[15,0,"tlt"],[15,29,"hizb"],[15,50,"rub"],[15,74,"nusf"],[15,89,"tlt"],[15,110,"hizb"],[16,0,"rub"],[16,22,"nusf"],[16,49,"tlt"],[16,69,"hizb"],[16,98,"rub"],[17,16,"nusf"],[17,31,"tlt"],[17,50,"hizb"],[17,74,"rub"],[17,98,"nusf"],[18,21,"tlt"],[18,58,"hizb"],[19,0,"rub"],[19,54,"nusf"],[19,82,"tlt"],[19,110,"hizb"],[20,0,"rub"],[20,28,"nusf"],[20,50,"tlt"],[20,82,"hizb"],[21,0,"rub"],[21,18,"nusf"],[21,37,"tlt"],[21,59,"hizb"],[22,0,"rub"],[22,35,"nusf"],[22,74,"tlt"],[23,0,"hizb"],[23,20,"rub"],[23,34,"nusf"],[23,52,"tlt"],[24,0,"hizb"],[24,20,"rub"],[24,52,"nusf"],[25,0,"tlt"],[25,51,"hizb"],[25,110,"rub"],[25,180,"nusf"],[26,0,"tlt"],[26,26,"hizb"],[26,55,"rub"],[26,81,"nusf"],[27,11,"tlt"],[27,28,"hizb"],[27,50,"rub"],[27,75,"nusf"],[28,0,"tlt"],[28,25,"hizb"],[28,45,"rub"],[29,0,"nusf"],[29,30,"tlt"],[29,53,"hizb"],[30,21,"rub"],[31,10,"nusf"],[32,0,"tlt"],[32,17,"hizb"],[32,30,"rub"],[32,50,"nusf"],[32,59,"tlt"],[33,9,"hizb"],[33,23,"rub"],[33,45,"nusf"],[34,14,"tlt"],[34,40,"hizb"],[35,27,"rub"],[35,59,"nusf"],[36,21,"tlt"],[36,82,"hizb"],[36,144,"rub"],[37,20,"nusf"],[37,51,"tlt"],[38,7,"hizb"],[38,31,"rub"],[38,52,"nusf"],[39,0,"tlt"],[39,20,"hizb"],[39,40,"rub"],[39,65,"nusf"],[40,8,"tlt"],[40,24,"hizb"],[40,46,"rub"],[41,12,"nusf"],[41,26,"tlt"],[41,50,"hizb"],[42,23,"rub"],[42,56,"nusf"],[43,16,"tlt"],[44,11,"hizb"],[45,0,"rub"],[45,20,"nusf"],[46,9,"tlt"],[46,32,"hizb"],[47,17,"rub"],[48,0,"nusf"],[48,13,"tlt"],[49,26,"hizb"],[50,30,"rub"],[51,23,"nusf"],[52,25,"tlt"],[53,8,"hizb"],[54,0,"rub"],[55,0,"nusf"],[55,74,"tlt"],[56,15,"hizb"],[57,0,"rub"],[57,13,"nusf"],[58,10,"tlt"],[59,6,"hizb"],[61,0,"rub"],[62,3,"nusf"],[64,0,"tlt"],[65,0,"hizb"],[66,0,"rub"],[67,0,"nusf"],[68,0,"tlt"],[69,18,"hizb"],[71,0,"rub"],[72,19,"nusf"],[74,0,"tlt"],[75,18,"hizb"],[77,0,"rub"],[79,0,"nusf"],[81,0,"tlt"],[83,0,"hizb"],[86,0,"rub"],[89,0,"nusf"],[93,0,"tlt"],[99,8,"hizb"]];
 var _QR_FAHRAS=[{"num":1,"name":"الفَاتِحَةِ","page":1,"ayahs":7,"type":"مك"},{"num":2,"name":"البَقَرَةِ","page":2,"ayahs":286,"type":"مد"},{"num":3,"name":"آلِعِمۡرَانَ","page":50,"ayahs":200,"type":"مد"},{"num":4,"name":"النِّسَاءِ","page":77,"ayahs":176,"type":"مد"},{"num":5,"name":"المَائـِدَةِ","page":106,"ayahs":120,"type":"مد"},{"num":6,"name":"الأَنۡعَامِ","page":128,"ayahs":165,"type":"مك"},{"num":7,"name":"الأَعۡرَافِ","page":151,"ayahs":206,"type":"مك"},{"num":8,"name":"الأَنفَالِ","page":177,"ayahs":75,"type":"مد"},{"num":9,"name":"التَّوۡبَةِ","page":187,"ayahs":128,"type":"مد"},{"num":10,"name":"يُونُسَ","page":208,"ayahs":109,"type":"مك"},{"num":11,"name":"هُودٍ","page":221,"ayahs":123,"type":"مك"},{"num":12,"name":"يُوسُفَ","page":235,"ayahs":111,"type":"مك"},{"num":13,"name":"الرَّعۡدِ","page":249,"ayahs":43,"type":"مد"},{"num":14,"name":"إِبۡرَاهِيمَ","page":255,"ayahs":52,"type":"مك"},{"num":15,"name":"الحِجۡرِ","page":262,"ayahs":99,"type":"مك"},{"num":16,"name":"النَّحۡلِ","page":267,"ayahs":128,"type":"مك"},{"num":17,"name":"الإِسۡرَاءِ","page":282,"ayahs":111,"type":"مك"},{"num":18,"name":"الكَهۡفِ","page":293,"ayahs":110,"type":"مك"},{"num":19,"name":"مَرۡيَمَ","page":305,"ayahs":98,"type":"مك"},{"num":20,"name":"طه","page":312,"ayahs":135,"type":"مك"},{"num":21,"name":"الأَنبِيَاءِ","page":322,"ayahs":112,"type":"مك"},{"num":22,"name":"الحَجِّ","page":332,"ayahs":78,"type":"مد"},{"num":23,"name":"المُؤۡمِنُونَ","page":342,"ayahs":118,"type":"مك"},{"num":24,"name":"النُّورِ","page":350,"ayahs":64,"type":"مد"},{"num":25,"name":"الفُرۡقَانِ","page":359,"ayahs":77,"type":"مك"},{"num":26,"name":"الشُّعَرَاءِ","page":367,"ayahs":227,"type":"مك"},{"num":27,"name":"النَّمۡلِ","page":377,"ayahs":93,"type":"مك"},{"num":28,"name":"القَصَصِ","page":385,"ayahs":88,"type":"مك"},{"num":29,"name":"العَنكَبُوتِ","page":396,"ayahs":69,"type":"مك"},{"num":30,"name":"الرُّومِ","page":404,"ayahs":60,"type":"مك"},{"num":31,"name":"لُقۡمَانَ","page":411,"ayahs":34,"type":"مك"},{"num":32,"name":"السَّجۡدَةِ","page":415,"ayahs":30,"type":"مك"},{"num":33,"name":"الأَحۡزَابِ","page":418,"ayahs":73,"type":"مد"},{"num":34,"name":"سَبَإٍ","page":428,"ayahs":54,"type":"مك"},{"num":35,"name":"فَاطِرٍ","page":434,"ayahs":45,"type":"مك"},{"num":36,"name":"يسٓ","page":440,"ayahs":83,"type":"مك"},{"num":37,"name":"الصَّافَّاتِ","page":446,"ayahs":182,"type":"مك"},{"num":38,"name":"صٓ","page":453,"ayahs":88,"type":"مك"},{"num":39,"name":"الزُّمَرِ","page":458,"ayahs":75,"type":"مك"},{"num":40,"name":"غَافِرٍ","page":467,"ayahs":85,"type":"مك"},{"num":41,"name":"فُصِّلَتۡ","page":477,"ayahs":54,"type":"مك"},{"num":42,"name":"الشُّورَىٰ","page":483,"ayahs":53,"type":"مك"},{"num":43,"name":"الزُّخۡرُفِ","page":489,"ayahs":89,"type":"مك"},{"num":44,"name":"الدُّخَانِ","page":496,"ayahs":59,"type":"مك"},{"num":45,"name":"الجَاثِيَةِ","page":499,"ayahs":37,"type":"مك"},{"num":46,"name":"الأَحۡقَافِ","page":502,"ayahs":35,"type":"مك"},{"num":47,"name":"مُحَمَّدٍ","page":507,"ayahs":38,"type":"مد"},{"num":48,"name":"الفَتۡحِ","page":511,"ayahs":29,"type":"مد"},{"num":49,"name":"الحُجُرَاتِ","page":515,"ayahs":18,"type":"مد"},{"num":50,"name":"قٓ","page":518,"ayahs":45,"type":"مك"},{"num":51,"name":"الذَّارِيَاتِ","page":520,"ayahs":60,"type":"مك"},{"num":52,"name":"الطُّورِ","page":523,"ayahs":49,"type":"مك"},{"num":53,"name":"النَّجۡمِ","page":526,"ayahs":62,"type":"مك"},{"num":54,"name":"القَمَرِ","page":528,"ayahs":55,"type":"مك"},{"num":55,"name":"الرَّحۡمَٰن","page":531,"ayahs":78,"type":"مد"},{"num":56,"name":"الوَاقِعَةِ","page":534,"ayahs":96,"type":"مك"},{"num":57,"name":"الحَدِيدِ","page":537,"ayahs":29,"type":"مد"},{"num":58,"name":"المُجَادلَةِ","page":542,"ayahs":22,"type":"مد"},{"num":59,"name":"الحَشۡرِ","page":545,"ayahs":24,"type":"مد"},{"num":60,"name":"المُمۡتَحنَةِ","page":549,"ayahs":13,"type":"مد"},{"num":61,"name":"الصَّفِّ","page":551,"ayahs":14,"type":"مد"},{"num":62,"name":"الجُمُعَةِ","page":553,"ayahs":11,"type":"مد"},{"num":63,"name":"المُنَافِقُونَ","page":554,"ayahs":11,"type":"مد"},{"num":64,"name":"التَّغَابُنِ","page":556,"ayahs":18,"type":"مد"},{"num":65,"name":"الطَّلَاقِ","page":558,"ayahs":12,"type":"مد"},{"num":66,"name":"التَّحۡرِيمِ","page":560,"ayahs":12,"type":"مد"},{"num":67,"name":"المُلۡكِ","page":562,"ayahs":30,"type":"مك"},{"num":68,"name":"القَلَمِ","page":564,"ayahs":52,"type":"مك"},{"num":69,"name":"الحَاقَّةِ","page":566,"ayahs":52,"type":"مك"},{"num":70,"name":"المَعَارِجِ","page":568,"ayahs":44,"type":"مك"},{"num":71,"name":"نُوحٍ","page":570,"ayahs":28,"type":"مك"},{"num":72,"name":"الجِنِّ","page":572,"ayahs":28,"type":"مك"},{"num":73,"name":"المُزَّمِّلِ","page":574,"ayahs":20,"type":"مك"},{"num":74,"name":"المُدَّثِّرِ","page":575,"ayahs":56,"type":"مك"},{"num":75,"name":"القِيَامَةِ","page":577,"ayahs":40,"type":"مك"},{"num":76,"name":"الإِنسَانِ","page":578,"ayahs":31,"type":"مد"},{"num":77,"name":"المُرۡسَلَاتِ","page":580,"ayahs":50,"type":"مك"},{"num":78,"name":"النَّبَإِ","page":582,"ayahs":40,"type":"مك"},{"num":79,"name":"النَّازِعَاتِ","page":583,"ayahs":46,"type":"مك"},{"num":80,"name":"عَبَسَ","page":585,"ayahs":42,"type":"مك"},{"num":81,"name":"التَّكۡوِيرِ","page":586,"ayahs":29,"type":"مك"},{"num":82,"name":"الانفِطَارِ","page":587,"ayahs":19,"type":"مك"},{"num":83,"name":"المُطَفِّفِينَ","page":587,"ayahs":36,"type":"مك"},{"num":84,"name":"الانشِقَاقِ","page":589,"ayahs":25,"type":"مك"},{"num":85,"name":"البُرُوجِ","page":590,"ayahs":22,"type":"مك"},{"num":86,"name":"الطَّارِقِ","page":591,"ayahs":17,"type":"مك"},{"num":87,"name":"الأَعۡلَىٰ","page":591,"ayahs":19,"type":"مك"},{"num":88,"name":"الغَاشِيَةِ","page":592,"ayahs":26,"type":"مك"},{"num":89,"name":"الفَجۡرِ","page":593,"ayahs":30,"type":"مك"},{"num":90,"name":"البَلَدِ","page":594,"ayahs":20,"type":"مك"},{"num":91,"name":"الشَّمۡسِ","page":595,"ayahs":15,"type":"مك"},{"num":92,"name":"اللَّيۡلِ","page":595,"ayahs":21,"type":"مك"},{"num":93,"name":"الضُّحَىٰ","page":596,"ayahs":11,"type":"مك"},{"num":94,"name":"الشَّرۡحِ","page":596,"ayahs":8,"type":"مك"},{"num":95,"name":"التِّينِ","page":597,"ayahs":8,"type":"مك"},{"num":96,"name":"العَلَقِ","page":597,"ayahs":19,"type":"مك"},{"num":97,"name":"القَدۡرِ","page":598,"ayahs":5,"type":"مك"},{"num":98,"name":"البَيِّنَةِ","page":598,"ayahs":8,"type":"مد"},{"num":99,"name":"العَادِيَاتِ","page":599,"ayahs":11,"type":"مك"},{"num":100,"name":"الزَّلۡزَلَةِ","page":599,"ayahs":8,"type":"مد"},{"num":101,"name":"القَارِعَةِ","page":600,"ayahs":11,"type":"مك"},{"num":102,"name":"التَّكَاثُرِ","page":600,"ayahs":8,"type":"مك"},{"num":103,"name":"العَصۡرِ","page":601,"ayahs":3,"type":"مك"},{"num":104,"name":"الهُمَزَةِ","page":601,"ayahs":9,"type":"مك"},{"num":105,"name":"الفِيلِ","page":601,"ayahs":5,"type":"مك"},{"num":106,"name":"قُرَيۡشٍ","page":602,"ayahs":4,"type":"مك"},{"num":107,"name":"المَاعُونِ","page":602,"ayahs":7,"type":"مك"},{"num":108,"name":"الكَوۡثَرِ","page":602,"ayahs":3,"type":"مك"},{"num":109,"name":"الكَافِرُونَ","page":603,"ayahs":6,"type":"مك"},{"num":110,"name":"المَسَدِ","page":603,"ayahs":5,"type":"مك"},{"num":111,"name":"النَّصۡرِ","page":603,"ayahs":3,"type":"مد"},{"num":112,"name":"الإِخۡلَاصِ","page":604,"ayahs":4,"type":"مك"},{"num":113,"name":"الفَلَقِ","page":604,"ayahs":5,"type":"مك"},{"num":114,"name":"النَّاسِ","page":604,"ayahs":6,"type":"مك"}];
 var _QR_LABELS = { hafs: 'حفص عن عاصم', qaloun: 'قالون عن نافع', warsh: 'ورش عن نافع' };
+
+// Nombre d'ayats par sourate en numérotation Hafs (celle utilisée par
+// _QR_PAGE_STARTS/_QR_HIZB_MARKS/_QR_HIZB_AYAHS/_QR_SAJDAH/_QR_FAHRAS
+// ci-dessus). Sert de référence à _qrBuildSafePageBoundaries() -- indices
+// 0-based (index 0 = Al-Fatiha, somme = 6236, cf. Hafs.json).
+var _QR_HAFS_AYAH_COUNTS = [7,286,200,176,120,165,206,75,129,109,123,111,43,52,99,128,111,110,98,135,112,78,118,64,77,227,93,88,69,60,34,30,73,54,45,83,182,88,75,85,54,53,89,59,37,35,38,29,18,45,60,49,62,55,78,96,29,22,24,13,14,11,11,18,12,12,30,52,52,44,28,28,20,56,40,31,50,40,46,42,29,19,36,25,22,17,19,26,30,20,15,21,11,8,8,19,5,8,8,11,11,8,3,9,5,4,7,3,6,3,5,4,5,6];
+
+// Qaloun/Warsh comptent les versets différemment de Hafs (convention de
+// découpage propre à chaque riwaya -- même texte, coupures différentes :
+// cf. commentaire plus haut sur Hafs=6236/Qaloun=Warsh=6214 versets). Or
+// _QR_PAGE_STARTS (donc _qrPageBoundaries, qui pilote la pagination dans
+// _qrRenderPage) est calibré en numérotation Hafs. Appliqué tel quel à une
+// riwaya dont une sourate compte MOINS d'ayats que Hafs (ex. Ash-Shura 53
+// vs 50, Al-Kahf 110 vs 105), aIdx dépasse surah.ayats.length : la boucle de
+// _qrRenderPage s'arrête net (garde `startA >= surah.ayats.length`) et TOUT
+// le reste de cette sourate -- voire les sourates suivantes sur la même
+// page -- disparaît purement et simplement de la vue lecture, sans le
+// moindre repli "texte indisponible" (celui-ci ne couvre que l'accès
+// individuel hors-limites d'un seul ayat, pas ce décrochage de page).
+// Mesuré sur les données réelles (25/08/2026) : 40 ayats Qaloun/Warsh ne
+// s'affichaient plus sur AUCUNE page avec les bornes Hafs brutes.
+//
+// _qrBuildSafePageBoundaries() reprojette chaque borne [sourate, ayat] de
+// _QR_PAGE_STARTS sur la numérotation propre à la riwaya active, au
+// prorata de la position dans la sourate (aData = round(aHafs / hafsLen *
+// dataLen)), avec garde-fou de monotonie. Ceci garantit que TOUS les
+// ayats de la riwaya téléchargée sont couverts par une page (aucun jamais
+// masqué, aucun accès hors-limites) -- au prix d'une correspondance
+// page-Mushaf-imprimé Qaloun/Warsh approximative (déjà le cas avant ce
+// correctif, cf. commentaire "à 1-2 versets près" sur _QR_JUZ_STARTS) : la
+// numérotation exacte des versets à l'intérieur d'une page peut légèrement
+// glisser, mais aucun verset n'est plus jamais perdu. Identité stricte pour
+// Hafs (dataLen === hafsLen partout) : comportement inchangé.
+function _qrBuildSafePageBoundaries(data) {
+    var result = [];
+    var prevS = 0, prevA = 0;
+    for (var i = 0; i < _QR_PAGE_STARTS.length; i++) {
+        var s      = _QR_PAGE_STARTS[i][0];
+        var aHafs  = _QR_PAGE_STARTS[i][1];
+        var hafsLen = _QR_HAFS_AYAH_COUNTS[s] || 1;
+        var dataLen = (data[s] && data[s].ayats) ? data[s].ayats.length : 0;
+        var aData  = (aHafs === 0) ? 0 : Math.round(aHafs / hafsLen * dataLen);
+        if (aData > dataLen) aData = dataLen;
+        if (aData < 0) aData = 0;
+        if (s < prevS) { s = prevS; aData = prevA; }
+        else if (s === prevS && aData < prevA) { aData = prevA; }
+        result.push({ s: s, a: aData });
+        prevS = s; prevA = aData;
+    }
+    return result;
+}
+
 var _qrCatalog = [];        // chargé depuis JS_CUSTOM.ucRiwayaCatalogUrl (riwayatCatalog.json)
 var _qrActiveData = null;   // contenu (JSON) de la riwaya actuellement chargée depuis IndexedDB
 var _qrCatalogLoaded = false;
@@ -7927,6 +8031,25 @@ var _QR_PAGE_IDX_KEY   = 'tawkit_qp_read_pageidx';
 // contextuelle en pied de page (uniquement les couleurs réellement présentes
 // sur CETTE page, pas les 17 d'un coup).
 var _qrLastPageTajRules = {};
+
+// Certaines entrées du dataset téléchargé (Hafs/Qaloun/Warsh.json, hébergées
+// sur github.com/TAOUKITPRAYER/riwayat) ont un tableau "ayats" plus court que
+// prévu pour quelques sourates -- l'accès hors-limites renvoie alors
+// `undefined`, et sa concaténation directe dans le HTML (_qrRenderPage plus
+// bas) affichait littéralement le mot "undefined" à la place du verset
+// (retour utilisateur 25/08/2026, ex. Ash-Shura verset 51). _qrAyahText()
+// centralise la détection (texte manquant/vide/littéralement "undefined")
+// pour les DEUX endroits qui lisent surah.ayats[aIdx] (_qrRenderPage et
+// _qrSearch) : ne corrige pas la donnée source (hors de portée ici, fichier
+// distant), mais garantit qu'aucune des deux vues ne peut plus jamais
+// afficher ce mot au lieu du texte.
+var _QR_AYAH_MISSING_TEXT = '⚠ نص هذه الآية غير متوفر حالياً في هذه الرواية';
+function _qrAyahTextOrNull(rawText) {
+    if (typeof rawText !== 'string') return null;
+    var t = rawText.trim();
+    if (!t || t === 'undefined' || t === 'null') return null;
+    return rawText;
+}
 
 function _qrTajweedHtml(sIdx, aIdx, rawText) {
     if (!JS_CUSTOM.ucQrTajweedColors) return rawText;
@@ -8069,17 +8192,15 @@ function _qpSwitchTab(tab) {
     if (tab === 'read') {
         // Applique l'état mémorisé (plein-texte ou normal) en entrant dans l'onglet.
         _qrApplyNavHidden(_qrNavHiddenGet());
-        if (!_qrCatalogLoaded) { _qrLoadCatalog(); } else { _qrRenderRiwayaRow(); }
+        if (!_qrCatalogLoaded) { _qrLoadCatalog(); } else { _qrRenderRiwayaButton(); }
         _qrLoadActiveRiwayaAndRender();
     } else {
         // En quittant l'onglet lecture, restaurer visuellement les barres SANS
         // écraser localStorage : au prochain retour sur القراءة, _qrNavHiddenGet()
         // relira l'état sauvegardé et le réappliquera (plein-texte persistant).
         var _rTabs = document.getElementById('quranPlayerTabs');
-        var _rRRow = document.getElementById('qpReadRiwayaRow');
         var _rNRow = document.getElementById('qpReadNavRow');
         if (_rTabs) _rTabs.style.display = '';
-        if (_rRRow) _rRRow.style.display = '';
         if (_rNRow) _rNRow.style.display = '';
     }
 }
@@ -8141,7 +8262,7 @@ function _qrLoadCatalog() {
     if (!JS_CUSTOM.ucRiwayaCatalogUrl) {
         _qrCatalog = _QR_DEFAULT_CATALOG;
         _L('QR', 'CATALOG_DEFAULT', { count: _qrCatalog.length });
-        _qrRenderRiwayaRow();
+        _qrRenderRiwayaButton();
         return;
     }
     fetch(JS_CUSTOM.ucRiwayaCatalogUrl, { cache: 'no-store' })
@@ -8149,31 +8270,68 @@ function _qrLoadCatalog() {
         .then(function(json) {
             _qrCatalog = Array.isArray(json.riwayat) ? json.riwayat : _QR_DEFAULT_CATALOG;
             _L('QR', 'CATALOG_LOADED', { count: _qrCatalog.length });
-            _qrRenderRiwayaRow();
+            _qrRenderRiwayaButton();
         })
         .catch(function(e) {
             _qrCatalog = _QR_DEFAULT_CATALOG;
             _L('QR', 'CATALOG_ERROR_FALLBACK', { error: e.message });
-            _qrRenderRiwayaRow();
+            _qrRenderRiwayaButton();
         });
 }
 
-function _qrRenderRiwayaRow() {
-    var row = document.getElementById('qpReadRiwayaRow');
-    if (!row) return;
+// Libellé générique du bouton qpReadRiwayaBtn tant qu'aucune riwaya n'est
+// encore INSTALLÉE (première installation, ou après un reset qui a purgé les
+// fichiers téléchargés -- JS_CUSTOM.ucRiwayaActive vaut toujours 'hafs' par
+// défaut, cf. JS_CUSTOM_DEFAULTS, mais ça ne veut pas dire hafs.json est déjà
+// sur l'appareil). "Riwaya" n'a pas d'équivalent usuel en français/anglais,
+// d'où la translittération telle quelle hors arabe (cf. convention T[_ucLang()]
+// || T.EN de _ucLang() en tête de fichier).
+var _QR_RIWAYA_PLACEHOLDER = { AR: 'الرواية', FR: 'Riwaya', EN: 'Riwaya' };
+
+// Met à jour le libellé de #qpReadRiwayaBtn : nom de la riwaya active si elle
+// est réellement installée, sinon le libellé générique ci-dessus. Élément
+// statique du gabarit (jamais régénéré) -- on ne touche que son texte.
+function _qrRenderRiwayaButton() {
+    var btn = document.getElementById('qpReadRiwayaBtn');
+    if (!btn) return;
+    var id = JS_CUSTOM.ucRiwayaActive;
+    var installed = id && _qrGetInstalledIds().indexOf(id) !== -1;
+    btn.textContent = installed ? (_QR_LABELS[id] || id) : (_QR_RIWAYA_PLACEHOLDER[_ucLang()] || _QR_RIWAYA_PLACEHOLDER.EN);
+}
+
+// Reconstruit le corps de la modale #qrRiwayaPanel (3 boutons Hafs/Qaloun/
+// Warsh) à chaque ouverture -- cf. _qrOpenRiwayaPanel() -- pour refléter
+// l'état d'installation/sélection courant à coup sûr.
+function _qrRenderRiwayaModalBody() {
+    var body = document.getElementById('qrRiwayaBody');
+    if (!body) return;
     var ids = ['hafs', 'qaloun', 'warsh'];
     var installedIds = _qrGetInstalledIds();
-    row.innerHTML = '';
+    body.innerHTML = '';
     ids.forEach(function(id) {
-        var catEntry   = _qrCatalog.find(function(c) { return c.id === id; });
-        var installed  = installedIds.indexOf(id) !== -1;
-        var btn = document.createElement('div');
-        btn.className = 'qrRiwayaBtn' + (JS_CUSTOM.ucRiwayaActive === id ? ' qSel' : '');
-        btn.innerHTML = (_QR_LABELS[id] || id) + (installed ? '' : ' <span class="qrDlBadge">&#8595;</span>');
-        btn.title = installed ? '' : 'تحميل';
-        btn.onclick = function() { _qrSelectRiwaya(id, catEntry); };
-        row.appendChild(btn);
+        var catEntry  = _qrCatalog.find(function(c) { return c.id === id; });
+        var installed = installedIds.indexOf(id) !== -1;
+        var row = document.createElement('div');
+        row.className = 'qrFahrasRow' + (JS_CUSTOM.ucRiwayaActive === id && installed ? ' qrRiwayaRowActive' : '');
+        row.innerHTML = '<span class="qrFahrasRowLabel">' + (_QR_LABELS[id] || id) + '</span>'
+                       + (installed ? '' : '<span class="qrDlBadge">&#8595;</span>');
+        row.addEventListener('click', function() {
+            _qrCloseRiwayaPanel();
+            _qrSelectRiwaya(id, catEntry);
+        });
+        body.appendChild(row);
     });
+}
+
+function _qrOpenRiwayaPanel() {
+    var panel = document.getElementById('qrRiwayaPanel');
+    if (!panel) return;
+    _qrRenderRiwayaModalBody();
+    panel.classList.remove('qrFahrasHidden');
+}
+function _qrCloseRiwayaPanel() {
+    var panel = document.getElementById('qrRiwayaPanel');
+    if (panel) panel.classList.add('qrFahrasHidden');
 }
 
 function _qrSelectRiwaya(id, catEntry) {
@@ -8181,7 +8339,7 @@ function _qrSelectRiwaya(id, catEntry) {
     if (installed) {
         JS_CUSTOM.ucRiwayaActive = id;
         saveCustomSettingsFunction();
-        _qrRenderRiwayaRow();
+        _qrRenderRiwayaButton();
         _qrLoadActiveRiwayaAndRender();
         return;
     }
@@ -8208,7 +8366,7 @@ function _qrDownloadRiwaya(id, catEntry) {
         delete _qrDownloading[id];
         JS_CUSTOM.ucRiwayaActive = id;
         saveCustomSettingsFunction();
-        _qrRenderRiwayaRow();
+        _qrRenderRiwayaButton();
         _qrLoadActiveRiwayaAndRender();
         _L('QR', 'DL_DONE', { id: id });
     }
@@ -8216,6 +8374,11 @@ function _qrDownloadRiwaya(id, catEntry) {
         delete _qrDownloading[id];
         _L('QR', 'DL_ERROR', { id: id, error: message });
         if (msgEl) msgEl.textContent = 'تعذّر التحميل: ' + (message || '');
+        // JS_CUSTOM.ucRiwayaActive n'a pas bougé sur un échec (seul _settleOk
+        // le fait) : #qpReadRiwayaBtn n'affichait donc déjà pas le nom de la
+        // riwaya visée avant cet échec. Rappel par cohérence uniquement (même
+        // réflexe que _settleOk juste au-dessus).
+        _qrRenderRiwayaButton();
     }
 
     if (_ucHasNative('downloadRiwayaItem')) {
@@ -8287,7 +8450,7 @@ function _qrLoadActiveRiwayaAndRender() {
         if (msgEl) { msgEl.style.display = ''; msgEl.textContent = 'خطأ تحميل محلي: ' + e.message; }
         return;
     }
-    _qrPageBoundaries = _QR_PAGE_STARTS.map(function(p){ return { s: p[0], a: p[1] }; });
+    _qrPageBoundaries = _qrBuildSafePageBoundaries(_qrActiveData);
     if (msgEl) { msgEl.style.display = 'none'; }
     var _savedRaw  = localStorage.getItem(_QR_PAGE_IDX_KEY);
     var _savedPage = parseInt(_savedRaw, 10);
@@ -8340,6 +8503,32 @@ function _qrGoToPage(pageIdx) {
     _qrCurrentPage = pageIdx;
     _qrRenderPage(pageIdx);
     try { localStorage.setItem(_QR_PAGE_IDX_KEY, pageIdx); } catch (e) {}
+}
+
+// Index (0-based) de la page où commence surahIdx0 (ayat 0 de cette sourate),
+// dans le référentiel de _qrPageBoundaries de la riwaya ACTIVE (déjà
+// reprojeté par _qrBuildSafePageBoundaries si besoin -- cf. son commentaire) :
+// ne pas utiliser _QR_FAHRAS[surahIdx0].page directement, ce champ reste
+// calé sur la numérotation Hafs d'origine. _QR_PAGE_STARTS ne contient une
+// entrée que là où une PAGE commence, pas à chaque sourate -- plusieurs
+// sourates courtes en fin de Coran partagent une même page sans saut de
+// page entre elles (ex. page 604 : Al-Ikhlas + Al-Falaq + An-Nas) : on
+// cherche donc la dernière borne <= (surahIdx0, 0), pas une égalité stricte
+// sur .s.
+function _qrPageIndexForSurahStart(surahIdx0) {
+    var result = 0;
+    for (var i = 0; i < _qrPageBoundaries.length; i++) {
+        var b = _qrPageBoundaries[i];
+        if (b.s > surahIdx0) break;
+        if (b.s < surahIdx0 || b.a === 0) result = i;
+    }
+    return result;
+}
+// Saute directement au début de la sourate surahIdx0 (boutons qrSurahPrev/
+// qrSurahNext du pied de page).
+function _qrGoToSurah(surahIdx0) {
+    var pageIdx = _qrPageIndexForSurahStart(surahIdx0);
+    if (pageIdx >= 0) _qrGoToPage(pageIdx);
 }
 
 // Affiche une page du Mushaf Qaloun avec présentation premium :
@@ -8396,6 +8585,7 @@ function _qrRenderPage(pageIdx) {
           + '<span class="qrTopJuz">جزء ' + _qrToArabicDigits(juzNum) + '</span>'
           + '<span class="qrBookmarkToggle' + (_isBookmarked ? ' qrBookmarked' : '') + '" id="qrBookmarkToggle" title="حفظ هذه الصفحة">'
           + (_isBookmarked ? '&#9733;' : '&#9734;') + '</span>'
+          + '<span class="qrTajweedToggleBtn' + (JS_CUSTOM.ucQrTajweedColors ? ' qrTajweedToggleOn' : '') + '" id="qrTajweedToggleBtn" title="تلوين أحكام التجويد (تجريبي، قالون فقط)">&#127912;</span>'
           + '<span class="qrTopSurahLabel">' + surahNames.join(' · ') + '</span>'
           + hizbLabel
           + '</div>';
@@ -8449,8 +8639,12 @@ function _qrRenderPage(pageIdx) {
                       + '<span class="qrHizbMarkDeco"></span>'
                       + '</div>';
             }
-            html += '<span class="qrAyah">'
-                  + _qrTajweedHtml(sIdx, aIdx, surah.ayats[aIdx])
+            var _ayahText = _qrAyahTextOrNull(surah.ayats[aIdx]);
+            if (_ayahText === null && typeof _L === 'function') {
+                _L('QR', 'AYAH_MISSING', { surah: sIdx + 1, ayah: aIdx + 1, riwaya: JS_CUSTOM.ucRiwayaActive });
+            }
+            html += '<span class="qrAyah' + (_ayahText === null ? ' qrAyahMissing' : '') + '">'
+                  + (_ayahText === null ? _QR_AYAH_MISSING_TEXT : _qrTajweedHtml(sIdx, aIdx, _ayahText))
                   + (_isSajdah ? ' <span class="qrSajdahMark">۩</span>' : '')
                   + ' <span class="qrAyahNum">&#64831;' + _qrToArabicDigits(aIdx + 1) + '&#64830;</span>'
                   + '</span> ';
@@ -8470,12 +8664,33 @@ function _qrRenderPage(pageIdx) {
     // Pied de page — Mushaf RTL :
     //   ❯ à GAUCHE = page précédente (aller vers le début du Mushaf, à droite)
     //   ❮ à DROITE = page suivante  (aller vers la fin du Mushaf, à gauche)
+    // Boutons سورة (❯❯/❮❮, doublés pour se distinguer du saut de page simple)
+    // en position extérieure : même sens que les boutons page, mais sautent
+    // directement au début de la sourate précédente/suivante.
     var _isFirst = (pageIdx === 0);
     var _isLast  = (pageIdx === total - 1);
+    var _isFirstSurah = (from.s === 0);
+    // Cible de "sourate suivante" = la DERNIÈRE sourate déjà visible sur
+    // cette page (pas from.s, qui n'est que la PREMIÈRE) + 1. Plusieurs
+    // sourates courtes de fin de Coran partagent souvent une même page sans
+    // saut de page entre elles (cf. commentaire de _qrPageIndexForSurahStart) :
+    // viser from.s+1 pouvait retomber sur une sourate déjà entièrement
+    // affichée ICI, _qrGoToSurah calculait alors la MÊME page que la page
+    // courante et le bouton semblait ne rien faire, ou se bloquait après un
+    // ou deux appuis (signalé 26/08/2026). to.s n'est inclus que s'il
+    // apparaît réellement sur cette page (to.a > 0 -- sinon il ne commence
+    // qu'à la page suivante, cf. la garde `to.a === 0` de la boucle de rendu
+    // ci-dessus).
+    var _lastSurahOnPage = to ? (to.a === 0 ? to.s - 1 : to.s) : (_qrActiveData.length - 1);
+    var _isLastSurah = (_lastSurahOnPage >= _qrActiveData.length - 1);
+    var _prevSurahName = _isFirstSurah ? '' : _qrActiveData[from.s - 1].name;
+    var _nextSurahName = _isLastSurah  ? '' : _qrActiveData[_lastSurahOnPage + 1].name;
     html += '<div class="qrPageFooter">'
+          + '<span class="qrPageNavBtn qrSurahNavBtn' + (_isFirstSurah ? ' qrNavDisabled' : '') + '" id="qrSurahPrev" title="' + _prevSurahName + '">&#10095;&#10095;</span>'
           + '<span class="qrPageNavBtn' + (_isFirst ? ' qrNavDisabled' : '') + '" id="qrPagePrev">&#10095;</span>'
           + '<span class="qrPageNum">' + _qrToArabicDigits(pageNum1) + ' / ' + _qrToArabicDigits(total) + '</span>'
           + '<span class="qrPageNavBtn' + (_isLast  ? ' qrNavDisabled' : '') + '" id="qrPageNext">&#10094;</span>'
+          + '<span class="qrPageNavBtn qrSurahNavBtn' + (_isLastSurah ? ' qrNavDisabled' : '') + '" id="qrSurahNext" title="' + _nextSurahName + '">&#10094;&#10094;</span>'
           + '</div>';
 
     html += '</div>'; // .qrPageView
@@ -8492,11 +8707,27 @@ function _qrRenderPage(pageIdx) {
         bmEl.innerHTML = _nowSet ? '&#9733;' : '&#9734;';
     });
 
+    // Bascule coloration tajwid (expérimental, Qaloun uniquement) — déplacé
+    // dans la barre supérieure à côté de qrBookmarkToggle (regroupe les deux
+    // bascules par-page) ; réécouté à chaque rendu comme qrBookmarkToggle
+    // ci-dessus puisque tout #qrTopBar est régénéré via innerHTML.
+    var tajBtnEl = document.getElementById('qrTajweedToggleBtn');
+    if (tajBtnEl) tajBtnEl.addEventListener('click', function() {
+        JS_CUSTOM.ucQrTajweedColors = JS_CUSTOM.ucQrTajweedColors ? 0 : 1;
+        saveCustomSettingsFunction();
+        _qrRenderPage(_qrCurrentPage);
+    });
+
     // Boutons nav
     var prevEl = document.getElementById('qrPagePrev');
     var nextEl = document.getElementById('qrPageNext');
     if (prevEl && !_isFirst) prevEl.addEventListener('click', function(){ _qrGoToPage(_qrCurrentPage - 1); });
     if (nextEl && !_isLast)  nextEl.addEventListener('click', function(){ _qrGoToPage(_qrCurrentPage + 1); });
+
+    var surahPrevEl = document.getElementById('qrSurahPrev');
+    var surahNextEl = document.getElementById('qrSurahNext');
+    if (surahPrevEl && !_isFirstSurah) surahPrevEl.addEventListener('click', function(){ _qrGoToSurah(from.s - 1); });
+    if (surahNextEl && !_isLastSurah)  surahNextEl.addEventListener('click', function(){ _qrGoToSurah(_lastSurahOnPage + 1); });
 
     // Bande de légende تجويد (régénérée à chaque page -> réécoute à chaque fois).
     var tajLegendEl = document.getElementById('qrTajLegendRow');
@@ -8706,8 +8937,10 @@ function _qrSearch(query) {
     var results = [];
     _qrActiveData.forEach(function(surah, sIdx) {
         surah.ayats.forEach(function(text, aIdx) {
-            if (_qrNormalizeArabic(text).indexOf(qNorm) !== -1) {
-                results.push({ sIdx: sIdx, aIdx: aIdx, name: surah.name, text: text });
+            var _t = _qrAyahTextOrNull(text);
+            if (_t === null) return; // texte manquant côté dataset, cf. _qrAyahTextOrNull
+            if (_qrNormalizeArabic(_t).indexOf(qNorm) !== -1) {
+                results.push({ sIdx: sIdx, aIdx: aIdx, name: surah.name, text: _t });
             }
         });
     });
@@ -19977,6 +20210,7 @@ function selectQPTakbir() {
         muteAfterAzan:   { AR: 'كتم صوت الهاتف بعد الأذان', FR: "Couper le son du téléphone après l'azan", EN: 'Mute phone sound after azan' },
         restoreAfterAzan:{ AR: 'إعادة الصوت بعد الأذان بـ', FR: "Réactiver le son après l'azan dans", EN: 'Restore sound after azan in' },
         dndAccessMissing:{ AR: '⚠ إذن "عدم الإزعاج" غير ممنوح، الكتم/الاستعادة لن يعملا. اضغط هنا لإعادة تفعيله ←', FR: '⚠ Accès "Ne pas déranger" non accordé : le mute/restore ne fonctionnera pas. Appuyez ici pour le réactiver ←', EN: '⚠ "Do Not Disturb" access not granted: mute/restore won\'t work. Tap here to re-enable ←' },
+        keepVibrate:     { AR: 'إبقاء الاهتزاز مفعّلاً أثناء كتم الصوت', FR: 'Garder le vibreur actif pendant la coupure du son', EN: 'Keep vibration active while sound is muted' },
         flipToMute:      { AR: 'كتم الأصوات عند قلب الهاتف على وجهه', FR: 'Couper les sons en retournant le téléphone face contre table', EN: 'Mute sounds by flipping the phone face down' },
         autoStart:       { AR: 'تشغيل تلقائي للبرنامج عند إعادة تشغيل الهاتف', FR: "Lancement automatique de l'application au redémarrage du téléphone", EN: 'Automatically launch the app when the phone restarts' },
         autoStartVendor: { AR: 'فتح إعدادات التشغيل التلقائي للجهاز ←', FR: "Ouvrir les réglages de démarrage automatique de l'appareil ←", EN: "Open the device's auto-start settings ←" },
@@ -20058,6 +20292,15 @@ function selectQPTakbir() {
                         '<div class="ucSettingsRow" id="ucQuickMuteAfterDndWarning" style="display:none;" onclick="window._ucRequestDndAccessFromWarning()">' +
                             '<span id="ucQuickMuteAfterDndWarningText" class="clickableWhiteClass"></span>' +
                         '</div>' +
+                        '<div class="ucSettingsRow ucSettingsRowSub">' +
+                            '<label class="ucSettingsToggleWrap">' +
+                                '<input type="checkbox" id="ucSilentKeepVibrateToggle" onchange="window._ucToggleSilentModeKeepVibrate(this.checked)">' +
+                                '<span class="ucSettingsToggleSlider"></span>' +
+                            '</label>' +
+                            '<div class="ucSettingsRowLabel">' +
+                                '<span class="ucSettingsRowTitle">' + _stT('keepVibrate') + '</span>' +
+                            '</div>' +
+                        '</div>' +
                         '<div class="ucSettingsRow ucSettingsRowSep">' +
                             '<label class="ucSettingsToggleWrap">' +
                                 '<input type="checkbox" id="ucFlipToMuteToggle" onchange="window._ucToggleFlipToMuteAzan(this.checked)">' +
@@ -20132,6 +20375,13 @@ function selectQPTakbir() {
         // ALARMS" plus bas) — sinon le changement n'est pris en compte qu'au
         // prochain changement de jour calendaire.
         if (typeof window._ucRescheduleNativeAzanAlarms === 'function') window._ucRescheduleNativeAzanAlarms();
+        // Permission notifications demandée ici (téléphone uniquement, cf.
+        // MainActivity/MobileJsBridge) plutôt qu'au premier lancement de
+        // l'appli : moment où l'utilisateur montre un besoin réel de
+        // notifications. No-op natif si déjà accordée ou sur boîtier TV.
+        if (checked && window.AndroidMobile && typeof window.AndroidMobile.requestNotificationPermission === 'function') {
+            window.AndroidMobile.requestNotificationPermission();
+        }
         _L('CFG', 'SET', {ucAzanAlertEnabled: JS_CUSTOM.ucAzanAlertEnabled});
     };
 
@@ -20221,6 +20471,28 @@ function selectQPTakbir() {
         if (window.AndroidMobile && typeof window.AndroidMobile.requestDndAccess === 'function') {
             window.AndroidMobile.requestDndAccess();
         }
+    };
+
+    // ── Vibreur pendant la coupure du son (avant ET après azan) ─────────────
+    // Un seul toggle pour les deux fonctionnalités : elles passent toutes les
+    // deux par le même SilentModeReceiver.onReceive côté natif (cf. son
+    // ACTION_MUTE), qui lit ce réglage au moment de couper le son plutôt que
+    // de le recevoir en paramètre par alarme (les alarmes AlarmManager
+    // survivent à la fermeture de l'appli/WebView, donc ce réglage doit être
+    // lisible nativement sans JS actif).
+    function _ucSyncSilentModeKeepVibrateUI() {
+        if (!_modal) return;
+        var cb = _modal.querySelector('#ucSilentKeepVibrateToggle');
+        if (cb) cb.checked = (JS_CUSTOM.ucSilentModeKeepVibrate == 1);
+    }
+
+    window._ucToggleSilentModeKeepVibrate = function(checked) {
+        JS_CUSTOM.ucSilentModeKeepVibrate = checked ? 1 : 0;
+        saveCustomSettingsFunction();
+        if (window.AndroidMobile && typeof window.AndroidMobile.setSilentModeKeepVibrate === 'function') {
+            window.AndroidMobile.setSilentModeKeepVibrate(checked);
+        }
+        _L('CFG', 'SET', {ucSilentModeKeepVibrate: JS_CUSTOM.ucSilentModeKeepVibrate});
     };
 
     window._ucToggleQuickMuteAfterAzan = function(checked) {
@@ -20330,6 +20602,11 @@ function selectQPTakbir() {
         saveCustomSettingsFunction();
         _ucSyncHadithReminderUI();
         if (typeof window._ucRescheduleHadithReminder === 'function') window._ucRescheduleHadithReminder();
+        // Permission notifications différée jusqu'ici (cf. _ucToggleAzanAlert
+        // pour le détail du raisonnement) — no-op si déjà accordée.
+        if (checked && window.AndroidMobile && typeof window.AndroidMobile.requestNotificationPermission === 'function') {
+            window.AndroidMobile.requestNotificationPermission();
+        }
         _L('CFG', 'SET', {ucHadithReminderEnabled: JS_CUSTOM.ucHadithReminderEnabled});
     };
 
@@ -20387,6 +20664,13 @@ function selectQPTakbir() {
         if (window.AndroidMobile && typeof window.AndroidMobile.setAutoStartEnabled === 'function') {
             window.AndroidMobile.setAutoStartEnabled(checked);
         }
+        // Exemption d'optimisation batterie différée jusqu'ici (téléphone
+        // uniquement) : le redémarrage automatique après reboot est la seule
+        // fonctionnalité téléphone qui en dépend réellement pour survivre au
+        // Doze/App Standby -- no-op natif si déjà accordée.
+        if (checked && window.AndroidMobile && typeof window.AndroidMobile.requestBatteryOptimizationExemption === 'function') {
+            window.AndroidMobile.requestBatteryOptimizationExemption();
+        }
         _L('CFG', 'SET', {ucAutoStartEnabled: JS_CUSTOM.ucAutoStartEnabled});
     };
 
@@ -20414,6 +20698,7 @@ function selectQPTakbir() {
         _buildModal();
         _ucSyncAzanAlertUI();
         _ucSyncQuickMuteAfterUI();
+        _ucSyncSilentModeKeepVibrateUI();
         _ucSyncFlipToMuteUI();
         _ucSyncHadithReminderUI();
         _ucSyncMosqueProximityUI();
@@ -27738,8 +28023,20 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var local = _localCandidates(lat, lng, mosqueId);
         var localIds = local.map(function (c) { return c.id; });
         _remoteCandidates(lat, lng, mosqueId, localIds, function (remote) {
+            // Correction 25/08/2026 (retour utilisateur : debout DANS une
+            // mosquée réellement proche -- ex. tn.monastir.hidaya -- elle
+            // n'apparaissait jamais dans la liste alors que c'était la
+            // candidate la plus pertinente). Cause : un filtre
+            // "distanceKm >= 0.1" ici était censé exclure la mosquée
+            // ACTUELLE elle-même en secours de l'exclusion par id
+            // (mosqueId, déjà faite ci-dessus dans _localCandidates/
+            // _remoteCandidates) -- mais il excluait en réalité TOUTE
+            // mosquée à moins de 100m de la position GPS, y compris une
+            // mosquée différente de la mosquée configurée quand
+            // l'utilisateur s'y trouve physiquement (exactement le cas
+            // d'usage de cette fonctionnalité). L'exclusion par id étant
+            // déjà correcte et suffisante, ce filtre redondant est retiré.
             var all = local.concat(remote)
-                .filter(function (c) { return c.distanceKm >= 0.1; }) // exclut la mosquée actuelle elle-même (id non concordant possible)
                 .sort(function (a, b) { return a.distanceKm - b.distanceKm; })
                 .slice(0, MAX_CANDIDATES);
             if (!all.length) return; // rien à proposer dans le rayon : on ne montre rien

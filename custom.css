@@ -7566,38 +7566,6 @@
     color: #cbb98a;
 }
 
-/* Ligne de sélection de riwaya (Hafs / Qaloun / Warsh) */
-#qpReadRiwayaRow {
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: row;
-    gap: 8px;
-    padding: 10px 12px;
-    border-bottom: 1px solid #4a3a1a;
-    overflow-x: auto;
-}
-.qrRiwayaBtn {
-    padding: 8px 14px;
-    border: 1px solid #6a5530;
-    border-radius: 20px;
-    background: #2b2720;
-    color: #e8dcc0;
-    font-family: 'Amiri', serif;
-    font-size: 1em;
-    white-space: nowrap;
-    cursor: pointer;
-}
-.qrRiwayaBtn.qSel {
-    background: #d4aa50;
-    color: #1e1a12;
-    border-color: #d4aa50;
-    font-weight: bold;
-}
-.qrDlBadge {
-    margin-right: 4px;
-    color: #8fb8e0;
-}
-
 /* Ligne navigation (سورة/جزء + recherche) */
 #qpReadNavRow {
     flex-shrink: 0;
@@ -7626,28 +7594,30 @@
     user-select: none;
 }
 #qrFahrasBtn:active { background: #3a3225; }
-/* Bascule coloration tajwid (expérimental, Qaloun uniquement) —
-   cf. _qrTajweedHtml()/qrTajweedToggleBtn dans custom.js. */
-#qrTajweedToggleBtn {
+/* Choix de riwaya (Hafs/Qaloun/Warsh) — ex-<select> (peu pratique au doigt),
+   ouvre la modale #qrRiwayaPanel (cf. _qrOpenRiwayaPanel() dans custom.js).
+   Même gabarit visuel que #qrFahrasBtn juste au-dessus (même rangée), et
+   même max-width (règle commune ci-dessous) : les noms de riwaya (ex. "قالون
+   عن نافع") sont plus longs que "الفهرس", tronqués par ellipsis plutôt que de
+   dépasser la largeur de qrFahrasBtn. */
+#qpReadRiwayaBtn {
     flex-shrink: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
     padding: 6px 12px;
     border: 1px solid #6a5530;
     border-radius: 8px;
     background: #2b2720;
-    color: #a89a78;
+    color: #d4aa50;
     font-family: 'Amiri', serif;
     font-size: 0.95em;
     font-weight: bold;
     cursor: pointer;
     user-select: none;
 }
-#qrTajweedToggleBtn.qrTajweedToggleOn {
-    color: #d4aa50;
-    border-color: #d4aa50;
-    background: #3a3225;
-}
-#qrTajweedToggleBtn:active { background: #3a3225; }
+#qpReadRiwayaBtn:active { background: #3a3225; }
+#qrFahrasBtn, #qpReadRiwayaBtn { max-width: 108px; }
 
 /* ── Coloration tajwid par règle (Qaloun, expérimental) ─────────────────────
    Palette de départ, groupée par famille phonétique — à ajuster librement,
@@ -7733,7 +7703,7 @@
    Panneau plein cadre par-dessus qpReadTextArea (position:absolute, inset:0
    dans qpReadTabBody qui porte la règle position:relative ajoutée plus haut).
    Ouvert/fermé via _qrOpenFahras()/_qrCloseFahras() dans custom.js. ──────── */
-#qrFahrasPanel, #qrTajInfoPanel {
+#qrFahrasPanel, #qrTajInfoPanel, #qrRiwayaPanel {
     position: absolute;
     top: 0;
     right: 0;
@@ -7744,9 +7714,9 @@
     flex-direction: column;
     background: #1e1a12;
 }
-#qrFahrasPanel.qrFahrasHidden, #qrTajInfoPanel.qrFahrasHidden { display: none; }
+#qrFahrasPanel.qrFahrasHidden, #qrTajInfoPanel.qrFahrasHidden, #qrRiwayaPanel.qrFahrasHidden { display: none; }
 
-#qrFahrasHeader, #qrTajInfoHeader {
+#qrFahrasHeader, #qrTajInfoHeader, #qrRiwayaHeader {
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -7755,12 +7725,12 @@
     border-bottom: 1px solid #4a3a1a;
     position: relative;
 }
-#qrFahrasTitle, #qrTajInfoTitle {
+#qrFahrasTitle, #qrTajInfoTitle, #qrRiwayaTitle {
     color: #d4aa50;
     font-weight: bold;
     font-family: 'Amiri', serif;
 }
-#qrFahrasClose, #qrTajInfoClose {
+#qrFahrasClose, #qrTajInfoClose, #qrRiwayaClose {
     position: absolute;
     right: 15px;
     color: #e05050;
@@ -7790,7 +7760,7 @@
     background: #2b2720;
 }
 
-#qrFahrasBody, #qrTajInfoBody {
+#qrFahrasBody, #qrTajInfoBody, #qrRiwayaBody {
     flex: 1;
     overflow-y: auto;
     padding: 10px;
@@ -7903,6 +7873,13 @@
     font-size: 0.8em;
     white-space: nowrap;
 }
+/* Modale de choix de riwaya (#qrRiwayaBody) : réutilise .qrFahrasRow/
+   .qrFahrasRowLabel (mêmes rangées tappables que le fahras) + une mise en
+   évidence de la riwaya déjà active/installée, et la flèche de
+   téléchargement (ex-.qrDlBadge de l'ancienne ligne de boutons) sinon. */
+.qrRiwayaRowActive { background: #3a3225; border-color: #d4aa50; }
+.qrRiwayaRowActive .qrFahrasRowLabel { color: #ffd35a; font-weight: bold; }
+.qrDlBadge { color: #8fb8e0; font-size: 0.9em; }
 .qrFahrasRowRemove {
     color: #e05050;
     font-size: 1.05em;
@@ -7919,6 +7896,18 @@
     line-height: 1;
 }
 .qrBookmarkToggle.qrBookmarked { color: #d4aa50; }
+/* Bascule coloration tajwid (expérimental, Qaloun uniquement) — déplacée à
+   côté de qrBookmarkToggle (cf. custom.js _qrRenderPage) : même traitement
+   visuel (icône seule, pas de cadre/fond) pour rester cohérent dans la
+   barre supérieure. cf. _qrTajweedHtml()/qrTajweedToggleBtn dans custom.js. */
+#qrTajweedToggleBtn {
+    color: #6a5530;
+    font-size: 1.1em;
+    cursor: pointer;
+    user-select: none;
+    line-height: 1;
+}
+#qrTajweedToggleBtn.qrTajweedToggleOn { color: #d4aa50; }
 
 /* Zone de texte coranique */
 #qpReadTextArea {
@@ -8141,6 +8130,14 @@
     font-size: 0.9em;
     vertical-align: middle;
 }
+/* Texte manquant côté dataset (cf. custom.js, _qrAyahTextOrNull) : signalé
+   discrètement au lieu du mot "undefined" brut. */
+.qrPageContent .qrAyahMissing {
+    color: #8b5a00;
+    font-size: 0.75em;
+    font-style: italic;
+    opacity: 0.85;
+}
 
 /* ── Pied de page ── */
 .qrPageFooter {
@@ -8178,6 +8175,17 @@
     color: #3a3020;
     border-color: #2a2010;
     pointer-events: none;
+}
+/* Boutons sourate précédente/suivante (qrSurahPrev/qrSurahNext) : même
+   famille que .qrPageNavBtn (page précédente/suivante) mais un cran plus
+   discret -- saut direct de sourate, moins fréquent que le tourne-page. */
+.qrPageNavBtn.qrSurahNavBtn {
+    font-size: 1.0em;
+    padding: 5px 10px;
+    opacity: 0.75;
+}
+.qrPageNavBtn.qrSurahNavBtn:active {
+    opacity: 1;
 }
 
 /* ── Marques de hizb inline (ربع · نصف · ثلاثة أرباع · حزب) ── */
@@ -9411,7 +9419,6 @@ input[type='checkbox']:checked::after {
 #quranRecitersDeviceBlock,
 #quranSurahsBlock,
 #quranPlayerBlock,
-#qpReadRiwayaRow,
 #qpReadNavRow,
 #qpReadTextArea,
 #qpSettingsSection1,
@@ -10063,6 +10070,27 @@ input[type='checkbox']:checked::after {
     padding: 7px 14px;
     font-size: 0.88em;
 }
+
+/* ── Bandeau "ce n'est pas votre mosquée" (modèle anonyme, custom.js
+   _installAnonymousMosqueBanner) : bande fine ancrée en bas, au-dessus du
+   texte de pied de page -- ne recouvre jamais les horaires. */
+#ucAnonMosqueBanner {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 999999997; /* sous #ucMosqueProxOverlay (999999998), au cas où les deux coexistent */
+    background: linear-gradient(0deg, rgba(43, 39, 32, 0.97), rgba(43, 39, 32, 0.88));
+    border-top: 1px solid #6a5530;
+    color: #f0d080;
+    text-align: center;
+    padding: 8px 14px;
+    font-size: 12px; /* fallback (no min()/clamp() on old WebView) */
+    font-size: clamp(11px, 1.8vmin, 14px);
+    line-height: 1.3;
+    cursor: pointer;
+}
+#ucAnonMosqueBanner:active { background: rgba(240, 208, 128, 0.14); }
 
 /* ── Administration de la mosquée à distance (_installRemoteMosqueAdmin) ── */
 #ucRemoteAdminOverlay {

@@ -974,7 +974,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.1';
+var CUSTOM_APP_VERSION = '14.2';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -2411,6 +2411,11 @@ window._ucCurrentMosqueId = function () {
 // modèle anonyme est actif, disparaît de lui-même dès qu'une vraie mosquée
 // est choisie (sélection = location.reload(), cf. _finishSelectMosque).
 (function _installAnonymousMosqueBanner() {
+    // Boîtier (Android TV) : jamais ce bandeau. Un boîtier est provisionné à
+    // distance (jamais via le sélecteur tactile "cherchez votre mosquée"),
+    // fonction propre au téléphone (retour utilisateur 28/08/2026).
+    if (window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv()) return;
     var mosqueId = typeof window._ucCurrentMosqueId === 'function' ? window._ucCurrentMosqueId() : null;
     if (typeof _ucIsAnonymousMosqueId !== 'function' || !_ucIsAnonymousMosqueId(mosqueId)) return;
 
@@ -21686,7 +21691,9 @@ function selectQPTakbir() {
     function _ucSyncDndWarning(featureEnabled) {
         var row = _modal ? _modal.querySelector('#ucQuickMuteAfterDndWarning') : null;
         if (!row) return;
-        var missing = featureEnabled && window.AndroidMobile
+        var _isBox = window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && window.AndroidMobile.isAndroidTv();
+        var missing = !_isBox && featureEnabled && window.AndroidMobile
             && typeof window.AndroidMobile.hasDndAccess === 'function'
             && !window.AndroidMobile.hasDndAccess();
         row.style.display = missing ? '' : 'none';
@@ -21697,6 +21704,8 @@ function selectQPTakbir() {
     }
 
     window._ucRequestDndAccessFromWarning = function() {
+        if (window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && window.AndroidMobile.isAndroidTv()) return;   // boîtier : jamais de demande DND
         if (window.AndroidMobile && typeof window.AndroidMobile.requestDndAccess === 'function') {
             window.AndroidMobile.requestDndAccess();
         }
@@ -21725,7 +21734,9 @@ function selectQPTakbir() {
     };
 
     window._ucToggleQuickMuteAfterAzan = function(checked) {
-        if (checked && window.AndroidMobile && typeof window.AndroidMobile.hasDndAccess === 'function'
+        var _isBox = window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && window.AndroidMobile.isAndroidTv();
+        if (!_isBox && checked && window.AndroidMobile && typeof window.AndroidMobile.hasDndAccess === 'function'
                 && !window.AndroidMobile.hasDndAccess()) {
             if (typeof window.AndroidMobile.requestDndAccess === 'function') window.AndroidMobile.requestDndAccess();
         }
@@ -21996,6 +22007,10 @@ function selectQPTakbir() {
     if (!window.AndroidMobile
         || typeof window.AndroidMobile.hasDndAccess !== 'function'
         || typeof window.AndroidMobile.requestDndAccess !== 'function') return;
+    // Boîtier (Android TV) : pas de sonnerie/appels -> l'accès "Ne pas déranger"
+    // n'a aucun sens, on ne le réclame jamais. La coupure du son autour de
+    // l'azan est une fonction propre au téléphone (retour utilisateur 28/08/2026).
+    if (typeof window.AndroidMobile.isAndroidTv === 'function' && window.AndroidMobile.isAndroidTv()) return;
 
     var L_DND = {
         AR: '⚠ يحتاج التطبيق إذن «عدم الإزعاج» لكتم صوت الهاتف تلقائيًا حول الأذان — اضغط هنا للتفعيل',

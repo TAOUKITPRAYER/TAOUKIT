@@ -10526,6 +10526,18 @@ input[type='checkbox']:checked::after {
     padding: 0 2px;
 }
 
+/* La boîte de saisie du cœur (#inputDialogContainer, style1/2.css, z-index
+   9999444) est utilisée DEPUIS plusieurs modales custom via
+   openInputDialogFunction() (ex. délai Coran avant azan dans l'admin mosquée
+   à distance ci-dessous, z-index 999999999). Sans ceci elle s'ouvrait
+   DERRIÈRE la modale appelante -> saisie impossible (rapporté 29/08/2026,
+   téléphone). C'est une invite modale transitoire (visibility:hidden au repos,
+   visible seulement pendant la saisie) : elle doit toujours passer au-dessus
+   de tout. On force donc un z-index supérieur à toutes les surcouches custom. */
+#inputDialogContainer {
+    z-index: 2000000000 !important;
+}
+
 /* ── Administration de la mosquée à distance (_installRemoteMosqueAdmin) ── */
 #ucRemoteAdminOverlay {
     position: fixed;

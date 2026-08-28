@@ -974,7 +974,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.0';
+var CUSTOM_APP_VERSION = '14.1';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1058,6 +1058,172 @@ if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l
     if (typeof window.positionHighlightBar !== 'function') return;
     window.positionHighlightBar = function() {};
     _L('SYS', 'PATCH', { fn: 'positionHighlightBar', for: 'disabled_prayer_row_highlight_circle' });
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GARDE-FOU CODE VILLE — résolution du "_" final + récupération au démarrage
+// ─────────────────────────────────────────────────────────────────────────────
+// Le coeur (m1prime.js / m2body.js selectCityFunction) construit l'URL du
+// fichier d'horaires SANS aucune tolérance :
+//     data/<CC>/wtimes-<JS_DATA.ucNowCityCODE>.js
+// Si ce code ne correspond à AUCUN fichier livré -> <script> 404 -> JS_TIMES
+// reste undefined -> le tout premier calculateAndDisplayTimesFunction()
+// (rejoué par custom.js juste après la garde jomoa/Dohr, ~L2670) plante
+// (timeStringToMinutesFunction(undefined).substr -> throw). Ce throw
+// INTERROMPT l'exécution synchrone du RESTE de custom.js : config sync,
+// polling distant, automatisations lumières, tout. L'appli reste figée sur un
+// affichage sans horaires, sans plus aucun moyen de se réparer toute seule.
+//
+// Origine constatée (28/08/2026, boîtier mosquée tn.monastir.aboubakr, IP .246
+// -- même famille de bug qu'un incident d'import Supabase antérieur) :
+//   - l'EXPORT vers Supabase strippe le "_" final de ucNowCityCODE (artefact
+//     des noms de fichiers wtimes-*.js) -> mosques.location_code =
+//     "tn.ksibet-el-mediouni"
+//   - l'IMPORT léger (_applyRow, appelé par le polling de config toutes les
+//     ~18 s) réinjecte cette valeur TELLE QUELLE dans JS_DATA.ucNowCityCODE
+//   - or le fichier réellement livré est "wtimes-tn.ksibet-el-mediouni_.js"
+//     (AVEC "_") -> 404 -> plantage au rechargement suivant.
+//
+// _ucResolveCityCode : ramène n'importe quel code (avec/sans "_", casse) vers
+// le code EXACT présent dans le catalogue JS_CITIES_DATA (data/<CC>/<cc>.js,
+// chargé par le coeur) -- le seul pour lequel un fichier wtimes existe.
+// Appelé à CHAQUE point d'import (_applyRow, _applyMosqueConfig,
+// _restoreFromJson) + ici au boot pour rattraper un état déjà corrompu.
+// ═══════════════════════════════════════════════════════════════════════════
+function _ucResolveCityCode(code) {
+    var raw = String(code || '').trim().toLowerCase();
+    if (!raw || raw.indexOf('.') === -1) return raw;
+    if (typeof JS_CITIES_DATA === 'undefined' || !Array.isArray(JS_CITIES_DATA) || !JS_CITIES_DATA.length) {
+        return raw;   // catalogue pas encore chargé -> on ne peut rien résoudre
+    }
+    var known = Object.create(null);
+    for (var i = 0; i < JS_CITIES_DATA.length; i++) {
+        var e = String(JS_CITIES_DATA[i] || '').toLowerCase();
+        var d1 = e.indexOf('.');
+        if (d1 < 0) continue;
+        var d2 = e.indexOf('.', d1 + 1);
+        var c = (d2 < 0) ? e.replace(/\.+$/, '') : e.slice(0, d2);   // "tn.xxx" ou "tn.xxx_"
+        if (c) known[c] = true;
+    }
+    if (known[raw]) return raw;
+    var bare = raw.replace(/_+$/, '');
+    if (known[bare + '_']) return bare + '_';
+    if (known[bare])       return bare;
+    return raw;   // introuvable au catalogue -> inchangé (le garde de boot tentera un repli)
+}
+window._ucResolveCityCode = _ucResolveCityCode;
+
+(function _ucGuardCityCodeOnBoot() {
+    // NB : le catalogue JS_CITIES_DATA n'est PAS chargé au boot (le coeur ne
+    // charge data/<CC>/<cc>.js que quand l'utilisateur ouvre la liste des
+    // villes). La récupération procède donc par étapes, coordonnées par un
+    // compteur sessionStorage (survit à location.reload, évite toute boucle) :
+    //   étape 0 -> bascule SYNCHRONE du "_" final (couvre ~toutes les villes TN
+    //              livrées) + reload : rapide, pas de plantage
+    //   étape 1 -> chargement ASYNC du catalogue pays -> résolution exacte,
+    //              sinon 1re ville "_" du pays + reload
+    //   étape 2 -> abandon propre (trace, pas de boucle)
+    var STEP_KEY = 'ucCityGuardStep';
+
+    function _step() {
+        try { return parseInt(sessionStorage.getItem(STEP_KEY) || '0', 10) || 0; } catch (e) { return 0; }
+    }
+    function _setStep(n) { try { sessionStorage.setItem(STEP_KEY, String(n)); } catch (e) {} }
+    function _clearStep() { try { sessionStorage.removeItem(STEP_KEY); } catch (e) {} }
+    function _persist() {
+        try {
+            if (typeof saveSettingsToStorageFunction === 'function') saveSettingsToStorageFunction();
+            else localStorage.setItem('JS_DATA', JSON.stringify(JS_DATA));
+        } catch (e) {}
+    }
+    function _applyAndReload(newCode, reason, nextStep) {
+        if (!newCode || newCode === cur) return false;
+        JS_DATA.ucNowCityCODE = newCode;
+        _persist();
+        _setStep(nextStep);
+        _L('CFG', 'CITYCODE_RECOVER', { was: cur, now: newCode, reason: reason });
+        try { location.reload(); } catch (e) {}
+        return true;
+    }
+
+    var timesOk, cur;
+    try {
+        if (typeof JS_DATA === 'undefined' || !JS_DATA.ucNowCityCODE) return;
+        cur     = String(JS_DATA.ucNowCityCODE).trim().toLowerCase();
+        timesOk = (typeof JS_TIMES !== 'undefined' && Array.isArray(JS_TIMES) && JS_TIMES.length > 200);
+    } catch (e) { return; }
+
+    // ── Horaires OK ────────────────────────────────────────────────────────
+    if (timesOk) {
+        if (_step() !== 0) { _clearStep(); _L('CFG', 'CITYCODE_RECOVER_OK', { city: cur }); }
+        // Normalisation opportuniste si le catalogue est déjà chargé.
+        try {
+            var norm = _ucResolveCityCode(cur);
+            if (norm && norm !== cur && typeof JS_CITIES_DATA !== 'undefined'
+                && Array.isArray(JS_CITIES_DATA) && JS_CITIES_DATA.length) {
+                JS_DATA.ucNowCityCODE = norm;
+                _persist();
+                _L('CFG', 'CITYCODE_NORMALIZED', { was: cur, now: norm });
+            }
+        } catch (e) {}
+        return;
+    }
+
+    // ── Horaires ABSENTS : le fichier wtimes-<cur>.js n'a pas chargé ───────
+    var step = _step();
+    _L('CFG', 'CITYCODE_RECOVER_START', { city: cur, step: step });
+
+    if (step === 0) {
+        // Étape 0 : bascule synchrone du "_" final.
+        var alt = (cur.slice(-1) === '_') ? cur.replace(/_+$/, '') : (cur + '_');
+        if (_applyAndReload(alt, 'underscore_toggle', 1)) return;
+        _setStep(1); step = 1;   // rien à basculer -> passer à l'étape catalogue
+    }
+
+    if (step === 1) {
+        _setStep(2);   // marque la tentative catalogue AVANT de la lancer (anti-boucle)
+        var doResolve = function () {
+            var resolved;
+            try { resolved = _ucResolveCityCode(cur); } catch (e) { resolved = cur; }
+            if (resolved && resolved !== cur) { _applyAndReload(resolved, 'catalog_variant', 3); return; }
+            // introuvable -> 1re ville "_" du pays (sinon 1re ville tout court)
+            try {
+                var pfx = (cur.split('.')[0] || '') + '.', fb = '';
+                for (var i = 0; i < JS_CITIES_DATA.length; i++) {
+                    var e = String(JS_CITIES_DATA[i] || '').toLowerCase();
+                    if (e.indexOf(pfx) !== 0) continue;
+                    var d2 = e.indexOf('.', pfx.length);
+                    var cand = (d2 < 0) ? e.replace(/\.+$/, '') : e.slice(0, d2);
+                    if (!fb) fb = cand;
+                    if (cand.slice(-1) === '_') { fb = cand; break; }
+                }
+                _applyAndReload(fb, 'country_first_city', 3);
+            } catch (e) {
+                _L('CFG', 'CITYCODE_RECOVER_GIVEUP', { city: cur, reason: 'catalog_scan_failed' });
+            }
+        };
+        if (typeof JS_CITIES_DATA !== 'undefined' && Array.isArray(JS_CITIES_DATA) && JS_CITIES_DATA.length) {
+            doResolve(); return;
+        }
+        var cc = (cur.split('.')[0] || '').toUpperCase();
+        if (!cc) { _L('CFG', 'CITYCODE_RECOVER_GIVEUP', { city: cur, reason: 'no_country' }); return; }
+        var srcs = ['data/' + cc + '/' + cc.toLowerCase() + '.js', 'spec/data/' + cc + '/' + cc.toLowerCase() + '.js'], ti = 0;
+        (function _loadCat() {
+            if (ti >= srcs.length) { _L('CFG', 'CITYCODE_RECOVER_GIVEUP', { city: cur, reason: 'catalog_unreachable' }); return; }
+            var s = document.createElement('script');
+            s.src = srcs[ti++] + '?ev=' + Date.now();
+            s.onload  = function () {
+                if (typeof JS_CITIES_DATA !== 'undefined' && Array.isArray(JS_CITIES_DATA) && JS_CITIES_DATA.length) doResolve();
+                else _loadCat();
+            };
+            s.onerror = function () { _loadCat(); };
+            (document.head || document.documentElement).appendChild(s);
+        })();
+        return;
+    }
+
+    // step >= 2 : déjà tout tenté cette session -> abandon propre (pas de boucle)
+    _L('CFG', 'CITYCODE_RECOVER_GIVEUP', { city: cur, reason: 'all_steps_exhausted', step: step });
 })();
 
 // ── STOCKAGE INDÉPENDANT des réglages custom ──────────────────────────────
@@ -2011,7 +2177,11 @@ window._ucCurrentMosqueId = function () {
 
     // Appliquer sur l'objet JS_DATA en mémoire
     JS_DATA.ucMosqueName      = MOSQUE_CONFIG.MOSQUE_NAME;
-    JS_DATA.ucNowCityCODE     = MOSQUE_CONFIG.LOCATION_CODE;
+    // _ucResolveCityCode : LOCATION_CODE du registre / de Supabase peut avoir
+    // perdu son "_" final -> on le ramène au code exact du catalogue, sinon
+    // wtimes-<code>.js renvoie 404 et l'appli plante au boot (cf.
+    // _ucGuardCityCodeOnBoot en tête de fichier).
+    JS_DATA.ucNowCityCODE     = _ucResolveCityCode(MOSQUE_CONFIG.LOCATION_CODE);
     JS_DATA.ucJomoaOnHRscreen = MOSQUE_CONFIG.JUMUA_ENABLED;
     JS_DATA.ucJomoaFixedTime  = MOSQUE_CONFIG.JUMUA_TIME;
     
@@ -23364,6 +23534,25 @@ function selectQPTakbir() {
                 } catch(e) {}
             }
 
+            // Résout le code ville du blob restauré vers le code exact du
+            // catalogue (variante "_" livrée) AVANT de l'écrire : un blob créé
+            // sur un appareil dont ucNowCityCODE avait déjà perdu son "_"
+            // rejouerait sinon le plantage wtimes-404 au reload ci-dessous.
+            // Cf. _ucGuardCityCodeOnBoot / _ucResolveCityCode en tête de fichier.
+            if (backup.data.JS_DATA && typeof _ucResolveCityCode === 'function') {
+                try {
+                    var _jd = JSON.parse(backup.data.JS_DATA);
+                    if (_jd && _jd.ucNowCityCODE) {
+                        var _fixedCC = _ucResolveCityCode(_jd.ucNowCityCODE);
+                        if (_fixedCC && _fixedCC !== String(_jd.ucNowCityCODE).toLowerCase()) {
+                            _jd.ucNowCityCODE = _fixedCC;
+                            backup.data.JS_DATA = JSON.stringify(_jd);
+                            _L('CFG', 'IMPORT_CITYCODE_FIX', { now: _fixedCC });
+                        }
+                    }
+                } catch (e) {}
+            }
+
             var count = 0; var errors = [];
             Object.keys(backup.data).forEach(function(k) {
                 try {
@@ -26031,7 +26220,12 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         // ucNowCityCODE à jour, le tableau d'horaires de BASE (wtimes-*.js)
         // restait aussi celui de l'ancienne ville, pas seulement le nom.
         if (row.mosque_name)   JS_DATA.ucMosqueName  = row.mosque_name;
-        if (row.location_code) JS_DATA.ucNowCityCODE = row.location_code;
+        // _ucResolveCityCode : mosques.location_code est stocké SANS "_" final
+        // (l'export le strippe), or le fichier wtimes livré l'a souvent AVEC.
+        // Sans cette résolution, ce chemin léger (polling config ~18s) réinjecte
+        // un code invalide -> wtimes 404 -> plantage au reload (incident
+        // tn.monastir.aboubakr 28/08/2026). Cf. _ucGuardCityCodeOnBoot.
+        if (row.location_code) JS_DATA.ucNowCityCODE = _ucResolveCityCode(row.location_code);
         if (row.latitude)  JS_DATA.ucMeteoLatitude  = row.latitude;
         if (row.longitude) JS_DATA.ucMeteoLongitude = row.longitude;
         if (row.time_flags) {

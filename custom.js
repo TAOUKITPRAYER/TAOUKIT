@@ -974,7 +974,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.4';
+var CUSTOM_APP_VERSION = '14.5';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1113,6 +1113,26 @@ function _ucResolveCityCode(code) {
 }
 window._ucResolveCityCode = _ucResolveCityCode;
 
+// ── Blindage anti-crash de timeStringToMinutesFunction (coeur m2body.js:4019) ──
+// Tant que la récupération de code ville n'a pas rechargé l'appli avec un
+// wtimes-*.js valide, JS_TIMES reste vide et le coeur appelle
+// timeStringToMinutesFunction(undefined) -> `undefined.substr(...)` -> throw
+// non rattrapé qui INTERROMPT le reste de custom.js (config sync, polling,
+// lumières...) ET fige l'écran. Ce patch neutralise le throw : entrée non
+// exploitable -> 0 (les horaires affichent alors 00:00, transitoirement, le
+// temps que _hardReload() ci-dessous recharge). Sans effet une fois les
+// horaires chargés (délègue tel quel à l'original pour toute chaîne "HH:MM").
+(function _hardenTimeStringToMinutes() {
+    try {
+        var _orig = window.timeStringToMinutesFunction;
+        if (typeof _orig !== 'function') return;
+        window.timeStringToMinutesFunction = function (v) {
+            if (typeof v !== 'string' || v.indexOf(':') < 1) return 0;
+            try { return _orig(v); } catch (e) { return 0; }
+        };
+    } catch (e) {}
+})();
+
 (function _ucGuardCityCodeOnBoot() {
     // NB : le catalogue JS_CITIES_DATA n'est PAS chargé au boot (le coeur ne
     // charge data/<CC>/<cc>.js que quand l'utilisateur ouvre la liste des
@@ -1142,8 +1162,29 @@ window._ucResolveCityCode = _ucResolveCityCode;
         _persist();
         _setStep(nextStep);
         _L('CFG', 'CITYCODE_RECOVER', { was: cur, now: newCode, reason: reason });
-        try { location.reload(); } catch (e) {}
+        _hardReload();
         return true;
+    }
+    // location.reload() appelé pendant l'exécution SYNCHRONE initiale du <script>
+    // n'est pas honoré de façon fiable par l'Android WebView (constaté téléphone
+    // SM-S938B, 28/08/2026 : le toggle "_" se faisait + persistait, mais AUCUN
+    // rechargement -> appli bloquée sur écran sans horaires). On couvre donc
+    // trois fenêtres : immédiat, après l'évènement 'load', et filet setTimeout.
+    // Les timers/écouteurs de la page morte disparaissent dès qu'un reload
+    // aboutit -> au pire un flash de rechargement, jamais de boucle (le
+    // compteur d'étape sessionStorage est posé AVANT).
+    function _hardReload() {
+        function go() {
+            try { location.reload(); }
+            catch (e) { try { location.href = location.href; } catch (e2) {} }
+        }
+        go();
+        try {
+            if (document.readyState !== 'complete') {
+                window.addEventListener('load', function () { setTimeout(go, 50); }, { once: true });
+            }
+            setTimeout(go, 1200);
+        } catch (e) {}
     }
 
     var timesOk, cur;
@@ -4253,6 +4294,18 @@ function _ucCurrentPrayerKey() {
 var _httpErrSilenced = {};
 
 function _ucHttpCall(url, label, silent) {
+    // Couche lumières = boîtier mosquée UNIQUEMENT. Un téléphone (ou un
+    // navigateur) ne doit JAMAIS piloter les relais Shelly physiques : mêmes
+    // URLs 192.168.100.x -> il basculerait les vraies lumières s'il est sur le
+    // LAN, ou spammerait des erreurs sinon. Constaté 28/08/2026 : téléphone en
+    // config distante aboubaker déclenchant ampliExt à l'heure de l'azan.
+    // (La commande à distance depuis le tél. passe par _requestActionViaPoll ->
+    //  c'est le BOÎTIER qui exécute, pas ce chemin-ci.)
+    if (!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+          && window.AndroidMobile.isAndroidTv())) {
+        if (!silent) _L('LIGHTS', 'SKIP_HTTP', { item: label || '?', reason: 'not_box_device' });
+        return;
+    }
     if (_ucUnloading) {
         if (!silent) {
             _L('LIGHTS', 'SKIP_HTTP', {item: label || '?', reason: 'unloading'});

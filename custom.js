@@ -974,7 +974,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.6';
+var CUSTOM_APP_VERSION = '14.7';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -14111,7 +14111,56 @@ function forceHijriSyncFunction() {
     // ── Buffer circulaire de logs ─────────────────────────────────────────
     // Chaque entrée : { text: string, isError: bool }
     const _dbgLogs   = [];
-    const _MAX_LINES = 300;
+    const _MAX_LINES = 2500;   // assez pour : reprise session préc. (≤500) +
+                               //  fusion native (≤1200) + session courante
+
+    // ── Persistance de la console JS entre sessions (survit reboot / coupure) ─
+    // _dbgLogs est en mémoire vive : sans ceci, TOUT le détail JS (échos config,
+    // DIAG, HTTP lumières, ticks...) est perdu à chaque redémarrage -- seuls les
+    // jalons persistés côté natif (NativeEventLog) revenaient. On sauvegarde la
+    // QUEUE de _dbgLogs dans localStorage (disque, survit à une coupure), en
+    // mode DÉBOUNCÉ (au plus 1 écriture / minute) + au passage en arrière-plan.
+    //   Impact perf : _capture() (chemin chaud, chaque console.log) ne fait
+    //   qu'un `_dbgDirty = true` (O(1)). Le flush réel = JSON.stringify de
+    //   ≤500 lignes (~60 Ko) + localStorage.setItem, ~2-5 ms, gaté par _dbgDirty
+    //   -> au plus 1 / 30 s (et l'intervalle est gelé quand la WebView est en
+    //   pause). ~170 Mo/jour au pire sur un boîtier qui en écrit déjà bien plus
+    //   (logcat, JS_DATA, sync config...) -> usure flash négligeable.
+    const _DBG_PERSIST_KEY = 'ucDbgLogs';
+    const _DBG_PERSIST_MAX = 500;     // on ne persiste que la queue
+    const _DBG_PERSIST_MS  = 30000;   // flush débouncé : au plus 1 / 30 s
+    var _dbgDirty = false;
+
+    // Restauration de la session précédente — AVANT tout le reste (fusion
+    // native incluse) pour rester chronologique. Borné + try/catch : une
+    // valeur corrompue/énorme ne doit jamais bloquer le boot.
+    try {
+        var _dbgPrev = JSON.parse(localStorage.getItem(_DBG_PERSIST_KEY) || '[]');
+        if (Array.isArray(_dbgPrev) && _dbgPrev.length) {
+            _dbgPrev.slice(-_DBG_PERSIST_MAX).forEach(function (t) {
+                var s = String(t);
+                _dbgLogs.push({ text: s, isError: /🔴|⚠|HTTP_ERR/.test(s) });
+            });
+            _dbgLogs.push({ text: '— — — ' + _dbgLogs.length + ' ligne(s) restaurées de la session précédente ↑ (redémarrage / coupure) — — —', isError: false });
+        }
+    } catch (e) {}
+
+    function _persistDbg() {
+        if (!_dbgDirty) return;
+        _dbgDirty = false;
+        try {
+            localStorage.setItem(_DBG_PERSIST_KEY, JSON.stringify(
+                _dbgLogs.slice(-_DBG_PERSIST_MAX).map(function (e) { return e.text; })
+            ));
+        } catch (e) { /* quota / accès refusé -> on renonce silencieusement */ }
+    }
+    try { setInterval(_persistDbg, _DBG_PERSIST_MS); } catch (e) {}
+    try {
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'hidden') _persistDbg();
+        });
+        window.addEventListener('pagehide', _persistDbg);
+    } catch (e) {}
 
     // ── Injection du DOM ──────────────────────────────────────────────────
     const _overlay = document.createElement('div');
@@ -14320,6 +14369,8 @@ function forceHijriSyncFunction() {
                       now.getSeconds().toString().padStart(2, '0');
             _dbgLogs.length = 0;
             _dbgLogs.push({ text: '[' + ts + '] 🧹 Console effacée manuellement par l\'utilisateur — nouveau départ', isError: false });
+            _dbgDirty = false;
+            try { localStorage.removeItem(_DBG_PERSIST_KEY); } catch (e) {}
             _render();
             var _L_CLEARED = { AR: 'تم مسح وحدة التحكم', FR: 'Console effacée', EN: 'Console cleared' };
             if (window._ucToast) window._ucToast(_L_CLEARED[_ucLang()] || _L_CLEARED.EN, 'ok');
@@ -14357,6 +14408,7 @@ function forceHijriSyncFunction() {
         var _tsPrefix = /^\[\d\d:\d\d:\d\d\]/.test(msg) ? '' : '[' + ts + '] ';
         _dbgLogs.push({ text: _tsPrefix + prefix + msg, isError: isError });
         if (_dbgLogs.length > _MAX_LINES) _dbgLogs.shift();
+        _dbgDirty = true;   // O(1) : le flush localStorage réel est débouncé (cf. _persistDbg)
         if (_overlay.style.display !== 'none') {
             _render();
             _overlay.scrollTop = _overlay.scrollHeight;

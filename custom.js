@@ -974,7 +974,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.5';
+var CUSTOM_APP_VERSION = '14.6';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -3709,7 +3709,13 @@ const _lightProgramConfig = [
     { key: 'ampliIntOff',  trigger: 'afterBlackHide',title: 'إغلاق مكبّر الإمام',    enabledSetting: 'ucLightAmpliIntOffEnabled', urlSetting: 'ucLightAmpliIntOffUrl', delaySetting: 'ucLightAmpliIntOffDelay', delayDefault: 10, delayTitle: 'تأخير إغلاق مكبّر الإمام بعد الصلاة (ثواني)', prayersMaskSetting: 'ucLightAmpliIntOnPrayers' },
     { key: 'ampliExtOn',   trigger: 'beforeAzan',    title: 'تشغيل مكبّر الأذان',    enabledSetting: 'ucLightAmpliExtOnEnabled',  pairEnabledSetting: 'ucLightAmpliExtOffEnabled',  urlSetting: 'ucLightAmpliExtOnUrl',  delaySetting: 'ucLightAmpliExtOnDelay',  delayDefault: 10, delayTitle: 'تأخير تشغيل مكبّر الأذان (ثواني)' },
     { key: 'ampliExtOff',  trigger: 'afterAzanHide', title: 'إغلاق مكبّر الأذان',    enabledSetting: 'ucLightAmpliExtOffEnabled', urlSetting: 'ucLightAmpliExtOffUrl', delaySetting: 'ucLightAmpliExtOffDelay', delayDefault: 10, delayTitle: 'تأخير إغلاق مكبّر الأذان بعد الأذان (ثواني)', jomaDelaySetting: 'ucLightAmpliExtOffDelayJomoa', jomaDelayDefault: 10, jomaDelayTitle: 'تأخير إغلاق مكبّر الأذان بعد أذان الجمعة (ثواني)' },
-    { key: 'minaretOn',    trigger: 'afterAzanShow', prayerFilter: 'MGRB|ISHA', title: 'تشغيل المِأذنة (بعد أذان المغرب)',  enabledSetting: 'ucLightMinaretOnEnabled',  pairEnabledSetting: 'ucLightMinaretOffEnabled', urlSetting: 'ucLightMinaretOnUrl',  delaySetting: 'ucLightMinaretOnDelay',  delayDefault: 10, delayTitle: 'تشغيل المِأذنة بعد أذان المغرب بـ (ثواني)' },
+    // Allumage du minaret : UNIQUEMENT après l'azan du Maghreb (le minaret
+    // s'allume au coucher du soleil, s'éteint à l'aube via minaretOff/FAJR).
+    // ISHA retiré le 28/08/2026 (demande explicite : "aucun lien avec salat
+    // isha") -- il n'y avait aucune raison de re-déclencher l'allumage à Isha,
+    // le minaret est déjà allumé depuis le Maghreb. Le clignotement d'iqama
+    // (minaretBlink, plus bas) reste lui autorisé à Isha, sur décision.
+    { key: 'minaretOn',    trigger: 'afterAzanShow', prayerFilter: 'MGRB', title: 'تشغيل المِأذنة (بعد أذان المغرب)',  enabledSetting: 'ucLightMinaretOnEnabled',  pairEnabledSetting: 'ucLightMinaretOffEnabled', urlSetting: 'ucLightMinaretOnUrl',  delaySetting: 'ucLightMinaretOnDelay',  delayDefault: 10, delayTitle: 'تشغيل المِأذنة بعد أذان المغرب بـ (ثواني)' },
     { key: 'minaretOff',   trigger: 'afterAzanShow', prayerFilter: 'FAJR', title: 'إغلاق المِأذنة (بعد أذان الفجر)',   enabledSetting: 'ucLightMinaretOffEnabled', pairEnabledSetting: 'ucLightMinaretOnEnabled', urlSetting: 'ucLightMinaretOffUrl', delaySetting: 'ucLightMinaretOffDelay', delayDefault: 10, delayTitle: 'إغلاق المِأذنة بعد أذان الفجر بـ (ثواني)' },
     // strobingOn / strobingOff retirés : seuls iqamaZeroMinaretBlink et iqamaZeroMihrabBlink
     // sont autorisés à strobo, exclusivement à remainingSeconds = 0 (UC_EVT.IQAMA_TIME).

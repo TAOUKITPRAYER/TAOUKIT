@@ -974,7 +974,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.3';
+var CUSTOM_APP_VERSION = '14.4';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -7233,6 +7233,9 @@ function applyCustomIconsVisibility() {
     function updateCustomIconColors() {
         speakerEl.classList.toggle('customIconActive', JS_DATA.ucAzanIqamaByVoice == 1);
     }
+    // Exposé pour la modale AZAN CATALOG (IIFE injectAzanCatalogFeature, hors
+    // injectTechOptionsUI) qui rafraîchit la teinte de l'icône après bascule voix.
+    window.updateCustomIconColors = updateCustomIconColors;
 
     // ── Clicks ───────────────────────────────────────────────────────────
     // Touch (Android/GeckoView) : touchstart + preventDefault() bloque menu contextuel
@@ -10584,6 +10587,12 @@ function _ucPrayerAtMinutes(t) {
     if (t === ishaTimeInMinutes)    return 'ISHA';
     return _ucPrayerNow();
 }
+// Exposé sur window : _ucPrayerAtMinutes (comme _ucPrayerNow/_ucComputeCurrentPrayerFromClock)
+// est défini DANS injectTechOptionsUI et donc invisible en portée lexicale depuis
+// les IIFE frères déclarés plus bas dans ce fichier (ex. _installAzanPerPrayerVoiceGate).
+// Sans cet export, un appel `_ucPrayerAtMinutes(...)` hors injectTechOptionsUI lève
+// ReferenceError (constaté boîtier aboubaker, playAzanSoundFunction, custom.js:30952).
+window._ucPrayerAtMinutes = _ucPrayerAtMinutes;
 
 // Heure en minutes depuis minuit pour une clé de prière
 function _ucPrayerMinutes(key) {
@@ -30749,7 +30758,10 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         if (JS_DATA.ucAzanIqamaByVoice != 1 && typeof window._ucStopAllAzanAudio === 'function') {
             window._ucStopAllAzanAudio('azan_voice_disabled', 'enable_switch_disabled');
         }
-        if (typeof updateCustomIconColors === 'function') updateCustomIconColors();
+        // updateCustomIconColors vit dans injectTechOptionsUI -> accès via window
+        // (le test bare `typeof updateCustomIconColors` était toujours 'undefined'
+        //  ici, donc le rafraîchissement de la teinte de l'icône ne se faisait jamais).
+        if (typeof window.updateCustomIconColors === 'function') window.updateCustomIconColors();
         _acRenderAll();
     });
 
@@ -30949,7 +30961,11 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
     window.playAzanSoundFunction = function() {
         if (JS_DATA.ucAzanIqamaByVoice == 1) {
-            var prayer = _ucPrayerAtMinutes(currentTimeInMinutes);
+            // _ucPrayerAtMinutes vit dans injectTechOptionsUI -> accès via window.
+            // Repli sur _ucCurrentPrayerKey() (fonction réellement globale) si absent.
+            var prayer = (typeof window._ucPrayerAtMinutes === 'function')
+                ? window._ucPrayerAtMinutes(currentTimeInMinutes)
+                : (typeof _ucCurrentPrayerKey === 'function' ? _ucCurrentPrayerKey() : '');
             var key = _PP_KEYS[prayer];
             if (key && JS_CUSTOM[key] != 1) {
                 // Reproduit exactement la branche "bip" du cœur (m2body.js,

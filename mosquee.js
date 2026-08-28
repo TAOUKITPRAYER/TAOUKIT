@@ -44,7 +44,7 @@
         }
     } else if (_id) {
         // ID présent mais absent du registre embarqué : mosquée gérée à
-        // distance (choisie/importée depuis mosque_config_backups, cf.
+        // distance (choisie/importée depuis la table Supabase `mosques`, cf.
         // _installMosqueSelector -> window._ucSelectMosque isRemote=true dans
         // custom.js). JS_DATA/JS_DATA_CUSTOM ont déjà été entièrement écrits
         // par _restoreFromJson AVANT ce reload -- il ne faut PAS traiter ça

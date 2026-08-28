@@ -8893,6 +8893,31 @@ input[type='checkbox']:checked::after {
     pointer-events: none;
 }
 
+/* ── Lecteur du son d'azan courant (#acAzanPlayerRow / #acAzanAudio) —
+   bloc autonome entre #acPerPrayerRow et #acTabsRow. <audio controls> natif,
+   même esprit que #qpTakbirAudio (barre de progression + arrêt/reprise). */
+#acAzanPlayerRow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0 14px;
+    padding: 10px 12px;
+    border: 1px solid #4a3d22;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.22);
+}
+#acAzanPlayerLabel {
+    color: #d4aa50;
+    font-size: 0.86em;
+    font-weight: bold;
+}
+#acAzanAudio {
+    width: 100%;
+    max-width: 320px;
+    height: 34px;
+}
+
 /* ── Modale "تفعيل الأذان حسب الصلاة" — même habillage que #azanCatalogModal
    ci-dessus mais compacte/centrée (5 lignes seulement, pas de scroll utile). */
 #azanPerPrayerOverlay {
@@ -10652,11 +10677,14 @@ select.ucRATextInput { text-align: start; }
 .ucRARow {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;   /* ligne « صوت الأذان » : 2 boutons repliables sous le label
+                          sur téléphone étroit (.ucRARowJumua force nowrap) */
     gap: 10px;
     margin: 8px 0;
 }
 .ucRARowLabel { color: #fff; flex: 1; }
 .ucRARow .ucRATextInput { flex: 1; width: auto; }
+#ucRAAzanPreviewBtn, #ucRAAzanStopBtn { flex: 0 0 auto; white-space: nowrap; }
 
 /* Ligne Jumua : label + saisie HH:mm sur une seule ligne, champ juste assez
    large pour "HH:mm" (pas flex:1 comme les autres lignes texte). */

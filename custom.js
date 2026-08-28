@@ -286,6 +286,20 @@ function _ucBindGuidedInput(el, type) {
     window.openInputDialogFunction = function (dialogTitle, defaultValue, callbackFunction, isLtrInput) {
         _activeType = _classify(callbackFunction);
         _origOpen(dialogTitle, defaultValue, callbackFunction, _activeType ? true : isLtrInput);
+        // Le cœur (openInputDialogFunction, m2body.js) pré-remplit le champ avec
+        // la valeur courante puis le focus SANS sélectionner -> sur téléphone la
+        // frappe s'AJOUTE à la valeur ("7" + saisie "10" = "710") au lieu de la
+        // remplacer. Bug réel : délai Coran avant azan dans l'admin mosquée à
+        // distance -> "710" clampé à 30, "quelle que soit la valeur saisie"
+        // (retour 29/08/2026, visible depuis que la boîte n'est plus cachée
+        // derrière la modale, cf. fix z-index). On sélectionne donc tout le
+        // contenu APRÈS le focus du cœur (son setTimeout 50 ms) : la 1re frappe
+        // remplace, comportement attendu d'une boîte « éditer un nombre ».
+        // Concerne TOUS les éditeurs numériques/heure (même latence ailleurs).
+        setTimeout(function () {
+            var f = document.getElementById('inputDialogTextField');
+            if (f) { try { f.focus(); f.select(); } catch (e) {} }
+        }, 90);
     };
 
     function _installListener() {
@@ -974,7 +988,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.7';
+var CUSTOM_APP_VERSION = '14.9';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -26611,6 +26625,12 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             if (typeof window._acPreviewCurrentlySelected === 'function') window._acPreviewCurrentlySelected();
             return;
         }
+        if (action === 'azan_stop') {
+            if (typeof window._acStopPreview === 'function') window._acStopPreview();
+            // filet : coupe aussi tout azan/aperçu en cours quelle qu'en soit l'origine
+            if (typeof window._ucStopAllAzanAudio === 'function') window._ucStopAllAzanAudio('remote_admin', 'azan_stop');
+            return;
+        }
         if (action === 'light_on' || action === 'light_off') {
             var isOn = (action === 'light_on');
             var URL_KEY = {
@@ -30319,6 +30339,54 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     function _acStopPreview() {
         if (_acPreviewEl) _acPreviewEl.pause();
         _acStopPreviewUI();
+        var a = document.getElementById('acAzanAudio');
+        if (a) { try { a.pause(); } catch (e) {} }
+    }
+    // Exposé pour la commande à distance "arrêter l'aperçu azan"
+    // (_installRemoteMosqueAdmin, action 'azan_stop') + bouton retour Android.
+    window._acStopPreview = _acStopPreview;
+
+    // ── Lecteur du son d'azan courant (#acAzanAudio, bloc acAzanPlayerRow) ──
+    // Source = le <audio> du cœur réellement câblé pour l'onglet actif :
+    //   onglet "أذان الفجر"  -> audioFajrElement
+    //   onglets "أذان (باقي)" / "شخصي" -> audioAzanElement
+    // Ces éléments sont tenus à jour par _acApplyAzanToPlayer /
+    // _acRestoreDefaultAzan à CHAQUE (dé)sélection -> il suffit de recopier
+    // leur .src. On ne réécrit .src que s'il a changé, pour ne pas couper une
+    // lecture/écoute en cours quand _acRenderAll est rappelé pour autre chose.
+    function _acActiveTabKey() {
+        var b = overlay.querySelector('.acTabBtn.acTabActive');
+        return (b && b.getAttribute('data-tab')) || 'general';
+    }
+    // Fichier "courant" pour l'onglet actif = résolu depuis la SÉLECTION
+    // (ucAzanFajrSelected / ucAzanGeneralSelected), indépendamment de
+    // _redirectAzanAudio (qui ne recâble les <audio> du cœur vers spec/audio/
+    // que si ucAzanIqamaByVoice==1). onglet "شخصي" -> même groupe que "général".
+    function _acCurrentAzanSrc() {
+        var isFajr = (_acActiveTabKey() === 'fajr');
+        var selId  = isFajr ? JS_CUSTOM.ucAzanFajrSelected : JS_CUSTOM.ucAzanGeneralSelected;
+        var defSrc = isFajr ? 'spec/audio/azan_fajr.ogg' : 'spec/audio/azan.ogg';
+        if (!selId) return defSrc;
+        if (_acIsCustomId(selId)) {
+            // fichier personnalisé : blob:/file:// posé sur le <audio> du cœur
+            // par _acApplyAzanToPlayer au moment de la sélection.
+            var core = document.getElementById(isFajr ? 'audioFajrElement' : 'audioAzanElement');
+            return (core && core.src && core.src !== location.href) ? core.src : defSrc;
+        }
+        var item = _acFindItemById(selId);
+        return (item && item.downloadUrl) || defSrc;
+    }
+    function _acSyncAzanPlayer() {
+        var a = document.getElementById('acAzanAudio');
+        if (!a) return;
+        var want = _acCurrentAzanSrc();
+        if (a.src === want || a.getAttribute('src') === want) return;
+        var wasPlaying = !a.paused && !a.ended && a.currentTime > 0;
+        try {
+            a.src = want;
+            a.load();
+            if (wasPlaying) a.play().catch(function () {});
+        } catch (e) {}
     }
 
     function _acFindItemById(id) {
@@ -30339,9 +30407,19 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     // natif) : juste un aperçu audio pour vérifier que le son/l'ampli fonctionnent.
     window._acPreviewCurrentlySelected = function () {
         function _doPreview() {
-            var id = JS_CUSTOM.ucAzanGeneralSelected;
-            var item = id && _acFindItemById(id);
-            if (item) _acTogglePreview(item, null);
+            var id   = JS_CUSTOM.ucAzanGeneralSelected;
+            var item = (id && !_acIsCustomId(id) && _acFindItemById(id)) || null;
+            if (!item) {
+                // son par défaut de l'appli OU son personnalisé : prévisualiser
+                // le fichier réellement câblé sur audioAzanElement (tenu à jour
+                // par _acApplyAzanToPlayer / _acRestoreDefaultAzan). Sans ceci,
+                // le bouton "aperçu azan" de l'admin à distance ne faisait RIEN
+                // pour toute mosquée n'ayant pas choisi un azan du catalogue.
+                var core = document.getElementById('audioAzanElement');
+                var src  = (core && core.src && core.src !== location.href) ? core.src : 'spec/audio/azan.ogg';
+                item = { id: 'ac_current_general', downloadUrl: src };
+            }
+            _acTogglePreview(item, null);
         }
         if (_acCatalog) { _doPreview(); } else { _acLoadCatalog().then(_doPreview); }
     };
@@ -30752,6 +30830,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         // fichier personnalisé doit rester sélectionnable même si le
         // catalogue distant/local a échoué à charger.
         _acRenderCustomBlocks();
+        _acSyncAzanPlayer();   // recale la source du lecteur après (dé)sélection
 
         // Regle 1/2 (bouton "تفعيل الأذان حسب الصلاة") : independant du
         // chargement du catalogue, comme _acRenderCustomBlocks ci-dessus --
@@ -30815,6 +30894,16 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 '<div id="acPerPrayerRow">' +
                     '<button type="button" id="acPerPrayerBtn">تفعيل الأذان حسب الصلاة</button>' +
                 '</div>' +
+                // Lecteur du son d'azan ACTUELLEMENT retenu pour l'onglet actif
+                // (fajr -> audioFajrElement, autres -> audioAzanElement -- ces
+                // <audio> du cœur sont tenus à jour par _acApplyAzanToPlayer /
+                // _acRestoreDefaultAzan). <audio controls> natif : barre de
+                // progression + arrêt/reprise manuels, même principe que
+                // #qpTakbirAudio. Bloc autonome, entre acPerPrayerRow et acTabsRow.
+                '<div id="acAzanPlayerRow">' +
+                    '<div id="acAzanPlayerLabel">معاينة الأذان الحالي</div>' +
+                    '<audio id="acAzanAudio" controls preload="none"></audio>' +
+                '</div>' +
                 '<div id="acTabsRow">' +
                     '<div class="acTabBtn acTabActive" data-tab="fajr">أذان الفجر</div>' +
                     '<div class="acTabBtn" data-tab="general">أذان (باقي الصلوات)</div>' +
@@ -30842,6 +30931,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         for (var i = 0; i < btns.length; i++) {
             btns[i].classList.toggle('acTabActive', btns[i].getAttribute('data-tab') === tab);
         }
+        _acSyncAzanPlayer();   // l'onglet actif détermine le fichier du lecteur
         _L('AZANCAT', 'FIRE', { action: 'switch_tab', tab: tab });
     }
     var _acTabBtns = overlay.querySelectorAll('.acTabBtn');
@@ -31805,7 +31895,9 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         actQuranTitle:    { AR: 'تشغيل القرآن المُبرمَج',                       FR: 'Lecture Coran programmée',                               EN: 'Scheduled Quran playback' },
         actQuranToggle:   { AR: 'تشغيل / إيقاف مؤقت',                          FR: 'Lecture / Pause',                                        EN: 'Play / Pause' },
         actAzanTitle:     { AR: 'صوت الأذان',                                  FR: 'Son de l’azan',                                          EN: 'Azan sound' },
-        actAzanPreview:   { AR: 'تشغيل معاينة الأذان الحالي',                  FR: 'Jouer un aperçu de l’azan configuré',                    EN: 'Play a preview of the configured azan' },
+        actAzanPreview:   { AR: 'معاينة الأذان الحالي',                        FR: 'Aperçu de l’azan configuré',                             EN: 'Preview of the configured azan' },
+        actAzanPlay:      { AR: '▶ تشغيل',                                     FR: '▶ Lire',                                                 EN: '▶ Play' },
+        actAzanStop:      { AR: '■ إيقاف',                                     FR: '■ Arrêter',                                              EN: '■ Stop' },
         actLightsTitle:   { AR: 'الإضاءة',                                     FR: 'Éclairage',                                              EN: 'Lighting' },
         lightAmpliExt:    { AR: 'مكبّر الأذان',                                FR: 'Ampli extérieur (azan)',                                 EN: 'Outdoor speaker (azan)' },
         lightAmpliInt:    { AR: 'مكبّر الإمام',                                FR: 'Ampli intérieur (imam)',                                 EN: 'Indoor speaker (imam)' },
@@ -31928,7 +32020,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                             '<span id="ucRAQuranToggleBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actQuranToggle') + '</span></div>' +
                         '<div class="ucRASectionTitle">' + _raT('actAzanTitle') + '</div>' +
                         '<div class="ucRARow"><span class="ucRARowLabel">' + _raT('actAzanPreview') + '</span>' +
-                            '<span id="ucRAAzanPreviewBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('lightOn') + '</span></div>' +
+                            '<span id="ucRAAzanPreviewBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actAzanPlay') + '</span>' +
+                            '<span id="ucRAAzanStopBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actAzanStop') + '</span></div>' +
                         '<div class="ucRASectionTitle">' + _raT('actLightsTitle') + '</div>' +
                         lightRows +
                         '<div id="ucRALedStatus" class="ucRALedStatus"></div>' +
@@ -32034,6 +32127,9 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         });
         document.getElementById('ucRAAzanPreviewBtn').addEventListener('click', function () {
             _sendRemoteAction('azan_preview', null);
+        });
+        document.getElementById('ucRAAzanStopBtn').addEventListener('click', function () {
+            _sendRemoteAction('azan_stop', null);
         });
         var _lightBtns = overlay.querySelectorAll('.ucRALightBtn');
         for (var j = 0; j < _lightBtns.length; j++) {

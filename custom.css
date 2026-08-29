@@ -10831,6 +10831,39 @@ select.ucRATextInput { text-align: start; }
 .ucRALedStatus--sync { color: #e0b050; }
 .ucRALedStatus--warn { color: #e0b050; }
 .ucRALedStatus--err  { color: #ff6b6b; }
+.ucRALedStatus--ok   { color: #7ed17e; }
+
+/* Indicateur d'état audio ▶/⏸ (Coran, azan) — MÊME gabarit que les lignes
+   lumières : entre le label et le bouton "Lire". Carré arrondi avec glyphe
+   (contrairement à la LED lumière, ronde et sans glyphe) : ▶ = arrêté,
+   ⏸ = en lecture. Cliquable (synchro avec l'état réel de la box). */
+.ucRAAudioRow .ucModalBtn.ucRAAudioBtn {
+    min-width: 0;
+    padding: 7px 14px;
+    font-size: 0.88em;
+}
+.ucRAAudioLed {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+    color: #1a1a1a;
+    background: #5a554c;
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12) inset;
+    transition: background 0.25s, box-shadow 0.25s;
+}
+.ucRAAudioLed:hover        { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35) inset; }
+.ucRAAudioLed--unknown     { background: #5a554c; color: rgba(255,255,255,0.5); }
+.ucRAAudioLed--stopped     { background: #9a9a9a; }
+.ucRAAudioLed--playing     { background: #37d04a; box-shadow: 0 0 7px 1px rgba(55, 208, 74, 0.75); }
+.ucRAAudioLed--error       { background: #ff5b5b; color: #fff; box-shadow: 0 0 7px 1px rgba(255, 91, 91, 0.6); }
+.ucRAAudioLed--sync        { background: #e0b050; animation: ucRALedPulse 0.9s ease-in-out infinite; }
 
 /* Transition rapide pour les bascules d'interlude azkar (cf. custom.js
    _installAzkarMainPageInterlude, _setAzkarContainersClass). La transition

@@ -988,7 +988,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.9';
+var CUSTOM_APP_VERSION = '14.11';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -26614,21 +26614,60 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             location.reload();
             return;
         }
-        if (action === 'quran_toggle') {
+        // ── AUDIO CORAN ─────────────────────────────────────────────────────
+        //   quran_play / quran_stop : boutons dédiés (harmonisés avec les
+        //   lumières on/off). quran_toggle : conservé (rétro-compat push).
+        if (action === 'quran_play' || action === 'quran_stop' || action === 'quran_toggle') {
             var qAudio = document.getElementById('quranAudioPlayer');
-            if (qAudio) {
-                if (qAudio.paused) qAudio.play().catch(function () {}); else qAudio.pause();
+            if (!qAudio) {
+                // élément injecté paresseusement -> forcer le chargement puis réessayer
+                if (typeof window._playQP === 'function') { try { window._playQP(false); } catch (e) {} }
+                qAudio = document.getElementById('quranAudioPlayer');
             }
+            if (!qAudio) {
+                _L('REMOTE_ACTION', 'EXEC_ERR', { action: action, reason: 'quran_element_absent' });
+            } else {
+                var wantPlay = (action === 'quran_play') || (action === 'quran_toggle' && qAudio.paused);
+                if (wantPlay) {
+                    if (qAudio.paused && (!qAudio.src || qAudio.readyState === 0) && typeof window._playQP === 'function') {
+                        try { window._playQP(true); } catch (e) {}
+                    } else {
+                        qAudio.play().catch(function (e) {
+                            _L('REMOTE_ACTION', 'EXEC_ERR', { action: action, reason: 'play_rejected', error: (e && e.message) || String(e) });
+                        });
+                    }
+                    _L('REMOTE_ACTION', 'EXEC_OK', { action: action, result: 'play', src: (qAudio.src || '').split('/').pop() });
+                } else {
+                    qAudio.pause();
+                    _L('REMOTE_ACTION', 'EXEC_OK', { action: action, result: 'pause' });
+                }
+            }
+            if (typeof window._ucPushAudioSnapshot === 'function') setTimeout(function () { window._ucPushAudioSnapshot('remote_' + action); }, 600);
             return;
         }
-        if (action === 'azan_preview') {
-            if (typeof window._acPreviewCurrentlySelected === 'function') window._acPreviewCurrentlySelected();
+        // ── SON AZAN (aperçu) ───────────────────────────────────────────────
+        if (action === 'azan_play' || action === 'azan_preview') {
+            if (typeof window._acPreviewCurrentlySelected === 'function') {
+                window._acPreviewCurrentlySelected();
+                var st = (typeof window._acAzanPreviewState === 'function') ? window._acAzanPreviewState() : null;
+                _L('REMOTE_ACTION', 'EXEC_OK', { action: action, result: st && st.playing ? 'playing' : 'toggled', src: st ? (st.src || '').split('/').pop() : '?' });
+            } else {
+                _L('REMOTE_ACTION', 'EXEC_ERR', { action: action, reason: 'ac_preview_fn_absent' });
+            }
+            if (typeof window._ucPushAudioSnapshot === 'function') setTimeout(function () { window._ucPushAudioSnapshot('remote_' + action); }, 600);
             return;
         }
         if (action === 'azan_stop') {
             if (typeof window._acStopPreview === 'function') window._acStopPreview();
             // filet : coupe aussi tout azan/aperçu en cours quelle qu'en soit l'origine
             if (typeof window._ucStopAllAzanAudio === 'function') window._ucStopAllAzanAudio('remote_admin', 'azan_stop');
+            _L('REMOTE_ACTION', 'EXEC_OK', { action: 'azan_stop', result: 'stopped' });
+            if (typeof window._ucPushAudioSnapshot === 'function') setTimeout(function () { window._ucPushAudioSnapshot('remote_azan_stop'); }, 600);
+            return;
+        }
+        if (action === 'audio_refresh') {
+            if (typeof window._ucPushAudioSnapshot === 'function') window._ucPushAudioSnapshot('admin_refresh');
+            else _L('REMOTE_ACTION', 'EXEC_ERR', { action: 'audio_refresh', reason: 'reporter_absent' });
             return;
         }
         if (action === 'light_on' || action === 'light_off') {
@@ -26640,7 +26679,12 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
                 mihrab:   isOn ? 'ucLightMihrabOnUrl'   : 'ucLightMihrabOffUrl'
             }[target];
             var url = URL_KEY && (JS_CUSTOM[URL_KEY] || '').trim();
-            if (url) _ucHttpCall(url, 'remote_' + target + '_' + action);
+            if (url) {
+                _L('REMOTE_ACTION', 'EXEC_OK', { action: action, target: target, url: url });
+                _ucHttpCall(url, 'remote_' + target + '_' + action);
+            } else {
+                _L('REMOTE_ACTION', 'EXEC_ERR', { action: action, target: target, reason: url === '' ? 'url_not_configured' : 'unknown_target' });
+            }
             return;
         }
         if (action === 'update_app') {
@@ -26759,6 +26803,124 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     setInterval(function () { _push('periodic'); }, PERIODIC_MS);
 
     _L('CUSTOM', 'INIT', { item: 'lightsStateReporting' });
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUBLICATION DE L'ÉTAT AUDIO (box -> mosque_device_status.audio_state)
+// ─────────────────────────────────────────────────────────────────────────────
+// Symétrique de _installLightsStateReporting : la box publie l'état de lecture
+// du Coran (#quranAudioPlayer) et de l'aperçu azan (_acPreviewEl, cf.
+// window._acAzanPreviewState) pour que les indicateurs ▶/⏸ de l'onglet Actions
+// de _installRemoteMosqueAdmin (téléphone) reflètent l'état RÉEL sur la box.
+// Déclencheurs : évènements play/pause/ended (poussée immédiate), + garde
+// périodique (60 s), + à la demande (action distante 'audio_refresh').
+// Migration SQL : cf. add_audio_state_to_mosque_device_status
+//   alter table public.mosque_device_status
+//     add column if not exists audio_state jsonb,
+//     add column if not exists audio_state_at timestamptz,
+//     add column if not exists audio_state_reason text;
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installAudioStateReporting() {
+    var _isBox = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv());
+    if (!_isBox) return;
+
+    var PERIODIC_MS = 60000;
+    var DEBOUNCE_MS = 1200;   // regroupe play->loadedmetadata->... en 1 seule poussée
+    var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+               || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+    var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+               || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+
+    var _debounceTimer = null;
+    var _inFlight = false;
+    var _lastJson = '';
+
+    function _snapshot() {
+        var q = document.getElementById('quranAudioPlayer');
+        var qPlaying = !!(q && !q.paused && !q.ended && q.currentTime > 0);
+        var azan = (typeof window._acAzanPreviewState === 'function') ? window._acAzanPreviewState() : { playing: false, src: '' };
+        return {
+            quran: {
+                playing: qPlaying,
+                src: q ? ((q.src || '').split('/').pop() || '') : '',
+                positionSec: (q && isFinite(q.currentTime)) ? Math.round(q.currentTime) : 0,
+                durationSec: (q && isFinite(q.duration)) ? Math.round(q.duration) : 0,
+                elementPresent: !!q
+            },
+            azan: {
+                playing: !!azan.playing,
+                src: (azan.src || '').split('/').pop() || '',
+                positionSec: azan.positionSec || 0,
+                durationSec: azan.durationSec || 0
+            }
+        };
+    }
+
+    function _push(reason) {
+        if (_inFlight) return;
+        var mid = window._ucCurrentMosqueId && window._ucCurrentMosqueId();
+        if (!mid) return;
+        var snap = _snapshot();
+        var sig = snap.quran.playing + '|' + snap.quran.src + '|' + snap.azan.playing + '|' + snap.azan.src;
+        // Les demandes explicites (garde périodique, refresh admin, post-action
+        // distante, démarrage) poussent TOUJOURS -> audio_state_at change ->
+        // la synchro de l'indicateur côté téléphone la détecte. Les évènements
+        // play/pause spontanés ne poussent que si l'état a réellement bougé.
+        var _force = (reason === 'periodic' || reason === 'admin_refresh' || reason === 'startup' || reason.indexOf('remote_') === 0);
+        if (!_force && sig === _lastJson) return;
+        _lastJson = sig;
+        _inFlight = true;
+        _L('AUDIO', 'STATE_SNAPSHOT', { reason: reason || '', quran: snap.quran.playing ? 'play' : 'stop', azan: snap.azan.playing ? 'play' : 'stop' });
+        fetch(_SB_URL + '/rest/v1/mosque_device_status', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'apikey': _SB_KEY,
+                'Authorization': 'Bearer ' + _SB_KEY,
+                'Prefer': 'resolution=merge-duplicates'
+            },
+            body: JSON.stringify({
+                mosque_id: mid,
+                audio_state: snap,
+                audio_state_at: new Date().toISOString(),
+                audio_state_reason: reason || ''
+            })
+        }).then(function (r) {
+            if (r && !r.ok) _L('AUDIO', 'STATE_PUSH_ERR', { status: r.status });
+        }).catch(function (e) {
+            _L('AUDIO', 'STATE_PUSH_ERR', { error: (e && e.message) || String(e) });
+        }).then(function () { _inFlight = false; });
+    }
+
+    function _queue(reason) {
+        if (_debounceTimer) clearTimeout(_debounceTimer);
+        _debounceTimer = setTimeout(function () { _debounceTimer = null; _push(reason); }, DEBOUNCE_MS);
+    }
+
+    window._ucPushAudioSnapshot = _push;
+
+    // Branche les évènements du lecteur Coran dès qu'il apparaît (injection
+    // paresseuse) -- on réessaie jusqu'à ce qu'il existe.
+    var _qpHooked = false;
+    (function _hookQuran() {
+        var q = document.getElementById('quranAudioPlayer');
+        if (q && !_qpHooked) {
+            _qpHooked = true;
+            ['play', 'pause', 'ended'].forEach(function (evt) {
+                q.addEventListener(evt, function () { _queue('quran_' + evt); });
+            });
+        }
+        if (!_qpHooked) setTimeout(_hookQuran, 3000);
+    })();
+
+    // L'aperçu azan (_acPreviewEl) est un Audio() hors DOM -> pas d'écouteur
+    // simple ici ; on s'appuie sur le push post-action (cf. _ucDispatchRemoteAction
+    // 'azan_*') + la garde périodique.
+    setTimeout(function () { _push('startup'); }, 9000);
+    setInterval(function () { _push('periodic'); }, PERIODIC_MS);
+
+    _L('CUSTOM', 'INIT', { item: 'audioStateReporting' });
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -26946,8 +27108,12 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         && window.AndroidMobile.isAndroidTv());
     if (!_isBox) return;
 
-    var POLL_MS = 18000;
+    // 6 s (avant : 18 s) : latence perçue acceptable pour l'onglet Actions
+    // (Coran/azan/lumières) ET évite qu'une 2e commande rapide n'écrase
+    // pending_action avant que la box n'ait lu la 1re. Box sur secteur+wifi.
+    var POLL_MS = 6000;
     var _lastKnown; // undefined tant que _poll() n'a pas tourné une 1ère fois
+    var _pollErrStreak = 0;
     var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
                || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
     var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
@@ -26961,6 +27127,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
               { headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY } })
         .then(function (r) { return r.json(); })
         .then(function (rows) {
+            if (_pollErrStreak) { _L('REMOTE_ACTION', 'POLL_RECOVERED', { afterErrors: _pollErrStreak }); _pollErrStreak = 0; }
             var row = rows && rows[0];
             var ts  = (row && row.pending_action_requested_at) || null;
             // Amorçage silencieux au tout premier sondage (qu'une demande soit
@@ -26973,18 +27140,28 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
                 return;
             }
             if (ts && ts !== _lastKnown && row.pending_action) {
+                var _lag = null;
+                try { _lag = Math.round((Date.now() - new Date(ts).getTime()) / 1000); } catch (e) {}
                 _lastKnown = ts;
-                _L('REMOTE_ACTION', 'POLL_DETECTED', { mosque_id: mid, action: row.pending_action, target: row.pending_action_target || '' });
+                _L('REMOTE_ACTION', 'POLL_DETECTED', { mosque_id: mid, action: row.pending_action, target: row.pending_action_target || '', lagSec: _lag });
                 window._ucDispatchRemoteAction(row.pending_action, row.pending_action_target || '');
             }
         })
-        .catch(function () {});
+        .catch(function (e) {
+            _pollErrStreak++;
+            // Ne loguer que la 1re erreur d'une série (réseau box coupé) puis
+            // toutes les ~10 pour ne pas noyer la console -- mais assez pour
+            // qu'un diagnostic voie que le polling ne joint plus Supabase.
+            if (_pollErrStreak === 1 || _pollErrStreak % 10 === 0) {
+                _L('REMOTE_ACTION', 'POLL_ERR', { error: (e && e.message) || String(e), streak: _pollErrStreak });
+            }
+        });
     }
 
     setTimeout(_poll, 5000);
     setInterval(_poll, POLL_MS);
 
-    _L('CUSTOM', 'INIT', { item: 'remoteActionPolling' });
+    _L('CUSTOM', 'INIT', { item: 'remoteActionPolling', pollSec: POLL_MS / 1000 });
 })();
 
 (function _installAdminBtnTooltips() {
@@ -30342,6 +30519,17 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var a = document.getElementById('acAzanAudio');
         if (a) { try { a.pause(); } catch (e) {} }
     }
+    // État de l'aperçu azan (élément Audio() hors DOM) -- lu par
+    // _installAudioStateReporting (box) pour publier audio_state.azan.
+    window._acAzanPreviewState = function () {
+        var playing = !!(_acPreviewEl && !_acPreviewEl.paused && !_acPreviewEl.ended);
+        return {
+            playing: playing,
+            src: (_acPreviewEl && _acPreviewEl.src) || '',
+            positionSec: (_acPreviewEl && isFinite(_acPreviewEl.currentTime)) ? Math.round(_acPreviewEl.currentTime) : 0,
+            durationSec: (_acPreviewEl && isFinite(_acPreviewEl.duration)) ? Math.round(_acPreviewEl.duration) : 0
+        };
+    };
     // Exposé pour la commande à distance "arrêter l'aperçu azan"
     // (_installRemoteMosqueAdmin, action 'azan_stop') + bouton retour Android.
     window._acStopPreview = _acStopPreview;
@@ -31912,6 +32100,17 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         ledSyncing:       { AR: 'جارٍ مزامنة الحالة...',                        FR: 'Synchronisation de l’état...',                           EN: 'Syncing state...' },
         ledSyncTimeout:   { AR: 'انتهت مهلة المزامنة — الحالة قد تكون قديمة',   FR: 'Délai de synchro dépassé — état peut-être ancien',       EN: 'Sync timed out — state may be stale' },
         ledStateAt:       { AR: 'آخر قراءة:',                                  FR: 'Dernière lecture :',                                     EN: 'Last read:' },
+        syncOk:           { AR: '✓ تمت مزامنة الحالة',                          FR: '✓ État synchronisé',                                     EN: '✓ State synced' },
+        syncNetErr:       { AR: '✗ تعذّرت المزامنة (شبكة)',                     FR: '✗ Échec de synchro (réseau)',                            EN: '✗ Sync failed (network)' },
+        audioTitle:       { AR: 'الصوت',                                       FR: 'Audio',                                                  EN: 'Audio' },
+        audioQuran:       { AR: 'تلاوة القرآن',                                FR: 'Lecture du Coran',                                       EN: 'Quran playback' },
+        audioAzan:        { AR: 'صوت الأذان',                                  FR: 'Son de l’azan',                                          EN: 'Azan sound' },
+        audioPlay:        { AR: 'تشغيل',                                       FR: 'Lire',                                                   EN: 'Play' },
+        audioStop:        { AR: 'إيقاف',                                       FR: 'Arrêter',                                                EN: 'Stop' },
+        audioPlaying:     { AR: 'قيد التشغيل',                                 FR: 'En lecture',                                             EN: 'Playing' },
+        audioStopped:     { AR: 'متوقّف',                                      FR: 'Arrêté',                                                 EN: 'Stopped' },
+        audioUnknown:     { AR: 'الحالة غير معروفة',                           FR: 'État inconnu',                                           EN: 'Unknown state' },
+        audioSyncing:     { AR: 'جارٍ مزامنة حالة المشغّل...',                  FR: 'Synchronisation du lecteur...',                          EN: 'Syncing player...' },
         actionSentOk:     { AR: 'تم الإرسال',                                  FR: 'Envoyé',                                                 EN: 'Sent' },
         reloadBtn:        { AR: 'إعادة تحميل الشاشة فقط',                       FR: 'Recharger la box uniquement',                            EN: 'Reload the box only' },
         actDiagTitle:     { AR: 'التشخيص',                                     FR: 'Diagnostic',                                             EN: 'Diagnostics' },
@@ -31999,6 +32198,21 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                    '</div>';
         }).join('');
 
+        // Coran + azan : MÊME gabarit visuel que les lignes lumières
+        //   label + indicateur d'état (▶ arrêté / ⏸ en lecture, tap = synchro) + 2 boutons (Lire / Arrêter)
+        var AUDIO = [
+            { target: 'quran', label: _raT('audioQuran') },
+            { target: 'azan',  label: _raT('audioAzan') }
+        ];
+        var audioRows = AUDIO.map(function (a) {
+            return '<div class="ucRARow ucRAAudioRow">' +
+                       '<span class="ucRARowLabel">' + a.label + '</span>' +
+                       '<span class="ucRAAudioLed ucRAAudioLed--unknown" data-ra-audio-led="' + a.target + '" role="button" tabindex="0" title="' + _raT('audioUnknown') + '">&#9654;</span>' +
+                       '<span class="ucModalBtn ucModalBtn--primary ucRAAudioBtn" data-ra-audio-play="' + a.target + '">' + _raT('audioPlay') + '</span>' +
+                       '<span class="ucModalBtn ucModalBtn--secondary ucRAAudioBtn" data-ra-audio-stop="' + a.target + '">' + _raT('audioStop') + '</span>' +
+                   '</div>';
+        }).join('');
+
         var overlay = document.createElement('div');
         overlay.id = 'ucRemoteAdminOverlay';
         overlay.className = 'ucRemoteAdminHidden';
@@ -32015,13 +32229,18 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 '</div>' +
                 '<div id="ucRemoteAdminBody">' +
                     '<div class="ucRAPane ucRAPaneActive" data-pane="actions">' +
-                        '<div class="ucRASectionTitle">' + _raT('actQuranTitle') + '</div>' +
-                        '<div class="ucRARow"><span class="ucRARowLabel">' + _raT('actQuranToggle') + '</span>' +
-                            '<span id="ucRAQuranToggleBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actQuranToggle') + '</span></div>' +
-                        '<div class="ucRASectionTitle">' + _raT('actAzanTitle') + '</div>' +
-                        '<div class="ucRARow"><span class="ucRARowLabel">' + _raT('actAzanPreview') + '</span>' +
-                            '<span id="ucRAAzanPreviewBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actAzanPlay') + '</span>' +
-                            '<span id="ucRAAzanStopBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actAzanStop') + '</span></div>' +
+                        // PIN EN HAUT : toute action de cet onglet exige un PIN 4-8
+                        // chiffres. Avant, le champ était en bas de la liste -> les
+                        // utilisateurs tapaient une action, ne voyaient jamais le
+                        // message d'erreur (hors écran) et croyaient l'admin cassée
+                        // (retour mosquée aboubaker, 29/08/2026).
+                        '<div class="ucRASectionTitle">' + _raT('pinLabel') + '</div>' +
+                        '<input type="password" id="ucRAActionsPin" class="ucRATextInput" maxlength="8" inputmode="numeric" autocomplete="off">' +
+                        '<div id="ucRAPinHint">' + _raT('pinHint') + '</div>' +
+                        '<div id="ucRAActionsStatus"></div>' +
+                        '<div class="ucRASectionTitle">' + _raT('audioTitle') + '</div>' +
+                        audioRows +
+                        '<div id="ucRAAudioStatus" class="ucRALedStatus"></div>' +
                         '<div class="ucRASectionTitle">' + _raT('actLightsTitle') + '</div>' +
                         lightRows +
                         '<div id="ucRALedStatus" class="ucRALedStatus"></div>' +
@@ -32032,10 +32251,6 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                         '<div class="ucRAActionsTop"><span id="ucRAUpdateBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actUpdateBtn') + '</span></div>' +
                         '<div class="ucRASectionTitle">' + _raT('actDiagTitle') + '</div>' +
                         '<div class="ucRAActionsTop"><span id="ucRASendDebugBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actSendDebug') + '</span></div>' +
-                        '<div class="ucRASectionTitle">' + _raT('pinLabel') + '</div>' +
-                        '<input type="password" id="ucRAActionsPin" class="ucRATextInput" maxlength="8" inputmode="numeric" autocomplete="off">' +
-                        '<div id="ucRAPinHint">' + _raT('pinHint') + '</div>' +
-                        '<div id="ucRAActionsStatus"></div>' +
                     '</div>' +
                     '<div class="ucRAPane" data-pane="settings">' +
                         '<div class="ucRASectionTitle">' + _raT('timesTitle') + '</div>' +
@@ -32121,23 +32336,33 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             _tabBtns[i].addEventListener('click', function () { _switchTab(this.getAttribute('data-tab')); });
         }
 
-        // ── Actions (onglet 1) ──────────────────────────────────────────
-        document.getElementById('ucRAQuranToggleBtn').addEventListener('click', function () {
-            _sendRemoteAction('quran_toggle', null);
-        });
-        document.getElementById('ucRAAzanPreviewBtn').addEventListener('click', function () {
-            _sendRemoteAction('azan_preview', null);
-        });
-        document.getElementById('ucRAAzanStopBtn').addEventListener('click', function () {
-            _sendRemoteAction('azan_stop', null);
-        });
+        // ── Actions (onglet 1) : Audio (Coran / azan) ───────────────────
+        //   Lire  -> {target}_play   Arrêter -> {target}_stop
+        //   puis synchro de l'indicateur ▶/⏸ avec l'état réel sur la box.
+        var _audioBtns = overlay.querySelectorAll('.ucRAAudioBtn');
+        for (var a = 0; a < _audioBtns.length; a++) {
+            _audioBtns[a].addEventListener('click', function () {
+                var playT = this.getAttribute('data-ra-audio-play');
+                var stopT = this.getAttribute('data-ra-audio-stop');
+                if (playT && _sendRemoteAction(playT + '_play', null)) _startAudioSync(playT);
+                if (stopT && _sendRemoteAction(stopT + '_stop', null)) _startAudioSync(stopT);
+            });
+        }
+        var _audioLeds = overlay.querySelectorAll('.ucRAAudioLed');
+        for (var b = 0; b < _audioLeds.length; b++) {
+            _audioLeds[b].addEventListener('click', function () { _requestAudioRefresh(this.getAttribute('data-ra-audio-led')); });
+            _audioLeds[b].addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _requestAudioRefresh(this.getAttribute('data-ra-audio-led')); }
+            });
+        }
+
         var _lightBtns = overlay.querySelectorAll('.ucRALightBtn');
         for (var j = 0; j < _lightBtns.length; j++) {
             _lightBtns[j].addEventListener('click', function () {
                 var onTarget  = this.getAttribute('data-ra-light-on');
                 var offTarget = this.getAttribute('data-ra-light-off');
-                if (onTarget)  { _sendRemoteAction('light_on',  onTarget);  _startLedSync(onTarget); }
-                if (offTarget) { _sendRemoteAction('light_off', offTarget); _startLedSync(offTarget); }
+                if (onTarget  && _sendRemoteAction('light_on',  onTarget))  _startLedSync(onTarget);
+                if (offTarget && _sendRemoteAction('light_off', offTarget)) _startLedSync(offTarget);
             });
         }
         // Pastille LED : un appui demande une relecture instantanée de l'état
@@ -32171,11 +32396,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         el.className = 'ucRALed ucRALed--' + cls;
         el.title = _raT(titleKey);
     }
+    var _ledMsgStickyUntil = 0;
     function _setLedStatus(msg, type) {
         var el = document.getElementById('ucRALedStatus');
         if (!el) return;
         el.textContent = msg || '';
         el.className = 'ucRALedStatus' + (type ? ' ucRALedStatus--' + type : '');
+        if (type === 'ok' || type === 'err' || type === 'warn') _ledMsgStickyUntil = Date.now() + 7000;
     }
 
     // Applique un objet lights_state {ampliInt:{state},...} aux pastilles.
@@ -32191,7 +32418,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 s.state === 'stopped')       { _setLed(target, 'off',   'ledOff');   return; }
             _setLed(target, 'error', 'ledError');
         });
-        if (atIso) {
+        if (atIso && Date.now() > _ledMsgStickyUntil) {
             _setLedStatus(_raT('ledStateAt') + ' ' + new Date(atIso).toLocaleTimeString(), '');
         }
     }
@@ -32204,18 +32431,18 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
                    || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
         return fetch(_SB_URL + '/rest/v1/mosque_device_status?mosque_id=eq.' + encodeURIComponent(mid) +
-              '&select=lights_state,lights_state_at',
+              '&select=lights_state,lights_state_at,lights_state_reason',
               { headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY } })
         .then(function (r) { return r.json(); })
         .then(function (rows) {
             var row = rows && rows[0];
             if (!row || !row.lights_state) { return null; }
             _applyLightsState(row.lights_state, row.lights_state_at);
-            return row.lights_state_at || null;
+            return { at: row.lights_state_at || null, reason: row.lights_state_reason || '' };
         })
         .catch(function (err) {
             _L('REMOTE_ADMIN', 'LIGHTS_STATE_ERR', { mosque_id: mid, error: err.message || String(err) });
-            return null;
+            return false;   // distingue "erreur réseau" de "pas encore de donnée" (null)
         });
     }
 
@@ -32229,17 +32456,28 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     // jusqu'à ce qu'elle change (la box a repoussé) ou timeout.
     function _startLedSync(target) {
         _clearLedSync();
+        var _startMs = Date.now();
         if (target) _setLed(target, 'sync', 'ledSyncing');
         else {
             var all = _modal ? _modal.querySelectorAll('.ucRALed') : [];
             for (var i = 0; i < all.length; i++) all[i].className = 'ucRALed ucRALed--sync';
         }
         _setLedStatus(_raT('ledSyncing'), 'sync');
-        _fetchLightsState().then(function (at) { _ledSyncSinceAt = at || null; });
+        _fetchLightsState().then(function (res) {
+            if (res === false) { _clearLedSync(); _setLedStatus(_raT('syncNetErr'), 'err'); return; }
+            _ledSyncSinceAt = (res && res.at) || null;
+        });
 
         _ledSyncPoll = setInterval(function () {
-            _fetchLightsState().then(function (at) {
-                if (at && at !== _ledSyncSinceAt) { _clearLedSync(); _setLedStatus('', ''); }
+            _fetchLightsState().then(function (res) {
+                if (res === false) { _clearLedSync(); _setLedStatus(_raT('syncNetErr'), 'err'); return; }
+                if (!res || !res.at) return;
+                var fresh = new Date(res.at).getTime() >= _startMs - 3000;
+                if (res.at !== _ledSyncSinceAt && fresh && _isActionDrivenReason(res.reason)) {
+                    _clearLedSync();
+                    // Retour explicite de RÉUSSITE (avant : effacement silencieux)
+                    _setLedStatus(_raT('syncOk') + ' — ' + _raT('ledStateAt') + ' ' + new Date(res.at).toLocaleTimeString(), 'ok');
+                }
             });
         }, LED_SYNC_POLL_MS);
 
@@ -32254,9 +32492,120 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var mid = window._ucCurrentMosqueId();
         if (!mid) return;
         _L('REMOTE_ADMIN', 'LIGHTS_REFRESH_REQ', { mosque_id: mid, target: target || 'all' });
-        // Chemin fiable (poll box ~18s) ; pas de PIN pour une simple relecture.
+        // Chemin fiable (poll box ~6s) ; pas de PIN pour une simple relecture.
         _requestActionViaPoll(mid, 'lights_refresh', null);
         _startLedSync(target);
+    }
+
+    // ══ INDICATEURS AUDIO ▶/⏸ (Coran, azan) — même mécanique que les LED ══
+    // Source : mosque_device_status.audio_state, publié par la box
+    // (_installAudioStateReporting). ▶ = arrêté, ⏸ = en lecture.
+    var _audSyncTimer   = null;
+    var _audSyncPoll     = null;
+    var _audSyncSinceAt = null;
+
+    function _audLedEl(target) {
+        return _modal ? _modal.querySelector('.ucRAAudioLed[data-ra-audio-led="' + target + '"]') : null;
+    }
+    function _setAudLed(target, cls, glyph, titleKey) {
+        var el = _audLedEl(target);
+        if (!el) return;
+        el.className = 'ucRAAudioLed ucRAAudioLed--' + cls;
+        el.innerHTML = glyph;
+        el.title = _raT(titleKey);
+    }
+    var _audMsgStickyUntil = 0;   // ne pas écraser un message de synchro récent
+    function _setAudioStatus(msg, type) {
+        var el = document.getElementById('ucRAAudioStatus');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.className = 'ucRALedStatus' + (type ? ' ucRALedStatus--' + type : '');
+        // Un retour explicite (✓/✗/timeout) reste affiché ~7 s sans être
+        // recouvert par le "آخر قراءة ..." du polling de fond.
+        if (type === 'ok' || type === 'err' || type === 'warn') _audMsgStickyUntil = Date.now() + 7000;
+    }
+    function _applyAudioState(state, atIso) {
+        ['quran', 'azan'].forEach(function (t) {
+            var s = state && state[t];
+            if (!s) { _setAudLed(t, 'unknown', '&#9654;', 'audioUnknown'); return; }
+            if (s.playing) _setAudLed(t, 'playing', '&#9208;', 'audioPlaying');   // ⏸ double barres
+            else           _setAudLed(t, 'stopped', '&#9654;', 'audioStopped');   // ▶ triangle
+        });
+        if (atIso && Date.now() > _audMsgStickyUntil) {
+            _setAudioStatus(_raT('ledStateAt') + ' ' + new Date(atIso).toLocaleTimeString(), '');
+        }
+    }
+    function _fetchAudioState() {
+        var mid = window._ucCurrentMosqueId();
+        if (!mid || !_modal) return Promise.resolve(null);
+        var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+                   || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+        var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+                   || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+        return fetch(_SB_URL + '/rest/v1/mosque_device_status?mosque_id=eq.' + encodeURIComponent(mid) +
+              '&select=audio_state,audio_state_at,audio_state_reason',
+              { headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY } })
+        .then(function (r) { return r.json(); })
+        .then(function (rows) {
+            var row = rows && rows[0];
+            if (!row || !row.audio_state) return null;
+            _applyAudioState(row.audio_state, row.audio_state_at);
+            return { at: row.audio_state_at || null, reason: row.audio_state_reason || '' };
+        })
+        .catch(function (err) {
+            _L('REMOTE_ADMIN', 'AUDIO_STATE_ERR', { mosque_id: mid, error: err.message || String(err) });
+            return false;   // distingue "erreur réseau" de "pas encore de donnée"
+        });
+    }
+    function _clearAudioSync() {
+        if (_audSyncTimer) { clearTimeout(_audSyncTimer); _audSyncTimer = null; }
+        if (_audSyncPoll)  { clearInterval(_audSyncPoll); _audSyncPoll = null; }
+        _audSyncSinceAt = null;
+    }
+    // Un push est "en réponse à ma commande" seulement si sa raison le dit :
+    //   audio  -> remote_* (post-action, _installAudioStateReporting)
+    //   lumières -> verify_* (vérif Shelly post-commande, _ucVerifyLightAction)
+    //   les deux -> admin_refresh (bouton relecture)
+    // On EXCLUT 'periodic'/'startup' : sinon la garde-vie validerait une
+    // synchro alors qu'aucune commande n'a été exécutée (faux positif constaté).
+    function _isActionDrivenReason(reason) {
+        reason = reason || '';
+        return reason === 'admin_refresh' ||
+               reason.indexOf('remote_') === 0 ||
+               reason.indexOf('verify_') === 0;
+    }
+    function _startAudioSync(target) {
+        _clearAudioSync();
+        var _startMs = Date.now();
+        if (target) _setAudLed(target, 'sync', '&#8635;', 'audioSyncing');
+        _setAudioStatus(_raT('audioSyncing'), 'sync');
+        _fetchAudioState().then(function (res) {
+            if (res === false) { _clearAudioSync(); _setAudioStatus(_raT('syncNetErr'), 'err'); return; }
+            _audSyncSinceAt = (res && res.at) || null;
+        });
+        _audSyncPoll = setInterval(function () {
+            _fetchAudioState().then(function (res) {
+                if (res === false) { _clearAudioSync(); _setAudioStatus(_raT('syncNetErr'), 'err'); return; }
+                if (!res || !res.at) return;
+                var fresh = new Date(res.at).getTime() >= _startMs - 3000;
+                if (res.at !== _audSyncSinceAt && fresh && _isActionDrivenReason(res.reason)) {
+                    _clearAudioSync();
+                    _setAudioStatus(_raT('syncOk') + ' — ' + _raT('ledStateAt') + ' ' + new Date(res.at).toLocaleTimeString(), 'ok');
+                }
+            });
+        }, LED_SYNC_POLL_MS);
+        _audSyncTimer = setTimeout(function () {
+            _clearAudioSync();
+            _setAudioStatus(_raT('ledSyncTimeout'), 'warn');
+            _fetchAudioState();
+        }, LED_SYNC_TIMEOUT_MS);
+    }
+    function _requestAudioRefresh(target) {
+        var mid = window._ucCurrentMosqueId();
+        if (!mid) return;
+        _L('REMOTE_ADMIN', 'AUDIO_REFRESH_REQ', { mosque_id: mid, target: target || 'all' });
+        _requestActionViaPoll(mid, 'audio_refresh', null);
+        _startAudioSync(target);
     }
 
     function _switchTab(tab) {
@@ -32359,6 +32708,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         if (typeof window._popBack === 'function') window._popBack();
         if (_updateStatusPollTimer) { clearInterval(_updateStatusPollTimer); _updateStatusPollTimer = null; }
         _clearLedSync();
+        _clearAudioSync();
     }
 
     function _setStatus(msg, type) {
@@ -32383,8 +32733,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var mid   = window._ucCurrentMosqueId();
         var pinEl = document.getElementById('ucRAActionsPin');
         var pin   = pinEl ? pinEl.value.trim() : '';
-        if (!mid) { _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'no_mosque_id', action: action }); _setActionsStatus(_raT('errGeneric'), 'err'); return; }
-        if (!/^\d{4,8}$/.test(pin)) { _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'pin_format', mosque_id: mid, action: action, pinLen: pin.length }); _setActionsStatus(_raT('errInvalidPin'), 'err'); return; }
+        if (!mid) { _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'no_mosque_id', action: action }); _setActionsStatus(_raT('errGeneric'), 'err'); return false; }
+        if (!/^\d{4,8}$/.test(pin)) {
+            _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'pin_format', mosque_id: mid, action: action, pinLen: pin.length });
+            _setActionsStatus(_raT('errInvalidPin'), 'err');
+            if (pinEl) { try { pinEl.focus(); } catch (e) {} }
+            return false;
+        }
 
         _setActionsStatus(_raT('sending'), 'ok');
         var body = { type: 'remote_action', mosque_id: mid, pin: pin, action: action };
@@ -32428,6 +32783,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             _L('REMOTE_ADMIN', 'ACTION_NETWORK_ERR', { mosque_id: mid, action: action, error: (e && e.message) || String(e) });
             _setActionsStatus(_raT('errNetwork'), 'err');
         });
+        return true;
     }
 
     // Chemin fiable générique pour TOUTES les actions de cet onglet (cf.
@@ -32443,6 +32799,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                    || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
         var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
                    || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+        var _t0 = Date.now();
+        _L('REMOTE_ADMIN', 'POLL_WRITE', { mosque_id: mid, action: action, target: target || '' });
         fetch(_SB_URL + '/rest/v1/mosque_device_status', {
             method: 'POST',
             headers: {
@@ -32457,7 +32815,12 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 pending_action_target: target || null,
                 pending_action_requested_at: new Date().toISOString()
             })
-        }).catch(function () {});
+        }).then(function (r) {
+            if (r.ok) _L('REMOTE_ADMIN', 'POLL_WRITE_OK', { action: action, status: r.status, ms: Date.now() - _t0 });
+            else      _L('REMOTE_ADMIN', 'POLL_WRITE_ERR', { action: action, status: r.status, ms: Date.now() - _t0 });
+        }).catch(function (e) {
+            _L('REMOTE_ADMIN', 'POLL_WRITE_ERR', { action: action, error: (e && e.message) || String(e), ms: Date.now() - _t0 });
+        });
     }
 
     function _fillReciters(selectedDir) {
@@ -32715,11 +33078,14 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _prefill();
         _fetchUpdateStatus();
         _setLedStatus('', '');
+        _setAudioStatus('', '');
         _fetchLightsState();
+        _fetchAudioState();
         if (_updateStatusPollTimer) clearInterval(_updateStatusPollTimer);
         _updateStatusPollTimer = setInterval(function () {
             _fetchUpdateStatus();
             if (!_ledSyncPoll) _fetchLightsState();   // la synchro LED gère son propre polling
+            if (!_audSyncPoll) _fetchAudioState();    // idem pour l'audio
         }, 3000);
         _modal.classList.remove('ucRemoteAdminHidden');
         if (typeof window._pushBack === 'function') window._pushBack();

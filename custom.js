@@ -721,38 +721,88 @@ function _ucBindGuidedInput(el, type) {
         el.addEventListener('click', _showNetInfo);
     });
 
-    // ── Rafraîchissement périodique de l'icône ────────────────────────────────
-    // Le cœur n'appelle checkInternetConnectionFunction() (et donc
-    // setInternetStatus, qui met à jour couleur + forme via le monkey-patch
-    // ci-dessus) QUE lorsque currentMinutes vaut '29' ou '59' (m2body.js,
-    // clockTickFunction) -- soit 2×/h. Résultat : une coupure internet qui se
-    // rétablit entre deux jalons laisse l'icône bloquée sur "déconnecté"
-    // jusqu'à ~30 min, alors que la popup (au clic) interroge le bridge natif
-    // en direct et affiche bien "connecté" -- désaccord signalé le 29/08/2026
-    // sur une box après une micro-coupure. On re-sonde donc nous-mêmes :
-    //   - bridge natif d'abord (synchrone, gratuit, aucun trafic) : si
-    //     l'interface est DOWN, on reflète "déconnecté" immédiatement ;
-    //   - sinon, on relance la vraie sonde HTTP du cœur (Supabase + repli
-    //     GitHub, déjà patchée plus haut avec timeout) pour une confirmation
-    //     faisant autorité -- elle appellera setInternetStatus elle-même.
+    // ── Rafraîchissement périodique de l'icône + auto-récupération ────────────
+    // Constaté sur box .246 (29/08/2026) :
+    //  1. Le cœur n'appelle checkInternetConnectionFunction() (-> setInternetStatus,
+    //     couleur + forme) QUE quand currentMinutes vaut '29'/'59' (m2body.js) --
+    //     2×/h. Une coupure rétablie entre deux jalons laisse l'icône rouge
+    //     jusqu'à ~30 min. -> on re-sonde nous-mêmes toutes les REFRESH_MS
+    //     (+ événements online / retour au premier plan) : l'icône se corrige
+    //     seule en < 1 min dès qu'internet revient VRAIMENT.
+    //  2. Après un changement de réseau, l'app peut se retrouver sans accès
+    //     internet alors que l'OS Android annonce le réseau "validé" -- observé
+    //     avec le résolveur DNS de Tailscale (MagicDNS) resté coincé : ping IP
+    //     OK, résolution de noms KO, donc tous les fetch échouent (pas que
+    //     l'icône : sync config, hijri, météo... tout tombe). Filet : si l'OS
+    //     dit "validé" mais que nos sondes échouent plusieurs fois de suite, la
+    //     box recharge sa page (dernier recours, 1× / 30 min, premier plan
+    //     uniquement -- ça ne répare pas un MagicDNS coincé mais couvre le cas
+    //     d'une pile WebView à réinitialiser).
+    //
+    // L'icône est TOUJOURS le reflet d'une VRAIE sonde HTTP : jamais mise au
+    // vert sur la seule foi du bridge natif (l'OS peut dire "validé" alors que
+    // l'app n'atteint rien). Le bridge natif ne sert qu'au filet du point 2.
     var REFRESH_MS = 60000;
+    var _probeFailStreak = 0;
+    var SELF_RELOAD_GAP_MS = 30 * 60 * 1000;
+    var _isBoxDevice = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv());
+
+    function _nativeValidated() {
+        if (window.AndroidMobile && typeof window.AndroidMobile.getNetworkInfo === 'function') {
+            try { return JSON.parse(window.AndroidMobile.getNetworkInfo()).connected === true; } catch (e) {}
+        }
+        return null;   // pas de bridge (hors APK)
+    }
+
+    function _maybeSelfReload(ssid) {
+        if (!_isBoxDevice || document.hidden) return;
+        if (_nativeValidated() !== true) return;       // l'OS ne garantit pas l'accès -> reload inutile
+        if (_probeFailStreak < 3) return;              // ~3 min de sondes ratées
+        var last = 0;
+        try { last = parseInt(sessionStorage.getItem('UC_NET_SELF_RELOAD_TS') || '0', 10) || 0; } catch (e) {}
+        if (Date.now() - last < SELF_RELOAD_GAP_MS) return;
+        try { sessionStorage.setItem('UC_NET_SELF_RELOAD_TS', String(Date.now())); } catch (e) {}
+        _L('NET', 'SELF_RELOAD', { reason: 'probes_fail_while_os_validated', streak: _probeFailStreak, ssid: ssid || '' });
+        setTimeout(function () { try { location.reload(); } catch (e) {} }, 800);
+    }
+
+    var _PROBE_TIMEOUT_MS = 7000;
+    function _probe(url, opts) {
+        var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var to = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, _PROBE_TIMEOUT_MS) : null;
+        var o = { method: 'GET', headers: (opts && opts.headers) || {} };
+        if (ctrl) o.signal = ctrl.signal;
+        return fetch(url, o).then(function (r) { if (to) clearTimeout(to); return !!r.ok; },
+                                  function () { if (to) clearTimeout(to); return false; });
+    }
+
     function _refreshNetIcon() {
         // Vérification internet désactivée par l'utilisateur -> on ne touche à rien.
         try { if (typeof JS_DATA !== 'undefined' && JS_DATA.ucVerifyInternet == 0) return; } catch (e) {}
         var info = _ucGetNetworkInfo();
-        if (info && info.connected === false) {
+        // Interface franchement absente -> rouge direct, pas de sonde.
+        if (info && info.connected === false && info.type === 'none') {
             if (typeof window.setInternetStatus === 'function') window.setInternetStatus(false);
+            _probeFailStreak = 0;
             return;
         }
-        if (typeof window.checkInternetConnectionFunction === 'function') {
-            try { window.checkInternetConnectionFunction(); }
-            catch (e) {
-                if (typeof window.setInternetStatus === 'function') window.setInternetStatus(!!(info && info.connected));
-            }
-        } else if (typeof window.setInternetStatus === 'function') {
-            window.setInternetStatus(!!(info && info.connected));
-        }
+        // Vraie sonde de joignabilité : Supabase d'abord, GitHub en secours
+        // (mêmes cibles que checkInternetConnectionFunction). Vert = au moins une
+        // répond ; rouge = aucune (DNS cassé / pas d'internet / pile coincée).
+        var _SB = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL) || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+        var _KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY) || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+        _probe(_SB + '/rest/v1/mosques?select=mosque_id&limit=1', { headers: { apikey: _KEY, Authorization: 'Bearer ' + _KEY } })
+        .then(function (ok) { return ok ? true : _probe('https://api.github.com/'); })
+        .then(function (ok) {
+            if (typeof window.setInternetStatus === 'function') window.setInternetStatus(!!ok);
+            if (ok) { _probeFailStreak = 0; return; }
+            _probeFailStreak++;
+            _L('NET', 'PROBE_FAIL', { streak: _probeFailStreak, ssid: (info && info.ssid) || '' });
+            _maybeSelfReload(info && info.ssid);
+        });
     }
+
     setInterval(_refreshNetIcon, REFRESH_MS);
     // Signaux rapides en plus du timer : bascule navigator online/offline et
     // retour au premier plan (téléphone -- une box reste toujours au premier
@@ -1035,7 +1085,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.14';
+var CUSTOM_APP_VERSION = '14.15';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -2797,7 +2847,14 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
 
     window.checkInternetConnectionFunction = function() {
         if (JS_DATA.ucVerifyInternet == 0) return;
-        if (!window.navigator.onLine) {
+        // navigator.onLine n'est PAS fiable sur WebView Chrome 91 après un
+        // changement de réseau (reste false alors que tout marche) : on ne s'y
+        // fie que s'il dit "en ligne", jamais pour couper. La vraie source
+        // reste la sonde HTTP ci-dessous (Supabase, repli GitHub) -- si les
+        // deux échouent, l'app ne peut réellement atteindre personne
+        // (résolveur DNS cassé inclus), donc rouge légitime.
+        if (window.navigator.onLine === false
+            && !(window.AndroidMobile && typeof window.AndroidMobile.getNetworkInfo === 'function')) {
             dolog('___navigator_NOT_onLine');
             setInternetStatus(false);
             return;

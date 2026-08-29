@@ -10715,6 +10715,20 @@ select.ucRATextInput { text-align: start; }
     margin-top: 6px;
 }
 
+/* PIN partagé par les deux onglets, juste sous le nom de la mosquée
+   (#ucRemoteAdminMosqueName) et au-dessus de #ucRATabs. */
+#ucRASharedPin {
+    padding: 8px 16px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    flex-shrink: 0;
+}
+#ucRASharedPinLabel {
+    display: block;
+    color: rgba(223, 205, 177, 0.85);
+    font-size: 0.9em;
+    font-weight: 600;
+}
+
 #ucRAPin, #ucRAActionsPin { width: 100%; box-sizing: border-box; margin-top: 6px; }
 
 #ucRAStatus, #ucRAActionsStatus {

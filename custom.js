@@ -720,6 +720,53 @@ function _ucBindGuidedInput(el, type) {
         el.style.cursor = 'pointer';
         el.addEventListener('click', _showNetInfo);
     });
+
+    // ── Rafraîchissement périodique de l'icône ────────────────────────────────
+    // Le cœur n'appelle checkInternetConnectionFunction() (et donc
+    // setInternetStatus, qui met à jour couleur + forme via le monkey-patch
+    // ci-dessus) QUE lorsque currentMinutes vaut '29' ou '59' (m2body.js,
+    // clockTickFunction) -- soit 2×/h. Résultat : une coupure internet qui se
+    // rétablit entre deux jalons laisse l'icône bloquée sur "déconnecté"
+    // jusqu'à ~30 min, alors que la popup (au clic) interroge le bridge natif
+    // en direct et affiche bien "connecté" -- désaccord signalé le 29/08/2026
+    // sur une box après une micro-coupure. On re-sonde donc nous-mêmes :
+    //   - bridge natif d'abord (synchrone, gratuit, aucun trafic) : si
+    //     l'interface est DOWN, on reflète "déconnecté" immédiatement ;
+    //   - sinon, on relance la vraie sonde HTTP du cœur (Supabase + repli
+    //     GitHub, déjà patchée plus haut avec timeout) pour une confirmation
+    //     faisant autorité -- elle appellera setInternetStatus elle-même.
+    var REFRESH_MS = 60000;
+    function _refreshNetIcon() {
+        // Vérification internet désactivée par l'utilisateur -> on ne touche à rien.
+        try { if (typeof JS_DATA !== 'undefined' && JS_DATA.ucVerifyInternet == 0) return; } catch (e) {}
+        var info = _ucGetNetworkInfo();
+        if (info && info.connected === false) {
+            if (typeof window.setInternetStatus === 'function') window.setInternetStatus(false);
+            return;
+        }
+        if (typeof window.checkInternetConnectionFunction === 'function') {
+            try { window.checkInternetConnectionFunction(); }
+            catch (e) {
+                if (typeof window.setInternetStatus === 'function') window.setInternetStatus(!!(info && info.connected));
+            }
+        } else if (typeof window.setInternetStatus === 'function') {
+            window.setInternetStatus(!!(info && info.connected));
+        }
+    }
+    setInterval(_refreshNetIcon, REFRESH_MS);
+    // Signaux rapides en plus du timer : bascule navigator online/offline et
+    // retour au premier plan (téléphone -- une box reste toujours au premier
+    // plan mais l'écoute est inoffensive).
+    window.addEventListener('online',  _refreshNetIcon);
+    window.addEventListener('offline', function () {
+        if (typeof window.setInternetStatus === 'function') window.setInternetStatus(false);
+    });
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) _refreshNetIcon();
+    });
+    // Premier passage rapide après le chargement (le jalon :29/:59 du cœur peut
+    // être loin) -- laisse d'abord le patch Supabase de checkInternet s'installer.
+    setTimeout(_refreshNetIcon, 8000);
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -988,7 +1035,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.13';
+var CUSTOM_APP_VERSION = '14.14';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -26600,6 +26647,18 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     window.addEventListener('ucConfigSync', function(e) {
         var mid = (e.detail && e.detail.mosque_id) || '';
         _L('SYNC', 'NOTIF_TAP', { mosque_id: mid });
+        // Box : après avoir appliqué une modif reçue à distance, ré-exporter la
+        // config complète dans mosques.backup_json (sinon le blob reste figé sur
+        // l'ancienne version -- un futur import récupérerait des horaires périmés).
+        // Traité au prochain chargement (juste après le reload de _applyRow),
+        // cf. _installAutoExportAfterRemoteEdit. Le flag est ignoré/effacé sur
+        // téléphone.
+        try {
+            if (mid && window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+                && window.AndroidMobile.isAndroidTv()) {
+                localStorage.setItem('UC_PENDING_AUTO_EXPORT', mid);
+            }
+        } catch (e) {}
         window._ucSyncFromSupabase(mid, true);
     });
 
@@ -27143,6 +27202,8 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
                || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
     var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
                || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+    var _isBoxDev = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv());
 
     function _poll() {
         var mid = window._ucCurrentMosqueId();
@@ -27153,6 +27214,17 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         .then(function(rows) {
             var row = rows && rows[0];
             if (!row || !row.updated_at) return;
+            // Ne pas réagir à NOTRE PROPRE écriture backup_json post-modif
+            // distante (_installAutoExportAfterRemoteEdit) : elle fait avancer
+            // updated_at via trg_mosques_updated_at, mais ne change aucun
+            // horaire -> sinon reload en boucle. Garde exacte, insensible au
+            // timing du polling.
+            try {
+                var _inflight = parseInt(localStorage.getItem('UC_SELF_WRITE_INFLIGHT') || '0', 10);
+                if (_inflight && (Date.now() - _inflight) < 45000) { _lastKnownUpdatedAt = row.updated_at; return; }
+                var _selfW = localStorage.getItem('UC_SELF_WRITE_UPDATED_AT');
+                if (_selfW && row.updated_at === _selfW) { _lastKnownUpdatedAt = row.updated_at; return; }
+            } catch (e) {}
             if (_lastKnownUpdatedAt === null) {
                 // Amorçage silencieux : mémorise la valeur courante sans rien
                 // déclencher -- évite un reload parasite juste après le
@@ -27163,6 +27235,9 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             if (row.updated_at !== _lastKnownUpdatedAt) {
                 _lastKnownUpdatedAt = row.updated_at;
                 _L('SYNC', 'POLL_CHANGE_DETECTED', { mosque_id: mid, updated_at: row.updated_at });
+                // Box : armer la ré-export auto de backup_json (traitée au
+                // prochain chargement, cf. _installAutoExportAfterRemoteEdit).
+                if (_isBoxDev) { try { localStorage.setItem('UC_PENDING_AUTO_EXPORT', mid); } catch (e) {} }
                 if (typeof window._ucSyncFromSupabase === 'function') window._ucSyncFromSupabase(mid, true);
             }
         })
@@ -27173,6 +27248,142 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     setInterval(_poll, POLL_MS);
 
     _L('CUSTOM', 'INIT', { item: 'remoteConfigPolling' });
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPORT AUTO DE backup_json APRÈS UNE MODIF REÇUE À DISTANCE (box uniquement)
+// ─────────────────────────────────────────────────────────────────────────────
+// rapid-service (mode remote_config_update) PATCHe UNIQUEMENT les colonnes
+// structurées de `mosques` (azan_offsets, iqama_delay, iqama_fixed, jumua, eid,
+// quran_settings...) -- JAMAIS backup_json, le blob complet lu à l'import
+// ("Import config -> Distant") et à la sélection d'une mosquée du répertoire.
+// Sans rien faire, ce blob reste figé sur l'ancienne version : un import
+// ultérieur récupérerait des horaires / délais Coran périmés.
+//
+// Quand la box applique une telle modif (cf. _installConfigSync/ucConfigSync et
+// _installRemoteConfigPolling ci-dessus, qui posent UC_PENDING_AUTO_EXPORT juste
+// avant le reload de _applyRow), on ré-exporte ICI, au chargement suivant, la
+// config complète -- exactement comme "Export config -> Distant"
+// (_ucPushRemoteBackup, qui inclut aussi `automation` sur une box). La box est
+// la seule source fiable du blob complet (un téléphone n'a pas l'automation ni
+// les récitateurs installés -> un export téléphone corromprait la config box).
+//
+// Anti-boucle : cette écriture fait avancer updated_at (trg_mosques_updated_at)
+// SANS toucher aux colonnes horaires -> le trigger on_mosque_update ne notifie
+// PAS (WHEN limité aux colonnes horaires, migration
+// mosque_update_notify_only_on_schedule_change) et _installRemoteConfigPolling
+// ignore ce updated_at (garde UC_SELF_WRITE_INFLIGHT + UC_SELF_WRITE_UPDATED_AT).
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installAutoExportAfterRemoteEdit() {
+    var _isBox = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv());
+    var TRIES_KEY = 'UC_PENDING_AUTO_EXPORT_TRIES';
+    var MAX_TRIES = 5;
+
+    var _pending = null;
+    try { _pending = localStorage.getItem('UC_PENDING_AUTO_EXPORT'); } catch (e) {}
+    // Nettoyage inconditionnel sur téléphone (le flag n'aurait jamais dû y être).
+    if (!_isBox) {
+        try { if (_pending) { localStorage.removeItem('UC_PENDING_AUTO_EXPORT'); localStorage.removeItem(TRIES_KEY); } } catch (e) {}
+        _L('CUSTOM', 'INIT', { item: 'autoExportAfterRemoteEdit', armed: 0 });
+        return;
+    }
+    _L('CUSTOM', 'INIT', { item: 'autoExportAfterRemoteEdit', armed: _pending ? 1 : 0 });
+    if (!_pending) return;
+
+    // Le flag n'est PAS consommé ici : il ne l'est qu'en cas de succès (ou après
+    // MAX_TRIES). Un reload rapproché (storm de resync au démarrage) qui coupe la
+    // requête en vol -> nouvel essai au chargement suivant, plutôt qu'une perte
+    // silencieuse (constaté au test 29/08/2026 : 2 reloads à 6 s d'intervalle
+    // tuaient le POST d'export).
+    var _tries = 0;
+    try { _tries = parseInt(localStorage.getItem(TRIES_KEY) || '0', 10) || 0; } catch (e) {}
+    if (_tries >= MAX_TRIES) {
+        _L('SYNC', 'AUTO_EXPORT_SKIP', { reason: 'max_retries', mosque_id: _pending, tries: _tries });
+        try { localStorage.removeItem('UC_PENDING_AUTO_EXPORT'); localStorage.removeItem(TRIES_KEY); } catch (e) {}
+        return;
+    }
+    try { localStorage.setItem(TRIES_KEY, String(_tries + 1)); } catch (e) {}
+
+    function _done() {
+        try {
+            localStorage.removeItem('UC_PENDING_AUTO_EXPORT');
+            localStorage.removeItem(TRIES_KEY);
+        } catch (e) {}
+    }
+
+    function _sbUrl() {
+        return (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+            || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+    }
+    function _sbKey() {
+        return (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+            || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+    }
+
+    function _noteSelfWrite(attempt) {
+        // Relit updated_at fraîchement produit par notre écriture et le mémorise :
+        // le polling de config le traitera comme "déjà connu" (pas un changement
+        // distant à réappliquer). Jusqu'à 3 tentatives ; tant qu'aucune n'a
+        // abouti on laisse UC_SELF_WRITE_INFLIGHT (le poll l'ignore ~45 s, filet).
+        attempt = attempt || 1;
+        var mid = window._ucCurrentMosqueId && window._ucCurrentMosqueId();
+        if (!mid) { try { localStorage.removeItem('UC_SELF_WRITE_INFLIGHT'); } catch (e) {} return; }
+        fetch(_sbUrl() + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid) + '&select=updated_at',
+              { headers: { 'apikey': _sbKey(), 'Authorization': 'Bearer ' + _sbKey() } })
+        .then(function (r) { return r.json(); })
+        .then(function (rows) {
+            if (rows && rows[0] && rows[0].updated_at) {
+                try {
+                    localStorage.setItem('UC_SELF_WRITE_UPDATED_AT', rows[0].updated_at);
+                    localStorage.removeItem('UC_SELF_WRITE_INFLIGHT');
+                } catch (e) {}
+                _L('SYNC', 'AUTO_EXPORT_SELF_NOTED', { updated_at: rows[0].updated_at });
+            } else if (attempt < 3) {
+                setTimeout(function () { _noteSelfWrite(attempt + 1); }, 2000);
+            }
+        })
+        .catch(function () {
+            if (attempt < 3) setTimeout(function () { _noteSelfWrite(attempt + 1); }, 2000);
+        });
+    }
+
+    function _run() {
+        var mid = window._ucCurrentMosqueId && window._ucCurrentMosqueId();
+        if (!mid || mid !== _pending) {
+            _L('SYNC', 'AUTO_EXPORT_SKIP', { reason: 'mosque_mismatch', pending: _pending, current: mid || '' });
+            return;
+        }
+        if (typeof window._ucPushRemoteBackup !== 'function') {
+            _L('SYNC', 'AUTO_EXPORT_SKIP', { reason: 'exporter_absent', mosque_id: mid });
+            return;
+        }
+        var _nameOverride = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.MOSQUE_NAME) || null;
+        _L('SYNC', 'AUTO_EXPORT_START', { mosque_id: mid });
+        try { localStorage.setItem('UC_SELF_WRITE_INFLIGHT', String(Date.now())); } catch (e) {}
+        try {
+            window._ucPushRemoteBackup(mid, function (ok, err) {
+                if (ok) {
+                    _done();
+                    _L('SYNC', 'AUTO_EXPORT_OK', { mosque_id: mid, tries: _tries + 1 });
+                    _noteSelfWrite();
+                } else {
+                    _L('SYNC', 'AUTO_EXPORT_ERR', { mosque_id: mid, error: (err && err.message) || String(err || '') });
+                    try { localStorage.removeItem('UC_SELF_WRITE_INFLIGHT'); } catch (e) {}
+                }
+            }, _nameOverride);
+        } catch (e) {
+            _L('SYNC', 'AUTO_EXPORT_ERR', { mosque_id: mid, error: (e && e.message) || String(e) });
+            try { localStorage.removeItem('UC_SELF_WRITE_INFLIGHT'); } catch (e2) {}
+        }
+    }
+
+    // Délai large : laisse la page s'hydrater ET laisse retomber un éventuel
+    // storm de reloads au démarrage (resync cold-start) avant de lancer le POST.
+    // 10 s : au-delà du storm de reloads observé au démarrage (_applyRow +
+    // resync cold-start se succèdent sur ~7 s) -- vise un export en 1 essai.
+    _L('SYNC', 'AUTO_EXPORT_ARMED', { mosque_id: _pending, try: _tries + 1 });
+    setTimeout(_run, 10000);
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -32314,20 +32525,24 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                     '<span id="ucRemoteAdminClose">&#10006;</span>' +
                 '</div>' +
                 '<div id="ucRemoteAdminMosqueName"></div>' +
+                // PIN PARTAGÉ par les deux onglets : un seul champ, juste sous le
+                // nom de la mosquée, hors des panneaux (les actions ET l'envoi de
+                // config exigent le même PIN -- avant, deux champs distincts
+                // #ucRAActionsPin / #ucRAPin qu'il fallait ressaisir en changeant
+                // d'onglet, retour mosquée aboubaker 29/08/2026).
+                '<div id="ucRASharedPin">' +
+                    '<label for="ucRAActionsPin" id="ucRASharedPinLabel">' + _raT('pinLabel') + '</label>' +
+                    '<input type="password" id="ucRAActionsPin" class="ucRATextInput" maxlength="8" inputmode="numeric" autocomplete="off">' +
+                    '<div id="ucRAPinHint">' + _raT('pinHint') + '</div>' +
+                '</div>' +
                 '<div id="ucRATabs">' +
                     '<span class="ucRATabBtn ucRATabBtnActive" data-tab="actions">' + _raT('tabActions') + '</span>' +
                     '<span class="ucRATabBtn" data-tab="settings">' + _raT('tabSettings') + '</span>' +
                 '</div>' +
                 '<div id="ucRemoteAdminBody">' +
                     '<div class="ucRAPane ucRAPaneActive" data-pane="actions">' +
-                        // PIN EN HAUT : toute action de cet onglet exige un PIN 4-8
-                        // chiffres. Avant, le champ était en bas de la liste -> les
-                        // utilisateurs tapaient une action, ne voyaient jamais le
-                        // message d'erreur (hors écran) et croyaient l'admin cassée
-                        // (retour mosquée aboubaker, 29/08/2026).
-                        '<div class="ucRASectionTitle">' + _raT('pinLabel') + '</div>' +
-                        '<input type="password" id="ucRAActionsPin" class="ucRATextInput" maxlength="8" inputmode="numeric" autocomplete="off">' +
-                        '<div id="ucRAPinHint">' + _raT('pinHint') + '</div>' +
+                        // Le PIN est désormais partagé, juste sous le nom de la
+                        // mosquée (cf. #ucRASharedPin ci-dessus).
                         '<div id="ucRAActionsStatus"></div>' +
                         '<div class="ucRASectionTitle">' + _raT('audioTitle') + '</div>' +
                         audioRows +
@@ -32360,9 +32575,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                             '<span id="ucRARecitersSyncBtn" class="ucModalBtn ucModalBtn--secondary ucRAIconBtn" role="button" tabindex="0" title="' + _raT('recitersSyncTitle') + '">&#8635;</span>' +
                         '</div>' +
                         '<div id="ucRARecitersStatus" class="ucRALedStatus"></div>' +
-                        '<div class="ucRASectionTitle">' + _raT('pinLabel') + '</div>' +
-                        '<input type="password" id="ucRAPin" class="ucRATextInput" maxlength="8" inputmode="numeric" autocomplete="off">' +
-                        '<div id="ucRAPinHint">' + _raT('pinHint') + '</div>' +
+                        // PIN partagé (cf. #ucRASharedPin, sous le nom de la mosquée).
                         '<div id="ucRAStatus"></div>' +
                         '<div class="ucRAActionsBottom">' +
                             '<span id="ucRACancelBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('cancelBtn') + '</span>' +
@@ -33129,9 +33342,10 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     }
 
     function _submit(reloadOnly) {
-        // Le bouton "recharger" vit désormais dans l'onglet Actions (son
-        // propre champ PIN/statut) ; "Envoyer" reste dans l'onglet Paramétrage.
-        var pinElId    = reloadOnly ? 'ucRAActionsPin'    : 'ucRAPin';
+        // PIN partagé (#ucRAActionsPin, sous le nom de la mosquée) pour les deux
+        // onglets ; le statut s'affiche là où l'utilisateur agit (Actions vs
+        // Paramétrage).
+        var pinElId    = 'ucRAActionsPin';
         var setStatus  = reloadOnly ? _setActionsStatus   : _setStatus;
         var mid   = window._ucCurrentMosqueId();
         var pinEl = document.getElementById(pinElId);
@@ -33268,9 +33482,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _buildModal();
         _setStatus('', '');
         _setActionsStatus('', '');
-        var pinEl = document.getElementById('ucRAPin');
-        if (pinEl) pinEl.value = '';
-        var actionsPinEl = document.getElementById('ucRAActionsPin');
+        var actionsPinEl = document.getElementById('ucRAActionsPin');   // PIN partagé (2 onglets)
         if (actionsPinEl) actionsPinEl.value = '';
         _switchTab('actions');
         _prefill();

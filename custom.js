@@ -1085,7 +1085,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.15';
+var CUSTOM_APP_VERSION = '14.16';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -20751,22 +20751,58 @@ function selectQPTakbir() {
         return (id && id !== 'anonymous.generic') ? id : '';
     }
 
-    // Pousse automatiquement la config complète (JS_CUSTOM inclus) vers
-    // Supabase dès qu'un profil (adresse/tél/email/photo/commodités) est
-    // sauvegardé sur une VRAIE mosquée (pas l'anonyme — cf. _mosqueIdForShare,
-    // même règle). Appelé après chaque sauvegarde du profil ET après chaque
-    // upload de photo (_openMosquePhotoPicker) — même mécanisme que le bouton
-    // "Notifier" (_installAdminPayloadPreview), juste déclenché ici par
-    // l'édition du profil plutôt que par l'envoi d'une mise à jour d'horaires.
-    // Répond directement au besoin "compléter les infos + créer la config
-    // Supabase" pour les mosquées du registre local qui n'en ont pas encore :
-    // le premier admin qui remplit sa fiche crée la ligne automatiquement,
-    // sans étape manuelle "Export -> Distant" séparée.
+    // Sync distant à la sauvegarde du profil (mosquée CONNUE uniquement — cf.
+    // _mosqueIdForShare ; anonyme -> rien, le blob complet ne part que par le
+    // bouton "Proposer comme nouvelle mosquée").
+    //
+    // Écriture CIBLÉE : PATCH des seules colonnes profil/identité
+    // (profile, image_url, mosque_name) -- JAMAIS backup_json ni les colonnes
+    // horaires/automation (retour utilisateur 29/08/2026 : avant, chaque
+    // sauvegarde de profil poussait _ucPushRemoteBackup = TOUT le blob local
+    // de l'appareil, ce qui, depuis un téléphone, faisait régresser le
+    // backup_json de restauration complète de la mosquée vers un état périmé).
+    // Ne touchant aucune colonne horaire, ce PATCH ne déclenche PAS la notif
+    // "Mise à jour des horaires" (trigger on_mosque_update, WHEN horaires
+    // uniquement, cf. migration mosque_update_notify_only_on_schedule_change).
+    // Appelé après la sauvegarde du profil ET après un upload de photo.
     function _autoPushProfileIfRealMosque() {
         var mid = _mosqueIdForShare();
-        if (!mid || typeof window._ucPushRemoteBackup !== 'function') return;
-        window._ucPushRemoteBackup(mid, function (ok) {
-            _L('CFG', ok ? 'PROFILE_AUTO_SYNCED' : 'PROFILE_AUTO_SYNC_ERR', { mosque_id: mid });
+        if (!mid) return;
+        var C = (typeof JS_CUSTOM !== 'undefined') ? JS_CUSTOM : {};
+        var patch = {
+            mosque_name: (typeof JS_DATA !== 'undefined' && JS_DATA.ucMosqueName) || undefined,
+            image_url:   C.ucMosqueImageUrl || null,
+            profile: {
+                address:        C.ucMosqueAddress      || '',
+                phone:          C.ucMosquePhone        || '',
+                email:          C.ucMosqueEmail        || '',
+                social_url:     C.ucMosqueSocialUrl    || '',
+                women_allowed:  C.ucMosqueWomenAllowed  || 0,
+                women_ablution: C.ucMosqueWomenAblution || 0,
+                janaza:         C.ucMosqueJanaza        || 0,
+                kottab:         C.ucMosqueKottab        || 0,
+                parking:        C.ucMosqueParking       || 0
+            }
+        };
+        if (!patch.mosque_name) delete patch.mosque_name;   // jamais écraser le nom par vide
+        var _t0 = Date.now();
+        _L('CFG', 'PROFILE_PATCH_SEND', { mosque_id: mid });
+        fetch(_SB_URL + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid), {
+            method:  'PATCH',
+            headers: {
+                'apikey':        _SB_KEY,
+                'Authorization': 'Bearer ' + _SB_KEY,
+                'Content-Type':  'application/json',
+                'Prefer':        'return=minimal'
+            },
+            body: JSON.stringify(patch)
+        })
+        .then(function (r) {
+            _L('CFG', (r.ok || r.status === 204) ? 'PROFILE_PATCH_OK' : 'PROFILE_PATCH_ERR',
+               { mosque_id: mid, status: r.status, ms: Date.now() - _t0 });
+        })
+        .catch(function (e) {
+            _L('CFG', 'PROFILE_PATCH_ERR', { mosque_id: mid, error: (e && e.message) || String(e), ms: Date.now() - _t0 });
         });
     }
 
@@ -21223,6 +21259,19 @@ function selectQPTakbir() {
     }
 
     function _openMosqueProfileEdit() {
+        // Garde CENTRALE (pas seulement la visibilité du bouton ✏️, cf.
+        // _buildMosqueProfileBlockHtml) : couvre TOUS les appels directs à
+        // window._ucOpenMosqueProfileEdit -- notamment l'assistant intelligent
+        // ("comment modifier le profil ?") qui ouvrait l'éditeur d'une VRAIE
+        // mosquée sans aucun PIN (retour utilisateur 29/08/2026). Mosquée
+        // connue + admin non déverrouillé -> on exige le PIN, puis on
+        // ré-ouvre automatiquement l'éditeur.
+        if (!_mosqueProfileCanEdit()) {
+            if (typeof window._ucOpenAdminUnlockOverlay === 'function') {
+                window._ucOpenAdminUnlockOverlay(_openMosqueProfileEdit);
+            }
+            return;
+        }
         _buildMosqueProfileEditOverlay();
 
         // Titre significatif selon le contexte réel à CHAQUE ouverture (pas
@@ -27837,7 +27886,12 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     }
     window._ucRefreshAdminBtnLock = _refreshUI;
 
-    window._ucOpenAdminUnlockOverlay = function() {
+    // onUnlock (optionnel) : rappelé une seule fois APRÈS un déverrouillage
+    // réussi -- utilisé par _openMosqueProfileEdit pour ré-ouvrir l'éditeur
+    // juste après la saisie du PIN. Effacé sur annulation/fermeture.
+    var _pendingUnlockCb = null;
+    window._ucOpenAdminUnlockOverlay = function(onUnlock) {
+        _pendingUnlockCb = (typeof onUnlock === 'function') ? onUnlock : null;
         _el('ucAdminUnlockInput').value     = '';
         _el('ucAdminUnlockErr').textContent = '';
         ov.style.display = 'flex';
@@ -27855,7 +27909,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     };
 
     lockBtn.addEventListener('click', function() { window._ucToggleAdminLock(); });
-    _el('ucAdminUnlockCancel').addEventListener('click', function() { ov.style.display = 'none'; });
+    _el('ucAdminUnlockCancel').addEventListener('click', function() { ov.style.display = 'none'; _pendingUnlockCb = null; });
     _el('ucAdminUnlockOk').addEventListener('click', function() {
         var errEl = _el('ucAdminUnlockErr');
         if (window._ucPinGuard && window._ucPinGuard.check(errEl)) return;
@@ -27871,6 +27925,8 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         _persistUnlock();
         ov.style.display = 'none';
         _refreshUI();
+        var cb = _pendingUnlockCb; _pendingUnlockCb = null;
+        if (cb) { try { cb(); } catch (e) {} }
     });
     _el('ucAdminUnlockInput').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') _el('ucAdminUnlockOk').click();

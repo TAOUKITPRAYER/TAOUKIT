@@ -10865,6 +10865,20 @@ select.ucRATextInput { text-align: start; }
 .ucRAAudioLed--error       { background: #ff5b5b; color: #fff; box-shadow: 0 0 7px 1px rgba(255, 91, 91, 0.6); }
 .ucRAAudioLed--sync        { background: #e0b050; animation: ucRALedPulse 0.9s ease-in-out infinite; }
 
+/* Bouton de synchro de la liste des récitateurs (onglet Paramétrage,
+   à côté du menu déroulant). Icône ⟳ ; tourne pendant la synchro. */
+.ucRARecitersRow { flex-wrap: wrap; }
+.ucRARecitersRow #ucRAReciter { flex: 1 1 60%; }
+.ucRAIconBtn {
+    flex: 0 0 auto;
+    min-width: 0;
+    padding: 6px 12px;
+    font-size: 1.05em;
+    line-height: 1;
+}
+.ucRAIconBtn--spin { animation: ucRAspin 0.9s linear infinite; }
+@keyframes ucRAspin { to { transform: rotate(360deg); } }
+
 /* Transition rapide pour les bascules d'interlude azkar (cf. custom.js
    _installAzkarMainPageInterlude, _setAzkarContainersClass). La transition
    d'origine (.fullScreenVisibleClass/.fullScreenHiddenClass, style0.css,

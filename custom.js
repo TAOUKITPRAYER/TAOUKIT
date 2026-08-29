@@ -988,7 +988,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.11';
+var CUSTOM_APP_VERSION = '14.13';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -2003,6 +2003,12 @@ function _syncDeviceReciters(reason) {
     });
     _L('RM','SYNC_DONE',{reason:(reason || 'unknown'), totalReciters:JS_CUSTOM.ucReciters.length,
         deviceCount:(JS_CUSTOM.ucReciters.length - UC_RECITERS_STATIC_COUNT)});
+    // Box : republie la liste vers Supabase (l'admin distant la relit).
+    // Différé : au 1er appel ('page_load') _ucPushRecitersSnapshot n'existe
+    // pas encore (défini plus bas). Sans effet hors box (fonction absente).
+    if (reason && reason !== 'page_load' && typeof window._ucPushRecitersSnapshot === 'function') {
+        window._ucPushRecitersSnapshot('reciters_changed');
+    }
 }
 _syncDeviceReciters('page_load');
 
@@ -4339,15 +4345,14 @@ function _ucHttpCall(url, label, silent) {
     if (silent && _httpErrSilenced[label]) return;
     var _trimUrl = url.trim();
     if (!silent) _L('LIGHTS','HTTP_CALL',{item:label||'?', url:_trimUrl});
-    // Timeout court : échec rapide si l'hôte est injoignable (évite le burst de 90 s)
+    // Timeout court : échec rapide si l'hôte est injoignable (évite le burst de 90 s).
+    // AbortController + setTimeout : AbortSignal.timeout() absent du WebView
+    // Chrome 91 des boîtiers (sinon aucun timeout -> fetch qui traîne).
     // Note : on n'utilise pas mode:'no-cors' afin de pouvoir lire le body de la réponse.
-    // Pour un simple GET, la requête est envoyée au device même sans CORS headers ;
-    // seule la lecture de la réponse échouerait côté JS (→ HTTP_ERR).
-    var _opts = {};
-    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
-        _opts.signal = AbortSignal.timeout(1500);
-    }
-    fetch(_trimUrl, _opts)
+    var _ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var _to   = _ctrl ? setTimeout(function () { try { _ctrl.abort(); } catch (e) {} }, 1800) : null;
+    fetch(_trimUrl, _ctrl ? { signal: _ctrl.signal } : {})
+        .then(function (r) { if (_to) clearTimeout(_to); return r; }, function (e) { if (_to) clearTimeout(_to); throw e; })
         .then(function(resp) {
             if (silent) return;   // appel silencieux : on ne lit pas le body
             resp.text().then(function(body) {
@@ -4448,12 +4453,20 @@ function _ucHttpCall(url, label, silent) {
     }
 
     function _fetchJson(url) {
-        var opts = {};
-        if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function')
-            opts.signal = AbortSignal.timeout(READ_TIMEOUT_MS);
-        return fetch(url, opts).then(function (r) {
+        // AbortController + setTimeout : AbortSignal.timeout() n'existe PAS sur
+        // le WebView Chrome 91 des boîtiers -> sans ça, un fetch vers un module
+        // Shelly injoignable ne timeoutait jamais et _ucShellyLightsSnapshot()
+        // restait bloqué à vie (constaté box hors réseau mosquée, 29/08/2026 :
+        // plus AUCUN push lights_state, y compris admin_refresh).
+        var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var to = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, READ_TIMEOUT_MS) : null;
+        return fetch(url, ctrl ? { signal: ctrl.signal } : {}).then(function (r) {
+            if (to) clearTimeout(to);
             if (!r.ok) throw new Error('http_' + r.status);
             return r.text();
+        }, function (e) {
+            if (to) clearTimeout(to);
+            throw e;
         }).then(function (t) {
             try { return JSON.parse(t); } catch (e) { throw new Error('bad_json'); }
         });
@@ -26670,6 +26683,20 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             else _L('REMOTE_ACTION', 'EXEC_ERR', { action: 'audio_refresh', reason: 'reporter_absent' });
             return;
         }
+        if (action === 'reciters_refresh') {
+            if (typeof window._ucPushRecitersSnapshot === 'function') window._ucPushRecitersSnapshot('admin_refresh');
+            else _L('REMOTE_ACTION', 'EXEC_ERR', { action: 'reciters_refresh', reason: 'reporter_absent' });
+            return;
+        }
+        if (action === 'refresh_all') {
+            // À l'ouverture de l'admin distant : republie TOUS les états
+            // synchronisables pour que le téléphone parte des valeurs réelles.
+            _L('REMOTE_ACTION', 'EXEC_OK', { action: 'refresh_all' });
+            if (typeof window._ucPushLightsSnapshot === 'function')   window._ucPushLightsSnapshot('admin_refresh');
+            if (typeof window._ucPushAudioSnapshot === 'function')    window._ucPushAudioSnapshot('admin_refresh');
+            if (typeof window._ucPushRecitersSnapshot === 'function') window._ucPushRecitersSnapshot('admin_refresh');
+            return;
+        }
         if (action === 'light_on' || action === 'light_off') {
             var isOn = (action === 'light_on');
             var URL_KEY = {
@@ -26757,14 +26784,34 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
 
     var _debounceTimer = null;
     var _inFlight = false;
+    var _inFlightSince = 0;
 
     function _push(reason) {
-        if (_inFlight) return;
+        // Garde anti-blocage : si un push précédent n'a jamais rendu la main
+        // (snapshot Shelly qui traîne quand les modules sont injoignables), on
+        // le considère abandonné au bout de 20 s et on repart -- sinon
+        // _inFlight restait true à vie et TOUT push suivant (périodique ET
+        // admin_refresh) était silencieusement ignoré (constaté box hors du
+        // réseau mosquée, 29/08/2026).
+        if (_inFlight && (Date.now() - _inFlightSince) < 20000) return;
         var mid = window._ucCurrentMosqueId && window._ucCurrentMosqueId();
         if (!mid) return;
         if (typeof window._ucShellyLightsSnapshot !== 'function') return;
         _inFlight = true;
-        window._ucShellyLightsSnapshot().then(function (snap) {
+        _inFlightSince = Date.now();
+        // Race contre un timeout dur : si le snapshot Shelly traîne malgré tout,
+        // on publie quand même (état "error" par canal) au bout de 14 s plutôt
+        // que de laisser _inFlight bloqué et l'admin distant sans réponse.
+        Promise.race([
+            window._ucShellyLightsSnapshot(),
+            new Promise(function (resolve) {
+                setTimeout(function () {
+                    var fb = {};
+                    ['ampliInt', 'ampliExt', 'minaret', 'mihrab'].forEach(function (k) { fb[k] = { state: 'error', reason: 'snapshot_timeout' }; });
+                    resolve(fb);
+                }, 14000);
+            })
+        ]).then(function (snap) {
             var nChan = Object.keys(snap).length;
             if (!nChan) { _inFlight = false; return null; }   // aucune lumière configurée -> rien à publier
             var nErr  = Object.keys(snap).filter(function (k) { return snap[k] && snap[k].state === 'error'; }).length;
@@ -26834,6 +26881,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
 
     var _debounceTimer = null;
     var _inFlight = false;
+    var _inFlightSince = 0;
     var _lastJson = '';
 
     function _snapshot() {
@@ -26858,7 +26906,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     }
 
     function _push(reason) {
-        if (_inFlight) return;
+        if (_inFlight && (Date.now() - _inFlightSince) < 15000) return;   // garde anti-blocage (POST Supabase qui traîne)
         var mid = window._ucCurrentMosqueId && window._ucCurrentMosqueId();
         if (!mid) return;
         var snap = _snapshot();
@@ -26871,6 +26919,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         if (!_force && sig === _lastJson) return;
         _lastJson = sig;
         _inFlight = true;
+        _inFlightSince = Date.now();
         _L('AUDIO', 'STATE_SNAPSHOT', { reason: reason || '', quran: snap.quran.playing ? 'play' : 'stop', azan: snap.azan.playing ? 'play' : 'stop' });
         fetch(_SB_URL + '/rest/v1/mosque_device_status', {
             method: 'POST',
@@ -26899,6 +26948,44 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     }
 
     window._ucPushAudioSnapshot = _push;
+
+    // ── Liste des récitateurs réellement installés sur la box ────────────────
+    // Publiée dans mosque_device_status.reciters_state pour que le menu
+    // déroulant "récitateur" de l'onglet Paramétrage (téléphone) reflète la
+    // box et non le téléphone. Change rarement (téléchargement / suppression) :
+    // poussée au démarrage, après _syncDeviceReciters, et à la demande.
+    var _recInFlight = false;
+    function _pushReciters(reason) {
+        if (_recInFlight) return;
+        var mid = window._ucCurrentMosqueId && window._ucCurrentMosqueId();
+        if (!mid) return;
+        var list = (Array.isArray(JS_CUSTOM.ucReciters) ? JS_CUSTOM.ucReciters : []).map(function (r) {
+            return { dir: r.dir, name: r.name, source: r.source || 'builtin', enabled: r.enabled ? 1 : 0 };
+        });
+        _recInFlight = true;
+        _L('RM', 'STATE_SNAPSHOT', { reason: reason || '', count: list.length });
+        fetch(_SB_URL + '/rest/v1/mosque_device_status', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'apikey': _SB_KEY,
+                'Authorization': 'Bearer ' + _SB_KEY,
+                'Prefer': 'resolution=merge-duplicates'
+            },
+            body: JSON.stringify({
+                mosque_id: mid,
+                reciters_state: { reciters: list, activeDir: (JS_CUSTOM.ucReciters && JS_CUSTOM.ucReciters[_qpReciterIdx] && JS_CUSTOM.ucReciters[_qpReciterIdx].dir) || '' },
+                reciters_state_at: new Date().toISOString(),
+                reciters_state_reason: reason || ''
+            })
+        }).then(function (r) {
+            if (r && !r.ok) _L('RM', 'STATE_PUSH_ERR', { status: r.status });
+        }).catch(function (e) {
+            _L('RM', 'STATE_PUSH_ERR', { error: (e && e.message) || String(e) });
+        }).then(function () { _recInFlight = false; });
+    }
+    window._ucPushRecitersSnapshot = _pushReciters;
+    setTimeout(function () { _pushReciters('startup'); }, 10000);
 
     // Branche les évènements du lecteur Coran dès qu'il apparaît (injection
     // paresseuse) -- on réessaie jusqu'à ce qu'il existe.
@@ -32110,6 +32197,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         audioPlaying:     { AR: 'قيد التشغيل',                                 FR: 'En lecture',                                             EN: 'Playing' },
         audioStopped:     { AR: 'متوقّف',                                      FR: 'Arrêté',                                                 EN: 'Stopped' },
         audioUnknown:     { AR: 'الحالة غير معروفة',                           FR: 'État inconnu',                                           EN: 'Unknown state' },
+        currentValue:     { AR: 'الحالي:',                                     FR: 'actuel :',                                               EN: 'current:' },
         audioSyncing:     { AR: 'جارٍ مزامنة حالة المشغّل...',                  FR: 'Synchronisation du lecteur...',                          EN: 'Syncing player...' },
         actionSentOk:     { AR: 'تم الإرسال',                                  FR: 'Envoyé',                                                 EN: 'Sent' },
         reloadBtn:        { AR: 'إعادة تحميل الشاشة فقط',                       FR: 'Recharger la box uniquement',                            EN: 'Reload the box only' },
@@ -32130,6 +32218,9 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         quranEnable:      { AR: 'تفعيل تشغيل القرآن قبل الأذان',                FR: "Activer la lecture du Coran avant l'azan",               EN: 'Enable Quran playback before azan' },
         quranDelayCol:    { AR: 'المدة (د)',                                    FR: 'Délai (min)',                                            EN: 'Delay (min)' },
         reciterLabel:     { AR: 'القارئ',                                       FR: 'Récitateur',                                             EN: 'Reciter' },
+        recitersSyncTitle:{ AR: 'مزامنة قائمة القرّاء مع القرّاء المثبّتين على الجهاز', FR: 'Synchroniser la liste avec les récitateurs installés sur la box', EN: 'Sync the list with reciters installed on the box' },
+        recitersSyncing:  { AR: 'جارٍ مزامنة قائمة القرّاء...',                  FR: 'Synchronisation de la liste des récitateurs...',          EN: 'Syncing reciter list...' },
+        recitersSyncOk:   { AR: '✓ قائمة القرّاء محدّثة من الجهاز',              FR: '✓ Liste des récitateurs mise à jour depuis la box',       EN: '✓ Reciter list updated from the box' },
         pinLabel:         { AR: 'رمز PIN',                                      FR: 'Code PIN',                                               EN: 'PIN code' },
         pinHint:          { AR: 'يجب أن يكون رمز PIN قد عُرّف من قبل على الشاشة (زر "رمز PIN")', FR: 'Un code PIN doit déjà avoir été défini sur la box (bouton "Code PIN")', EN: 'A PIN must already have been set on the box (the "PIN code" button)' },
         sendBtn:          { AR: 'إرسال',                                        FR: 'Envoyer',                                                EN: 'Send' },
@@ -32264,7 +32355,11 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                             '<span class="ucRARowLabel">' + _raT('quranEnable') + '</span>' +
                         '</div>' +
                         '<div id="ucRAQuranTableWrap"></div>' +
-                        '<div class="ucRARow"><span class="ucRARowLabel">' + _raT('reciterLabel') + '</span><select id="ucRAReciter" class="ucRATextInput"></select></div>' +
+                        '<div class="ucRARow ucRARecitersRow"><span class="ucRARowLabel">' + _raT('reciterLabel') + '</span>' +
+                            '<select id="ucRAReciter" class="ucRATextInput"></select>' +
+                            '<span id="ucRARecitersSyncBtn" class="ucModalBtn ucModalBtn--secondary ucRAIconBtn" role="button" tabindex="0" title="' + _raT('recitersSyncTitle') + '">&#8635;</span>' +
+                        '</div>' +
+                        '<div id="ucRARecitersStatus" class="ucRALedStatus"></div>' +
                         '<div class="ucRASectionTitle">' + _raT('pinLabel') + '</div>' +
                         '<input type="password" id="ucRAPin" class="ucRATextInput" maxlength="8" inputmode="numeric" autocomplete="off">' +
                         '<div id="ucRAPinHint">' + _raT('pinHint') + '</div>' +
@@ -32301,6 +32396,15 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         // 30/07/2026). Combiné à la garde box-only du listener 'ucRemoteAction'
         // plus haut : aucun téléphone ne peut plus réagir à cette commande.
         document.getElementById('ucRAReloadBtn').addEventListener('click', function () { _sendRemoteAction('reload', null); });
+        // Bouton de synchro de la liste des récitateurs (onglet Paramétrage) --
+        // pas de PIN : simple relecture (comme lights_refresh / audio_refresh).
+        var _recBtn = document.getElementById('ucRARecitersSyncBtn');
+        if (_recBtn) {
+            _recBtn.addEventListener('click', _requestRecitersRefresh);
+            _recBtn.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _requestRecitersRefresh(); }
+            });
+        }
         // Diagnostic à distance : déclenche sur la box le même envoi que le
         // bouton debugConsoleSendBtn (cf. IIFE "DEBUG CONSOLE" plus haut,
         // window._ucSendDebugReport) -- utile quand un incident (ex. téléchargement
@@ -32690,14 +32794,20 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             var name = (L_QURAN_PRAYER_NAMES[_raQuranEditKey] && L_QURAN_PRAYER_NAMES[_raQuranEditKey][_ucLang()]) || _raQuranEditKey;
             var titleFn = L_QURAN_EDIT_DIALOG[_ucLang()] || L_QURAN_EDIT_DIALOG.EN;
             var current = (_quranDraft[_raQuranEditKey] && _quranDraft[_raQuranEditKey].delayMin) || 0;
+            // Champ VIDE + valeur actuelle rappelée dans le titre : sur téléphone
+            // le champ pré-rempli n'est jamais re-sélectionnable après le tap qui
+            // ouvre le clavier -> la frappe s'ajoutait ("30" + "75" = "3075" ->
+            // clamp). Champ vide = la frappe EST la valeur. Submit vide = inchangé.
             inputDialogValue  = '';
             isInputDialogOpen = false;
-            openInputDialogFunction(titleFn(name), current, 'editRAQuranDelayFunction()', true);
+            openInputDialogFunction(titleFn(name) + '  —  ' + _raT('currentValue') + ' ' + current, '', 'editRAQuranDelayFunction()', true);
             return;
         }
-        var minutes = parseInt(inputDialogValue, 10);
+        var raw = String(inputDialogValue == null ? '' : inputDialogValue).trim();
+        if (raw === '') { _renderQuranTable(); return; }   // rien saisi -> on garde la valeur actuelle
+        var minutes = parseInt(raw, 10);
         if (isNaN(minutes) || minutes < 0) minutes = 0;
-        if (minutes > 30) minutes = 30;
+        if (minutes > 240) minutes = 240;   // garde-fou anti-faute de frappe (4 h) -- pas de plafond "métier"
         if (!_quranDraft[_raQuranEditKey]) _quranDraft[_raQuranEditKey] = { delayMin: 0, days: '1111111' };
         _quranDraft[_raQuranEditKey].delayMin = minutes;
         _renderQuranTable();
@@ -32709,6 +32819,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         if (_updateStatusPollTimer) { clearInterval(_updateStatusPollTimer); _updateStatusPollTimer = null; }
         _clearLedSync();
         _clearAudioSync();
+        _clearRecitersSync();
     }
 
     function _setStatus(msg, type) {
@@ -32823,18 +32934,105 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         });
     }
 
-    function _fillReciters(selectedDir) {
+    // list : facultatif -> liste des récitateurs RÉELS de la box (reciters_state,
+    // publiée par _installAudioStateReporting/_pushReciters). Sinon repli sur
+    // la liste locale de CET appareil (JS_CUSTOM.ucReciters).
+    function _fillReciters(selectedDir, list) {
         var sel = document.getElementById('ucRAReciter');
         if (!sel) return;
+        var reciters = (Array.isArray(list) && list.length)
+            ? list
+            : (Array.isArray(JS_CUSTOM.ucReciters) ? JS_CUSTOM.ucReciters : []);
+        // Si la sélection actuelle n'est plus dans la liste de la box, on la
+        // garde quand même en tête (marquée), pour ne pas la perdre en silence.
+        var seen = {}, hasSel = false;
         sel.innerHTML = '';
-        var reciters = Array.isArray(JS_CUSTOM.ucReciters) ? JS_CUSTOM.ucReciters : [];
         reciters.forEach(function (r) {
+            if (!r || !r.dir || seen[r.dir]) return;
+            seen[r.dir] = 1;
             var opt = document.createElement('option');
             opt.value = r.dir;
-            opt.textContent = r.name;
-            if (r.dir === selectedDir) opt.selected = true;
+            opt.textContent = r.name || r.dir;
+            if (r.dir === selectedDir) { opt.selected = true; hasSel = true; }
             sel.appendChild(opt);
         });
+        if (selectedDir && !hasSel) {
+            var o = document.createElement('option');
+            o.value = selectedDir;
+            o.textContent = selectedDir + ' (?)';
+            o.selected = true;
+            sel.insertBefore(o, sel.firstChild);
+        }
+    }
+
+    function _setRecitersStatus(msg, type) {
+        var el = document.getElementById('ucRARecitersStatus');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.className = 'ucRALedStatus' + (type ? ' ucRALedStatus--' + type : '');
+    }
+    var _recSyncTimer = null, _recSyncPoll = null, _recSyncSinceAt = null;
+    function _clearRecitersSync() {
+        if (_recSyncTimer) { clearTimeout(_recSyncTimer); _recSyncTimer = null; }
+        if (_recSyncPoll)  { clearInterval(_recSyncPoll); _recSyncPoll = null; }
+    }
+    function _fetchRecitersState() {
+        var mid = window._ucCurrentMosqueId();
+        if (!mid || !_modal) return Promise.resolve(null);
+        var U = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL) || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+        var K = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY) || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+        return fetch(U + '/rest/v1/mosque_device_status?mosque_id=eq.' + encodeURIComponent(mid) +
+              '&select=reciters_state,reciters_state_at,reciters_state_reason',
+              { headers: { apikey: K, Authorization: 'Bearer ' + K } })
+        .then(function (r) { return r.json(); })
+        .then(function (rows) {
+            var row = rows && rows[0];
+            if (!row || !row.reciters_state) return null;
+            var sel = document.getElementById('ucRAReciter');
+            var cur = sel ? sel.value : '';
+            _fillReciters(cur, row.reciters_state.reciters || []);
+            return { at: row.reciters_state_at || null, reason: row.reciters_state_reason || '' };
+        })
+        .catch(function (e) {
+            _L('REMOTE_ADMIN', 'RECITERS_STATE_ERR', { mosque_id: mid, error: (e && e.message) || String(e) });
+            return false;
+        });
+    }
+    function _startRecitersSync() {
+        _clearRecitersSync();
+        var _startMs = Date.now();
+        var btn = document.getElementById('ucRARecitersSyncBtn');
+        if (btn) btn.classList.add('ucRAIconBtn--spin');
+        _setRecitersStatus(_raT('recitersSyncing'), 'sync');
+        _fetchRecitersState().then(function (res) {
+            if (res === false) { _clearRecitersSync(); if (btn) btn.classList.remove('ucRAIconBtn--spin'); _setRecitersStatus(_raT('syncNetErr'), 'err'); return; }
+            _recSyncSinceAt = (res && res.at) || null;
+        });
+        _recSyncPoll = setInterval(function () {
+            _fetchRecitersState().then(function (res) {
+                if (res === false) { _clearRecitersSync(); if (btn) btn.classList.remove('ucRAIconBtn--spin'); _setRecitersStatus(_raT('syncNetErr'), 'err'); return; }
+                if (!res || !res.at) return;
+                var fresh = new Date(res.at).getTime() >= _startMs - 3000;
+                if (res.at !== _recSyncSinceAt && fresh && _isActionDrivenReason(res.reason)) {
+                    _clearRecitersSync();
+                    if (btn) btn.classList.remove('ucRAIconBtn--spin');
+                    _setRecitersStatus(_raT('recitersSyncOk') + ' — ' + _raT('ledStateAt') + ' ' + new Date(res.at).toLocaleTimeString(), 'ok');
+                }
+            });
+        }, LED_SYNC_POLL_MS);
+        _recSyncTimer = setTimeout(function () {
+            _clearRecitersSync();
+            if (btn) btn.classList.remove('ucRAIconBtn--spin');
+            _setRecitersStatus(_raT('ledSyncTimeout'), 'warn');
+            _fetchRecitersState();
+        }, LED_SYNC_TIMEOUT_MS);
+    }
+    function _requestRecitersRefresh() {
+        var mid = window._ucCurrentMosqueId();
+        if (!mid) return;
+        _L('REMOTE_ADMIN', 'RECITERS_REFRESH_REQ', { mosque_id: mid });
+        _requestActionViaPoll(mid, 'reciters_refresh', null);
+        _startRecitersSync();
     }
 
     // Pré-remplit le formulaire avec les valeurs LOCALES actuelles (celles de
@@ -33079,13 +33277,31 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _fetchUpdateStatus();
         _setLedStatus('', '');
         _setAudioStatus('', '');
-        _fetchLightsState();
-        _fetchAudioState();
+        _setRecitersStatus('', '');
+
+        // ── Demande de synchro de TOUS les états à l'ouverture ───────────────
+        // Une seule commande 'refresh_all' -> la box republie lumières + audio
+        // + récitateurs. Les 3 indicateurs passent en "synchro en cours"
+        // jusqu'à réception. L'utilisateur voit donc l'état RÉEL de la box dès
+        // l'ouverture, sans rien toucher.
+        var _midOpen = window._ucCurrentMosqueId();
+        if (_midOpen) {
+            _requestActionViaPoll(_midOpen, 'refresh_all', null);
+            _startLedSync();        // tous les LED lumières -> synchro
+            _startAudioSync();      // indicateurs audio -> synchro
+            _startRecitersSync();   // liste récitateurs -> synchro
+        } else {
+            _fetchLightsState();
+            _fetchAudioState();
+            _fetchRecitersState();
+        }
+
         if (_updateStatusPollTimer) clearInterval(_updateStatusPollTimer);
         _updateStatusPollTimer = setInterval(function () {
             _fetchUpdateStatus();
             if (!_ledSyncPoll) _fetchLightsState();   // la synchro LED gère son propre polling
             if (!_audSyncPoll) _fetchAudioState();    // idem pour l'audio
+            if (!_recSyncPoll) _fetchRecitersState(); // idem récitateurs
         }, 3000);
         _modal.classList.remove('ucRemoteAdminHidden');
         if (typeof window._pushBack === 'function') window._pushBack();

@@ -785,6 +785,7 @@ function _ucBindGuidedInput(el, type) {
         if (info && info.connected === false && info.type === 'none') {
             if (typeof window.setInternetStatus === 'function') window.setInternetStatus(false);
             _probeFailStreak = 0;
+            window._ucNetStress = true;   // interface réseau absente = stress max (cf. _installNetworkStressLoadShedding)
             return;
         }
         // Vraie sonde de joignabilité : Supabase d'abord, GitHub en secours
@@ -796,8 +797,18 @@ function _ucBindGuidedInput(el, type) {
         .then(function (ok) { return ok ? true : _probe('https://api.github.com/'); })
         .then(function (ok) {
             if (typeof window.setInternetStatus === 'function') window.setInternetStatus(!!ok);
-            if (ok) { _probeFailStreak = 0; return; }
+            if (ok) {
+                _probeFailStreak = 0;
+                window._ucNetStress = false;   // réseau réellement joignable : lève le délestage
+                return;
+            }
             _probeFailStreak++;
+            // >=2 sondes HTTP réelles ratées d'affilée = Wi-Fi/DNS de la box en
+            // vrac : signal partagé qui fige le marquee azan et espace les
+            // sondages distants -- allège le rasteriseur logiciel des boîtiers
+            // Mali pendant que la connectivité récupère (gel écran mosquée
+            // youssef, 29/08/2026). Cf. _installNetworkStressLoadShedding.
+            if (_probeFailStreak >= 2) window._ucNetStress = true;
             _L('NET', 'PROBE_FAIL', { streak: _probeFailStreak, ssid: (info && info.ssid) || '' });
             _maybeSelfReload(info && info.ssid);
         });
@@ -1085,7 +1096,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.16';
+var CUSTOM_APP_VERSION = '14.21';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1392,6 +1403,94 @@ window._ucResolveCityCode = _ucResolveCityCode;
 // ulterieure) prend le pas sur ce defaut, comme pour tout autre reglage.
 var _ucIsRealPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
     && !window.AndroidMobile.isAndroidTv());
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RELOAD DIFFÉRABLE — jamais de location.reload() pendant la fenêtre azan/iqama
+// ─────────────────────────────────────────────────────────────────────────────
+// Un location.reload() est un redémarrage à froid de toute l'app (~40 000
+// lignes de JS re-parsées) : plusieurs secondes d'écran figé, aggravées sous
+// mauvaise connexion (rafale de fetch d'init qui pendouillent). Inacceptable en
+// plein compte à rebours d'iqama ou juste avant un azan. Ce garde-fou central
+// reporte tout reload DISCRÉTIONNAIRE (bouton "actualiser"/drapeau, sync config
+// reçue à distance, action distante 'reload') jusqu'à la sortie de la fenêtre
+// critique — il ne bloque jamais définitivement, il re-tente toutes les 60 s.
+// Les horaires n'ont de toute façon pas besoin de reload : calculés en local
+// (calculateAndDisplayTimesFunction), 100 % hors-ligne. m2body.js est chargé
+// avant custom.js -> restartApplicationFunction existe déjà ici.
+// ═════════════════════════════════════════════════════════════════════════════
+(function _installDeferrableReload() {
+    var GUARD_BEFORE_MIN = 12;   // azan imminent : 12 min avant l'heure
+    var GUARD_AFTER_MIN  = 20;   // fenêtre iqama : jusqu'à 20 min après l'azan
+    var RETRY_MS         = 60000;
+
+    function _pt(name) {
+        try {
+            var v = window[name];
+            return (typeof v === 'number' && !isNaN(v)) ? v : null;
+        } catch (e) { return null; }
+    }
+
+    // True si un reload maintenant couperait un azan / une séquence d'iqama.
+    window._ucReloadGuardActive = function () {
+        try {
+            if (typeof isIqamaCounterActive !== 'undefined' && isIqamaCounterActive) return true;
+            var ids = ['azanPopupVertical', 'azanPopupHorizontal', 'iqamaPopupVertical', 'iqamaPopupHorizontal'];
+            for (var i = 0; i < ids.length; i++) {
+                var el = document.getElementById(ids[i]);
+                if (el && !el.classList.contains('hiddenClass')) return true;
+            }
+            var now  = new Date();
+            var mins = now.getHours() * 60 + now.getMinutes();
+            var times = [_pt('fajrTimeInMinutes'), _pt('dohrTimeInMinutes'), _pt('asrTimeInMinutes'),
+                         _pt('maghribTimeInMinutes'), _pt('ishaTimeInMinutes')];
+            for (var j = 0; j < times.length; j++) {
+                if (times[j] === null) continue;
+                var d = times[j] - mins;
+                if (d <= GUARD_BEFORE_MIN && d >= -GUARD_AFTER_MIN) return true;
+            }
+            return false;
+        } catch (e) { return false; }
+    };
+
+    function _deferMsg() {
+        return 'سيُعاد التحميل بعد الإقامة | Actualisation reportée (prière en cours)';
+    }
+    function _toast() {
+        try { if (typeof window._ucToast === 'function') window._ucToast(_deferMsg(), 'ok'); } catch (e) {}
+    }
+
+    var _retry = null;
+    function _doReload(reason) {
+        if (typeof _L === 'function') _L('RELOAD', 'FIRE', { reason: reason });
+        try { location.reload(); } catch (e) {}
+    }
+
+    // API centrale : appelle-la à la place de tout location.reload() volontaire.
+    window._ucDeferrableReload = function (reason) {
+        reason = reason || 'unspecified';
+        if (!window._ucReloadGuardActive()) { _doReload(reason); return; }
+        if (typeof _L === 'function') _L('RELOAD', 'DEFERRED', { reason: reason });
+        _toast();
+        if (_retry) return;   // une re-tentative est déjà armée
+        _retry = setInterval(function () {
+            if (window._ucReloadGuardActive()) return;
+            clearInterval(_retry); _retry = null;
+            _doReload(reason + '_deferred');
+        }, RETRY_MS);
+    };
+
+    // Bouton "actualiser" en bas de l'écran (drapeau / ps.png -> onclick=
+    // restartApplicationFunction, core m2body.js). SEUL ce point d'entrée est
+    // routé : restartApplicationReload lui-même reste direct pour les flux
+    // sensibles (changement de langue, reset réglages...).
+    if (typeof window.restartApplicationFunction === 'function') {
+        window.restartApplicationFunction = function () {
+            window._ucDeferrableReload('manual_refresh_button');
+        };
+    }
+
+    if (typeof _L === 'function') _L('CUSTOM', 'INIT', { item: 'deferrableReload' });
+})();
 
 const JS_CUSTOM_DEFAULTS = {
     // ── Profil mosquée éditable (ucMosqueInfoAddress, cf. _installMosqueInfoModal) :
@@ -4378,6 +4477,39 @@ function _lightPrayerAllowed(item, prayerKey) {
 // Dernière prière dont l'azan s'est affiché (pour afterAzanHide)
 let _lastAzanPrayer = '';
 
+// Calcul 100% autonome de la prière courante depuis l'horloge murale + le bloc
+// d'horaires du cœur (prayerTimesMinutesObject, rempli par m2body.js ~L3532 ;
+// repli sur les globales *TimeInMinutes). AUCUNE dépendance à injectTechOptionsUI
+// (contrairement à _ucComputeCurrentPrayerFromClock, qui y est enfermé et
+// invisible d'ici). Renvoie '' si les horaires du jour ne sont pas encore
+// calculés (cold start) -- mieux vaut un skip qu'une mauvaise prière.
+function _ucPrayerKeyFromClock() {
+    try {
+        var o = (typeof prayerTimesMinutesObject === 'object' && prayerTimesMinutesObject) ? prayerTimesMinutesObject : null;
+        function _pick(objKey, glob) {
+            var v = o ? o[objKey] : undefined;
+            if (typeof v === 'number' && v > 0) return v;
+            return (typeof glob === 'number' && glob > 0) ? glob : 0;
+        }
+        var fajr = _pick('FAJR', typeof fajrTimeInMinutes    === 'number' ? fajrTimeInMinutes    : 0);
+        var shrq = _pick('SHRQ', typeof shuruqTimeInMinutes  === 'number' ? shuruqTimeInMinutes  : 0);
+        var dohr = _pick('DOHR', typeof dohrTimeInMinutes    === 'number' ? dohrTimeInMinutes    : 0);
+        var assr = _pick('ASSR', typeof asrTimeInMinutes     === 'number' ? asrTimeInMinutes     : 0);
+        var mgrb = _pick('MGRB', typeof maghribTimeInMinutes === 'number' ? maghribTimeInMinutes : 0);
+        var isha = _pick('ISHA', typeof ishaTimeInMinutes    === 'number' ? ishaTimeInMinutes    : 0);
+        if (!fajr || !dohr || !mgrb || !isha) return '';   // horaires pas prêts
+        var now  = new Date();
+        var mins = now.getHours() * 60 + now.getMinutes();
+        if (mins <= fajr)           return 'ISHA';   // avant Fajr = nuit précédente
+        if (shrq && mins <= shrq)   return 'FAJR';
+        if (mins <= dohr)           return 'SHRQ';
+        if (mins <= assr)           return 'DOHR';
+        if (mins <= mgrb)           return 'ASSR';
+        if (mins <= isha)           return 'MGRB';
+        return 'ISHA';
+    } catch (e) { return ''; }
+}
+
 // Résout la prière "courante" de façon robuste face aux rechargements de
 // page. _lastAzanPrayer n'est mise à jour QUE par le handler AZAN_SHOW (plus
 // bas) : si la page JS est (re)démarrée après l'azan d'une prière mais avant
@@ -4386,11 +4518,12 @@ let _lastAzanPrayer = '';
 // cycle, ce qui bloque silencieusement TOUT ce qui en dépend (LIGHTS
 // beforeIqama/afterAzan dont ampliInt, minaret/mihrab, TAKBIR, AZKAR, doua
 // post-azan...) puisqu'une chaîne vide ne correspond à aucun masque/filtre.
-// Repli sur _ucPrayerNow() (plus bas dans ce fichier ; accessible ici par
-// hoisting de function), qui dérive la prière courante de
-// currentPrayerInterval -- recalculé en continu par le cœur (clockTick),
-// donc toujours à jour indépendamment de l'historique des évènements de
-// cette session. Même substitution Jumu'ah que _getUpcomingPrayerKey().
+// Repli sur window._ucPrayerNow() (dérive de currentPrayerInterval, recalculé
+// en continu par le cœur) PUIS sur _ucPrayerKeyFromClock() ci-dessus (calcul
+// horaire autonome). NB : ces helpers vivent DANS injectTechOptionsUI ; ils
+// sont donc appelés via window.* ici, pas par "hoisting" (qui ne traverse pas
+// l'IIFE -- ancien commentaire erroné, cause du bug amplis aboubakr 30/08).
+// Même substitution Jumu'ah que _getUpcomingPrayerKey().
 function _ucCurrentPrayerKey() {
     // BUG (trouvé 21/08/2026, logs Supabase mosquée tn.monastir.hidaya) :
     // _lastAzanPrayer est alimentée directement depuis e.prayer du cœur (cf.
@@ -4409,11 +4542,20 @@ function _ucCurrentPrayerKey() {
         if (_lastAzanPrayer === 'DOHR' && typeof isFriday !== 'undefined' && isFriday) return 'JOMOA';
         return _lastAzanPrayer;
     }
-    var k = (typeof _ucPrayerNow === 'function') ? _ucPrayerNow() : '';
-    if (!k || k === 'UNKNOWN') {
-        k = (typeof _ucComputeCurrentPrayerFromClock === 'function') ? _ucComputeCurrentPrayerFromClock() : '';
-    }
-    if (!k) return '';
+    // BUG (box tn.monastir.aboubakr, Maghreb 30/08/2026 -- amplis imam/azan
+    // sautés en reason=mask_blocked après un update/reload en pleine séquence) :
+    // _ucPrayerNow / _ucComputeCurrentPrayerFromClock sont enfermés dans
+    // injectTechOptionsUI (IIFE) -> `typeof` valait toujours 'undefined' ici
+    // (top-level), les deux replis étaient MORTS, et cette fonction renvoyait ''
+    // dès que _lastAzanPrayer était vide (tout cycle post-reload). Corrigé :
+    // (1) export window._ucPrayerNow ;
+    // (2) _ucPrayerKeyFromClock() ci-dessus, repli horaire 100% autonome
+    //     (préféré à _ucComputeCurrentPrayerFromClock, qui renvoie 'ISHA' à tort
+    //      quand les globales *TimeInMinutes valent encore 0 -- pas de garde >0).
+    var k = '';
+    try { if (typeof window._ucPrayerNow === 'function') k = window._ucPrayerNow() || ''; } catch (e) {}
+    if (!k || k === 'UNKNOWN') k = _ucPrayerKeyFromClock();
+    if (!k || k === 'UNKNOWN') return '';
     if (k === 'DOHR' && typeof isFriday !== 'undefined' && isFriday) return 'JOMOA';
     return k;
 }
@@ -10755,6 +10897,10 @@ function _ucPrayerNow() {
 function _ucComputeCurrentPrayerFromClock() {
     try {
         if (typeof fajrTimeInMinutes !== 'number' || typeof ishaTimeInMinutes !== 'number') return '';
+        // Les globales sont initialisées à 0 (m1prime.js) : `typeof ... number`
+        // ne suffit pas -- si les horaires du jour ne sont pas encore calculés,
+        // tout vaut 0 et la cascade ci-dessous renverrait 'ISHA' à tort.
+        if (!fajrTimeInMinutes || !dohrTimeInMinutes || !maghribTimeInMinutes || !ishaTimeInMinutes) return '';
         var now = new Date();
         var mins = now.getHours() * 60 + now.getMinutes();
         if (mins <= fajrTimeInMinutes)    return 'ISHA';   // nuit precedente, avant Fajr
@@ -10777,12 +10923,18 @@ function _ucPrayerAtMinutes(t) {
     if (t === ishaTimeInMinutes)    return 'ISHA';
     return _ucPrayerNow();
 }
-// Exposé sur window : _ucPrayerAtMinutes (comme _ucPrayerNow/_ucComputeCurrentPrayerFromClock)
-// est défini DANS injectTechOptionsUI et donc invisible en portée lexicale depuis
-// les IIFE frères déclarés plus bas dans ce fichier (ex. _installAzanPerPrayerVoiceGate).
+// Exposé sur window : _ucPrayerAtMinutes / _ucPrayerNow / _ucComputeCurrentPrayerFromClock
+// sont définis DANS injectTechOptionsUI et donc invisibles en portée lexicale depuis
+// le code hors de cette IIFE (top-level ET IIFE frères déclarés plus bas).
 // Sans cet export, un appel `_ucPrayerAtMinutes(...)` hors injectTechOptionsUI lève
-// ReferenceError (constaté boîtier aboubaker, playAzanSoundFunction, custom.js:30952).
+// ReferenceError (constaté boîtier aboubaker, playAzanSoundFunction, custom.js:30952) ;
+// et `typeof _ucPrayerNow` / `typeof _ucComputeCurrentPrayerFromClock` valaient
+// silencieusement 'undefined' dans _ucCurrentPrayerKey() (top-level) -> ses deux
+// replis étaient du code MORT, d'où reason=mask_blocked sur les amplis après
+// tout reload mi-cycle (constaté box tn.monastir.aboubakr, Maghreb 30/08/2026).
 window._ucPrayerAtMinutes = _ucPrayerAtMinutes;
+window._ucPrayerNow = _ucPrayerNow;
+window._ucComputeCurrentPrayerFromClock = _ucComputeCurrentPrayerFromClock;
 
 // Heure en minutes depuis minuit pour une clé de prière
 function _ucPrayerMinutes(key) {
@@ -15302,6 +15454,7 @@ function forceHijriSyncFunction() {
         if (_azanTickerWatchdog) return;
         _azanTickerWatchdog = setInterval(function() {
             if (!_azanMarqueeActive || !marqueeElement) return;
+            if (window._ucMarqueeNetShed) return;   // délestage réseau volontaire en cours : ne pas relancer (cf. _installNetworkStressLoadShedding)
             var _anim = marqueeElement.style.animation || '';
             if (!_anim || _anim === 'none') {
                 _L('MARQUEE', 'WATCHDOG_RESTART', { reason: 'animation_stopped_unexpectedly' });
@@ -20785,6 +20938,11 @@ function selectQPTakbir() {
             }
         };
         if (!patch.mosque_name) delete patch.mosque_name;   // jamais écraser le nom par vide
+        // Idem photo : un PATCH image_url:null effacerait la photo distante alors
+        // que le fichier Storage existe toujours. Clé omise → PATCH laisse la
+        // colonne intacte. (Upload d'une nouvelle photo : ucMosqueImageUrl est
+        // alors renseigné, la clé passe normalement — cf. _openMosquePhotoPicker.)
+        if (!patch.image_url) delete patch.image_url;
         var _t0 = Date.now();
         _L('CFG', 'PROFILE_PATCH_SEND', { mosque_id: mid });
         fetch(_SB_URL + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid), {
@@ -23634,10 +23792,18 @@ function selectQPTakbir() {
             mosque_id:     mosqueId,
             mosque_name:   _resolvedName,
             location_code: _liveCity || (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.LOCATION_CODE) || null,
-            image_url:     JS_CUSTOM.ucMosqueImageUrl || null,
             profile:       _mqProfile,
             backup_json:   r.backup
         };
+        // Photo mosquée : n'inclure image_url QUE si on en a réellement une en
+        // local. Un device dont le ucMosqueImageUrl est vide (jamais chargé,
+        // ou reset via _finishSelectMosque) pousserait sinon image_url:null →
+        // merge-duplicates EFFACE la colonne pour toute la mosquée, alors que
+        // le fichier reste dans Storage (bug constaté tn.monastir.aboubakr,
+        // 29/08/2026 — seule mosquée Monastir sans image_url alors que son
+        // .webp existait toujours). Clé omise = colonne préservée. Il n'existe
+        // aucun bouton "supprimer la photo" : pas besoin de pousser null.
+        if (JS_CUSTOM.ucMosqueImageUrl) row.image_url = JS_CUSTOM.ucMosqueImageUrl;
         // Nouvelle proposition uniquement : status='pending' (à valider dans
         // mosque-admin). Un export/sync sur une mosquée déjà établie n'envoie
         // pas de status -> merge-duplicates préserve la valeur existante.
@@ -23666,6 +23832,18 @@ function selectQPTakbir() {
                     mihrab:  { enabled: JS_CUSTOM.ucIqamaZeroMihrabBlinkEnabled  || 0, duration: JS_CUSTOM.ucIqamaZeroMihrabBlinkDuration  || 0 }
                 }
             };
+            // Planning Coran avant azan (grille ucQuranAutoStartTableHost) :
+            // box-only, même raison qu'automation. _pushRemoteBackup n'écrivait
+            // QUE backup_json pour ce réglage ; la colonne structurée
+            // quran_settings restait figée sur sa dernière valeur posée par le
+            // tab "Paramétrage à distance" (_submit) — puis _applyRow la
+            // ré-appliquait, révoquant les éditions faites directement sur la
+            // box, prière par prière (if(!p)return dans _applyRow → FAJR/DOHR/
+            // ASR « qui ne tiennent pas », 30/08/2026). La box redevient source
+            // de vérité pour ce réglage comme pour automation.
+            if (typeof window._buildQuranSettingsPayload === 'function') {
+                row.quran_settings = window._buildQuranSettingsPayload();
+            }
         }
         fetch(_SB_URL + '/rest/v1/mosques', {
             method:  'POST',
@@ -23747,13 +23925,29 @@ function selectQPTakbir() {
 
     // -- Récupère le blob complet distant par mosque_id (mosques.backup_json) --
     function _pullRemoteBackup(mosqueId, onDone) {
-        fetch(_SB_URL + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mosqueId) + '&select=backup_json', {
+        fetch(_SB_URL + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mosqueId) + '&select=backup_json,image_url', {
             headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY }
         })
         .then(function (r) { return r.ok ? r.json() : []; })
         .then(function (rows) {
-            if (rows && rows[0] && rows[0].backup_json) onDone(JSON.stringify(rows[0].backup_json));
-            else onDone(null);
+            if (!rows || !rows[0] || !rows[0].backup_json) { onDone(null); return; }
+            var bj = rows[0].backup_json;
+            // La colonne image_url fait autorité pour la photo : elle est
+            // rafraîchie par un PATCH ciblé au changement de photo/profil
+            // (_autoPushProfileIfRealMosque, v14.16) qui NE réécrit PAS
+            // backup_json. Sans cette réinjection, un "Import config → Distant"
+            // (ou le repli sélecteur) restaurerait la photo périmée/vide figée
+            // dans le blob. Fusion lecture seule, juste avant _restoreFromJson.
+            try {
+                if (rows[0].image_url && bj && bj.data && typeof bj.data.JS_DATA_CUSTOM === 'string') {
+                    var _jdc = JSON.parse(bj.data.JS_DATA_CUSTOM);
+                    if (_jdc.ucMosqueImageUrl !== rows[0].image_url) {
+                        _jdc.ucMosqueImageUrl = rows[0].image_url;
+                        bj.data.JS_DATA_CUSTOM = JSON.stringify(_jdc);
+                    }
+                }
+            } catch (e) {}
+            onDone(JSON.stringify(bj));
         })
         .catch(function () { onDone(null); });
     }
@@ -25856,6 +26050,12 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             reciterDir: _active.length ? _active[0].dir : ''
         };
     }
+    // Exposé pour _pushRemoteBackup (_installConfigBackup, IIFE distincte) :
+    // sur une box, l'export doit alimenter la colonne structurée quran_settings
+    // en plus de backup_json — sinon _applyRow (sync 18 s) ré-applique la
+    // colonne périmée par-dessus une édition faite sur la box, prière par
+    // prière (constaté : FAJR/DOHR/ASR « qui ne tiennent pas »).
+    window._buildQuranSettingsPayload = _buildQuranSettingsPayload;
 
     // ── Overlay preview ───────────────────────────────────────────────────
     var ov = document.createElement('div');
@@ -26694,8 +26894,14 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         if (typeof calculateAndDisplayTimesFunction === 'function')
             calculateAndDisplayTimesFunction();
         _L('SYNC', 'APPLIED', { mosque_id: row.mosque_id });
-        // Rechargement complet apres 1.2 s pour rafraichir tout l'affichage
-        setTimeout(function() { location.reload(); }, 1200);
+        // Rechargement complet apres 1.2 s pour rafraichir tout l'affichage --
+        // via _ucDeferrableReload : jamais en pleine fenetre azan/iqama (les
+        // horaires viennent deja d'etre re-appliques + calculateAndDisplayTimes
+        // ci-dessus, l'affichage est correct meme sans le reload immediat).
+        setTimeout(function() {
+            if (typeof window._ucDeferrableReload === 'function') window._ucDeferrableReload('remote_config_sync');
+            else location.reload();
+        }, 1200);
     }
 
     // onNotFound (optionnel) : appelé au lieu du toast d'erreur "noData"
@@ -26789,7 +26995,8 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         _L('REMOTE_ACTION', 'FIRE', { action: action, target: target });
 
         if (action === 'reload') {
-            location.reload();
+            if (typeof window._ucDeferrableReload === 'function') window._ucDeferrableReload('remote_action');
+            else location.reload();
             return;
         }
         // ── AUDIO CORAN ─────────────────────────────────────────────────────
@@ -27310,13 +27517,28 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
                || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
     var _isBoxDev = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
         && window.AndroidMobile.isAndroidTv());
+    var _lastPollAt = 0;
 
     function _poll() {
+        // Hors-ligne : ne pas ouvrir un socket qui va pendouiller jusqu'au
+        // timeout (mauvaise connexion cellulaire) -- rien à synchroniser de
+        // toute façon, le prochain cycle réessaiera quand le réseau revient.
+        try { if (navigator && navigator.onLine === false) return; } catch (e) {}
+        // Réseau en vrac (window._ucNetStress, posé par la sonde HTTP de l'icône
+        // internet) : espacer à 60s au lieu de 18s -- empiler des fetch qui
+        // échouent toutes les 18s alourdit le thread au pire moment (gel écran,
+        // cf. _installNetworkStressLoadShedding). Reprend son rythme dès le vert.
+        if (window._ucNetStress === true && (Date.now() - _lastPollAt) < 60000) return;
+        _lastPollAt = Date.now();
         var mid = window._ucCurrentMosqueId();
         if (!mid) return;
+        // Timeout explicite : AbortSignal.timeout() absent de ce WebView.
+        var _ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var _to   = _ctrl ? setTimeout(function () { try { _ctrl.abort(); } catch (e) {} }, 8000) : null;
         fetch(_SB_URL + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid) + '&select=updated_at',
-              { headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY } })
-        .then(function(r) { return r.json(); })
+              { headers: { 'apikey': _SB_KEY, 'Authorization': 'Bearer ' + _SB_KEY },
+                signal: _ctrl ? _ctrl.signal : undefined })
+        .then(function(r) { if (_to) clearTimeout(_to); return r.json(); })
         .then(function(rows) {
             var row = rows && rows[0];
             if (!row || !row.updated_at) return;
@@ -27347,7 +27569,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
                 if (typeof window._ucSyncFromSupabase === 'function') window._ucSyncFromSupabase(mid, true);
             }
         })
-        .catch(function() {}); // silencieux -- prochain cycle réessaiera
+        .catch(function() { if (_to) clearTimeout(_to); }); // silencieux -- prochain cycle réessaiera
     }
 
     setTimeout(_poll, 5000);
@@ -27518,12 +27740,20 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     var POLL_MS = 6000;
     var _lastKnown; // undefined tant que _poll() n'a pas tourné une 1ère fois
     var _pollErrStreak = 0;
+    var _lastPollAt = 0;
     var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
                || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
     var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
                || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
 
     function _poll() {
+        // Wi-Fi/DNS de la box en vrac (window._ucNetStress) : espacer à 60s.
+        // Empiler un fetch qui échoue toutes les 6s alourdit le thread de rendu
+        // logiciel (boîtiers Mali) au pire moment -- gel écran mosquée youssef
+        // le 29/08/2026 pendant une coupure Wi-Fi. Le poll reprend son rythme
+        // normal dès que les sondes réseau repassent au vert.
+        if (window._ucNetStress === true && (Date.now() - _lastPollAt) < 60000) return;
+        _lastPollAt = Date.now();
         var mid = window._ucCurrentMosqueId();
         if (!mid) return;
         fetch(_SB_URL + '/rest/v1/mosque_device_status?mosque_id=eq.' + encodeURIComponent(mid)
@@ -28781,6 +29011,10 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
 
     function _ping() {
+        // Hors-ligne / réseau en vrac : inutile d'ouvrir un socket qui va
+        // pendouiller -- le keep-alive n'a d'intérêt que si la requête part.
+        try { if (navigator && navigator.onLine === false) return; } catch (e) {}
+        if (window._ucNetStress === true) return;
         fetch(_url + '/rest/v1/mosques?select=mosque_id&limit=1', {
             method: 'GET',
             headers: { 'apikey': _key, 'Authorization': 'Bearer ' + _key }
@@ -29908,6 +30142,11 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         } catch (e) { return null; }
     }
 
+    // Demande de permission notifications / exemption batterie faite au plus
+    // une fois par session, quand les alarmes natives sont reellement armees
+    // sur telephone (cf. bloc en fin de _sendToNative).
+    var _phonePermPrompted = false;
+
     function _sendToNative() {
         _syncPlaybackFlagsToNative();
         var obj = prayerTimesMinutesObject;
@@ -30074,6 +30313,35 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             if (typeof window.AndroidMobile.log === 'function') {
                 window.AndroidMobile.log('[NativeAlarms] WARNING: exact alarm permission NOT granted - azan will not fire in background');
             }
+        }
+
+        // Permission POST_NOTIFICATIONS (Android 13+) + exemption batterie sur
+        // TELEPHONE. Depuis v14.0, MainActivity ne les demande plus au demarrage
+        // sur telephone (report volontaire au 1er lancement) -- elles ne sont
+        // reclamees que par _ucToggleAzanAlert / _ucToggleHadithReminder /
+        // _ucToggleAutoStart. Or la notification azan a l'heure exacte est
+        // OBLIGATOIRE sur telephone (cf. bloc azanEnabled plus haut) et ne
+        // passe par AUCUN de ces trois toggles : un telephone jamais passe par
+        // ces reglages (mise a jour depuis v13.x, permission jamais accordee)
+        // n'affichait alors PLUS AUCUNE notification, ni azan ni hadith
+        // (notify() silencieusement ignore par le systeme). On la demande donc
+        // ici, une fois par session, une fois les alarmes reellement armees
+        // (l'appli a fini de charger -> plus de popup "avant d'avoir montre la
+        // valeur"). Les deux appels natifs sont idempotents : requestNotif-
+        // Permission ne relance rien si deja accordee (ni apres 2 refus, l'OS
+        // supprime le dialogue), requestBatteryOptimizationExemption sort
+        // aussitot si l'exemption est deja acquise.
+        if (isPhone && !_phonePermPrompted) {
+            _phonePermPrompted = true;
+            try {
+                if (typeof window.AndroidMobile.requestNotificationPermission === 'function') {
+                    window.AndroidMobile.requestNotificationPermission();
+                }
+                if (typeof window.AndroidMobile.requestBatteryOptimizationExemption === 'function') {
+                    window.AndroidMobile.requestBatteryOptimizationExemption();
+                }
+            } catch (e) {}
+            _L('AZAN', 'PHONE_PERM_PROMPT', { reason: 'native_alarms_armed' });
         }
     }
 
@@ -30389,6 +30657,117 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     _L('CUSTOM', 'INIT', { item: 'hadithReminder' });
 })();
 // ═══ FIN RAPPEL HADITH ═══
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RECALCUL FORCÉ APRÈS SAUT D'HORLOGE + WATCHDOG « prochaine prière inconnue »
+// ─────────────────────────────────────────────────────────────────────────────
+// Incident box aboubakr, 30/08/2026 : cold-boot ~19h33 avec RTC fausse -> le
+// cœur calcule les horaires du jour pour une mauvaise date (Isha « 19h26 » au
+// lieu de 20h16). À 19h34 Android corrige l'horloge (ACTION_TIME_CHANGED ->
+// TimeChangeReceiver -> MainActivity.rescheduleNativeAzanAlarmsIfReady), MAIS
+// rien ne forçait le CŒUR à recalculer ses horaires -> `currentPrayerInterval`
+// est restée vide ~40 min : aucun compte à rebours, aucune automatisation
+// pré-azan (Coran auto, ampliExtOn/IntOn). Le muezzin a dû tout faire à la main.
+//
+// A) window._ucOnSystemTimeChanged — appelée par MainActivity à la place du
+//    simple _ucRescheduleNativeAzanAlarms : recalcul COMPLET du cœur D'ABORD
+//    (calculateAndDisplayTimesFunction + updateNextPrayerDisplayFunction), PUIS
+//    reprogrammation de toutes les alarmes natives dérivées des horaires --
+//    sinon _sendToNative repartait des horaires périmés du cœur.
+// B) Watchdog : app au premier plan + `currentPrayerInterval` vide > 2 min =
+//    anormal -> recalcul forcé. Ramène le pire cas de ~40 min à ~2 min, quelle
+//    que soit la cause du blocage. Complémentaire du fix _ucCurrentPrayerKey
+//    (v14.20) : celui-ci ne couvre QUE les masques de lumières ; ici on répare
+//    currentPrayerInterval lui-même (compte à rebours, _getUpcomingPrayerKey,
+//    Coran auto...).
+// ═════════════════════════════════════════════════════════════════════════════
+(function _installTimeChangeRecovery() {
+
+    // Recalcul du cœur SANS risque de re-déclencher un azan :
+    //  - calculateAndDisplayTimesFunction() : recalcule les 6 horaires + pose
+    //    currentDateString (donc corrige un calcul fait sur une mauvaise date).
+    //  - updateTimeAndPrayersFunction(true) : rafraîchit currentTimeInMinutes +
+    //    re-check date ; `true` = RETURN avant les tests "== heure d'azan"
+    //    (m2body.js:2165) -> aucun showAzanPopup / startIqamaCounter parasite.
+    //  - updateNextPrayerDisplayFunction(currentTimeInMinutes) : SEULE fonction
+    //    qui repose currentPrayerInterval / nextPrayerNameTemp ; ne fait que ça,
+    //    aucun déclenchement (m2body.js:2567). updateTimeAndPrayersFunction(true)
+    //    ne l'appelle justement PAS -> on l'appelle explicitement.
+    function _forceCoreRecompute(reason) {
+        try { if (typeof calculateAndDisplayTimesFunction === 'function') calculateAndDisplayTimesFunction(); } catch (e) {}
+        try { if (typeof updateTimeAndPrayersFunction === 'function') updateTimeAndPrayersFunction(true); } catch (e) {}
+        try {
+            if (typeof updateNextPrayerDisplayFunction === 'function' && typeof currentTimeInMinutes === 'number')
+                updateNextPrayerDisplayFunction(currentTimeInMinutes);
+        } catch (e) {}
+        _L('SYS', 'FORCE_RECOMPUTE', {
+            reason: reason,
+            interval: (typeof currentPrayerInterval !== 'undefined' ? (currentPrayerInterval || '(vide)') : '(undef)')
+        });
+    }
+
+    // Toutes les alarmes natives dérivées des horaires du jour (chacune expose
+    // son propre re-scheduler sur window, cf. IIFEs correspondantes).
+    function _rescheduleAllNativeAlarms() {
+        ['_ucRescheduleNativeAzanAlarms', '_ucRescheduleHadithReminder',
+         '_ucRescheduleSilentMode', '_ucRescheduleQuickMuteAfterAzan',
+         '_ucRescheduleVolumeBoost'].forEach(function (n) {
+            try { if (typeof window[n] === 'function') window[n](); } catch (e) {}
+        });
+    }
+
+    // Appelée par MainActivity (TimeChangeReceiver) à chaque ACTION_TIME_CHANGED
+    // -- typiquement la correction NTP 30-90 s après un cold-boot.
+    window._ucOnSystemTimeChanged = function () {
+        _L('SYS', 'TIME_CHANGED_RECOVER', {});
+        _forceCoreRecompute('system_time_changed');
+        // Le recalcul du cœur peut être asynchrone (chargement wtimes après un
+        // changement de ville, etc.) : 2e passe + reprogrammation native après
+        // une courte marge -- même principe que les délais 1.5-2 s ailleurs ici.
+        setTimeout(function () {
+            _forceCoreRecompute('system_time_changed_delayed');
+            _rescheduleAllNativeAlarms();
+        }, 2000);
+    };
+
+    // ── Watchdog « prochaine prière inconnue » ──────────────────────────────
+    var CHECK_MS          = 30000;    // vérification toutes les 30 s
+    var STALE_MS          = 120000;   // currentPrayerInterval vide > 2 min = anormal
+    var RECOVER_GAP_MS    = 300000;   // 1 recalcul forcé / 5 min max (anti-boucle)
+    var _emptySince    = 0;
+    var _lastRecoverAt = 0;
+    var _lastCheckWall = Date.now();
+
+    setInterval(function () {
+        var wall = Date.now();
+        // Le vérificateur a-t-il été suspendu (arrière-plan = pauseTimers, ou
+        // moteur JS gelé) ? -> on réamorce, l'app n'était pas "au premier plan
+        // avec prière inconnue" tout ce temps.
+        if (wall - _lastCheckWall > CHECK_MS * 3) { _lastCheckWall = wall; _emptySince = 0; return; }
+        _lastCheckWall = wall;
+
+        if (document.hidden) { _emptySince = 0; return; }
+
+        var iv = (typeof currentPrayerInterval !== 'undefined') ? String(currentPrayerInterval || '') : '';
+        if (iv) { _emptySince = 0; return; }   // état sain
+
+        if (!_emptySince) { _emptySince = wall; return; }
+        if (wall - _emptySince < STALE_MS)         return;   // pas encore assez long
+        if (wall - _lastRecoverAt < RECOVER_GAP_MS) return;   // déjà tenté récemment
+
+        _lastRecoverAt = wall;
+        _L('SYS', 'PRAYER_INTERVAL_STUCK', { emptyForSec: Math.round((wall - _emptySince) / 1000) });
+        _forceCoreRecompute('watchdog_interval_empty');
+        setTimeout(function () {
+            _forceCoreRecompute('watchdog_interval_empty_delayed');
+            _rescheduleAllNativeAlarms();
+        }, 2000);
+        _emptySince = 0;   // laisse repartir un cycle de mesure
+    }, CHECK_MS);
+
+    _L('CUSTOM', 'INIT', { item: 'timeChangeRecovery' });
+})();
+// ═══ FIN RECALCUL FORCÉ APRÈS SAUT D'HORLOGE ═══
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SUGGESTION DE MOSQUÉE PROCHE QUAND LE GPS S'ÉLOIGNE DE LA MOSQUÉE CONFIGURÉE
@@ -31785,113 +32164,17 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 // ═══ FIN AZAN PAR PRIÈRE ═══
 
 // ═════════════════════════════════════════════════════════════════════════════
-// PULL-TO-REFRESH — glisser le doigt du haut de l'écran vers le bas relance
-// l'application (location.reload()), avec une flèche circulaire animée comme
-// retour visuel (même geste que les apps mobiles classiques).
+// PULL-TO-REFRESH — RETIRÉ (30/08/2026).
 // ─────────────────────────────────────────────────────────────────────────────
-// #ucPullRefreshIndicator est purement visuel (pointer-events:none) : les
-// écouteurs réels sont sur document, en passive (body a overflow:hidden, donc
-// aucun scroll natif à bloquer). Le geste n'est pris en compte que si le doigt
-// se pose près du haut de l'écran (PULL_START_MAX_Y) ET qu'aucune modale/popup
-// custom (_ucPullBlocked) n'est active, pour ne jamais interférer avec le menu,
-// les popups azan/iqama natifs (core, classe hiddenClass) ou l'écran noir.
-(function _installPullToRefresh() {
-    var PULL_START_MAX_Y = 70;  // le doigt doit se poser près du haut de l'écran
-    var PULL_THRESHOLD    = 80; // distance tirée avant que le relâchement recharge
-    var PULL_MAX           = 130; // limite visuelle (effet "élastique")
-
-    var indicator = document.createElement('div');
-    indicator.id = 'ucPullRefreshIndicator';
-    indicator.innerHTML =
-        '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" ' +
-             'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' +
-            '<path d="M4 4v6h6"/>' +
-            '<path d="M20 20v-6h-6"/>' +
-            '<path d="M5.5 15a8 8 0 0 0 13.9 2.5M18.5 9A8 8 0 0 0 4.6 6.5"/>' +
-        '</svg>';
-    document.body.appendChild(indicator);
-
-    // Vrai si un menu/popup/modale custom est actuellement ouvert — le geste
-    // ne doit alors rien faire (évite un rechargement accidentel pendant que
-    // l'utilisateur interagit avec autre chose).
-    function _ucPullBlocked() {
-        // isMenuOpen === true signifie en réalité "menu FERMÉ" côté core
-        // (m2body.js) — cf. _installMenuTabs plus haut dans ce fichier.
-        if (typeof window.isMenuOpen !== 'undefined' && !window.isMenuOpen) return true;
-        // Toute modale custom ouverte via _pushBack()/_popBack() (Coran, QR,
-        // Qibla, carte, catalogue azan, infos mosquée...) pousse un état
-        // history — signal générique valable pour toutes sans les énumérer.
-        if (window.history.state && window.history.state._tModal === true) return true;
-        // Popups core (azan/iqama) : masqués via la classe hiddenClass, pas
-        // par le mécanisme _pushBack ci-dessus.
-        var corePopupIds = ['azanPopupVertical', 'azanPopupHorizontal', 'iqamaPopupVertical', 'iqamaPopupHorizontal'];
-        for (var i = 0; i < corePopupIds.length; i++) {
-            var el = document.getElementById(corePopupIds[i]);
-            if (el && !el.classList.contains('hiddenClass')) return true;
-        }
-        // Écran noir actif (cf. CLAUDE.md : transform === 'scaleX(1)').
-        var bsV = document.getElementById('blackScreenVerticalElement');
-        var bsH = document.getElementById('blackScreenHorizontalElement');
-        if ((bsV && bsV.style.transform === 'scaleX(1)') || (bsH && bsH.style.transform === 'scaleX(1)')) return true;
-        return false;
-    }
-
-    var _startY = null, _pulling = false, _reloading = false;
-
-    function _reset() {
-        _pulling = false;
-        _startY = null;
-        indicator.classList.remove('ucPullDragging', 'ucPullReady');
-        indicator.style.transform = '';
-        indicator.style.opacity = '';
-    }
-
-    document.addEventListener('touchstart', function (e) {
-        if (_reloading || e.touches.length !== 1) return;
-        var t = e.touches[0];
-        if (t.clientY > PULL_START_MAX_Y) return;
-        if (_ucPullBlocked()) return;
-        _startY = t.clientY;
-        _pulling = true;
-        indicator.classList.add('ucPullDragging'); // désactive la transition CSS pendant le suivi du doigt
-    }, { passive: true });
-
-    document.addEventListener('touchmove', function (e) {
-        if (!_pulling || _startY === null) return;
-        var dy = e.touches[0].clientY - _startY;
-        if (dy <= 0) { _reset(); return; }
-        var capped   = Math.min(dy, PULL_MAX);
-        var progress = Math.min(capped / PULL_THRESHOLD, 1);
-        indicator.classList.toggle('ucPullReady', dy >= PULL_THRESHOLD);
-        indicator.style.opacity   = Math.min(1, capped / 40);
-        indicator.style.transform = 'translate(-50%, ' + (capped - 40) + 'px) rotate(' + (progress * 230) + 'deg)';
-    }, { passive: true });
-
-    document.addEventListener('touchend', function () {
-        if (!_pulling) return;
-        var wasReady = indicator.classList.contains('ucPullReady');
-        _pulling = false;
-        _startY = null;
-        indicator.classList.remove('ucPullDragging');
-        if (wasReady) {
-            _reloading = true;
-            indicator.classList.add('ucPullSpin');
-            _L('PULLREFRESH', 'FIRE', { action: 'reload' });
-            setTimeout(function () { location.reload(); }, 350);
-        } else {
-            indicator.style.transform = '';
-            indicator.style.opacity = '';
-            indicator.classList.remove('ucPullReady');
-        }
-    }, { passive: true });
-
-    document.addEventListener('touchcancel', _reset, { passive: true });
-
-    _L('CUSTOM', 'INIT', { item: 'pullToRefresh' });
-})();
-
-// ═════════════════════════════════════════════════════════════════════════════
-// FIN PULL-TO-REFRESH
+// Le geste "doigt du haut vers le bas" (_installPullToRefresh + son indicateur
+// #ucPullRefreshIndicator, cf. custom.css) faisait un location.reload() — un
+// redémarrage à froid de toute l'app (~40 000 lignes de JS re-parsées) qui fige
+// l'écran plusieurs secondes, bien plus sous mauvaise connexion (rafale de
+// fetch d'init qui pendouillent). Déclenché accidentellement en plein compte à
+// rebours d'Asr (retour utilisateur 30/08/2026, mosquée tn.monastir.aboubaker),
+// il donnait un écran gelé. Le bouton "actualiser" en bas de l'écran
+// (restartApplicationFunction → _ucDeferrableReload, qui respecte la fenêtre
+// azan/iqama) suffit largement. Fonction + CSS supprimées.
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -32645,7 +32928,16 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 // d'onglet, retour mosquée aboubaker 29/08/2026).
                 '<div id="ucRASharedPin">' +
                     '<label for="ucRAActionsPin" id="ucRASharedPinLabel">' + _raT('pinLabel') + '</label>' +
-                    '<input type="password" id="ucRAActionsPin" class="ucRATextInput" maxlength="8" inputmode="numeric" autocomplete="off">' +
+                    '<div id="ucRASharedPinRow">' +
+                        '<input type="password" id="ucRAActionsPin" maxlength="8" inputmode="numeric" autocomplete="off">' +
+                        // Message "Code PIN incorrect" EN FACE du champ (et non
+                        // dans un panneau d'onglet) : une seule cible partagée
+                        // par les deux onglets → jamais désynchronisé (le cas
+                        // "erreur affichée sur Actions, on corrige et envoie
+                        // depuis Paramétrage, l'action passe mais l'erreur
+                        // persiste" ne peut plus arriver).
+                        '<span id="ucRASharedPinError" role="alert"></span>' +
+                    '</div>' +
                     '<div id="ucRAPinHint">' + _raT('pinHint') + '</div>' +
                 '</div>' +
                 '<div id="ucRATabs">' +
@@ -32739,6 +33031,11 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         document.getElementById('ucRAUpdateBtn').addEventListener('click', function () { _sendRemoteAction('update_app', null); });
         document.getElementById('ucRASendDebugBtn').addEventListener('click', function () { _sendRemoteAction('send_debug', null); });
         document.getElementById('ucRASendBtn').addEventListener('click', function () { _submit(false); });
+        // Dès que l'utilisateur (re)tape le PIN, on efface le message d'erreur :
+        // il ne peut jamais rester un "Code PIN incorrect" affiché à côté d'un
+        // PIN qu'on vient de corriger et qui va passer.
+        var _pinInEl = document.getElementById('ucRAActionsPin');
+        if (_pinInEl) _pinInEl.addEventListener('input', function () { _clearPinError(); });
         // Délégation unique : la grille Coran est réécrite en entier à chaque
         // _renderQuranTable() (cellules jour togglées), pas besoin de
         // réattacher un listener par cellule à chaque rendu.
@@ -33162,6 +33459,20 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         el.className = type ? ('ucRAStatus-' + type) : '';
     }
 
+    // Message d'erreur PIN, affiché EN FACE du champ #ucRAActionsPin (cible
+    // unique #ucRASharedPinError, partagée par les deux onglets). Utilisé pour
+    // TOUT ce qui concerne la validité du PIN (format local + 401/403 serveur)
+    // — plus jamais via _setStatus/_setActionsStatus (panneaux d'onglet), qui
+    // restaient désynchronisés d'un onglet à l'autre. Effacé dès que l'utilisateur
+    // retape (listener 'input'), à un envoi réussi, et à l'ouverture de la modale.
+    function _setPinError(msg) {
+        var el   = document.getElementById('ucRASharedPinError');
+        var wrap = document.getElementById('ucRASharedPin');
+        if (el)   el.textContent = msg || '';
+        if (wrap) wrap.classList.toggle('ucRAPinInvalid', !!msg);
+    }
+    function _clearPinError() { _setPinError(''); }
+
     // Envoie une commande ponctuelle (onglet Actions) -- même endpoint/PIN que
     // _submit(), mais mode "remote_action" : aucune écriture dans mosques,
     // juste un push silencieux que la box exécute immédiatement (cf. listener
@@ -33173,28 +33484,28 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         if (!mid) { _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'no_mosque_id', action: action }); _setActionsStatus(_raT('errGeneric'), 'err'); return false; }
         if (!/^\d{4,8}$/.test(pin)) {
             _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'pin_format', mosque_id: mid, action: action, pinLen: pin.length });
-            _setActionsStatus(_raT('errInvalidPin'), 'err');
+            _setPinError(_raT('errInvalidPin'));
             if (pinEl) { try { pinEl.focus(); } catch (e) {} }
             return false;
         }
 
+        _clearPinError();
         _setActionsStatus(_raT('sending'), 'ok');
         var body = { type: 'remote_action', mosque_id: mid, pin: pin, action: action };
         if (target) body.target = target;
 
         _L('REMOTE_ADMIN', 'ACTION_SEND', { mosque_id: mid, action: action, target: target || '' });
 
-        // Chemin fiable, en plus du push ci-dessous (chemin rapide, gardé au
-        // cas où) : toutes les actions de cet onglet dépendaient EXCLUSIVEMENT
-        // du push OneSignal, confirmé non fiable sur certains boîtiers (testé
-        // en direct 01/08/2026 sur send_debug -- aucune trace côté box tant
-        // que seul le push était utilisé). Même filet de sécurité que
-        // _installRemoteConfigPolling (Paramétrage) : la box relit ces trois
-        // colonnes toutes les ~18s (cf. _installRemoteActionPolling plus bas)
-        // et réexécute EXACTEMENT le même code que le listener 'ucRemoteAction'
-        // (cf. _ucDispatchRemoteAction plus haut), sans rien dupliquer.
-        _requestActionViaPoll(mid, action, target);
-
+        // IMPORTANT : le canal fiable (écriture poll dans mosque_device_status,
+        // relue par la box toutes les ~18s) n'est PLUS armé en parallèle du
+        // fetch ci-dessous — il l'était, et comme il n'a AUCUNE validation PIN
+        // serveur, un PIN erroné exécutait quand même l'action (le fetch
+        // renvoyait 401, on affichait "PIN incorrect", mais la box exécutait
+        // via le poll ~18s plus tard). Désormais : _requestActionViaPoll n'est
+        // appelé QUE dans la branche res.ok, une fois le PIN validé par
+        // rapid-service (SHA-256 vs mosques.pin_hash, service_role). Le fetch
+        // reste le chemin d'autorité ; le poll n'est que le filet de livraison
+        // d'une action DÉJÀ authentifiée.
         fetch('https://tjmjmlzwzebocfdmifrg.supabase.co/functions/v1/rapid-service', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'apikey': 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4' },
@@ -33204,13 +33515,18 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         .then(function (res) {
             if (res.ok) {
                 _L('REMOTE_ADMIN', 'ACTION_OK', { mosque_id: mid, action: action });
+                _clearPinError();
                 _setActionsStatus(_raT('actionSentOk'), 'ok');
+                _requestActionViaPoll(mid, action, target);   // PIN OK → filet fiable
             } else if (res.status === 401) {
                 _L('REMOTE_ADMIN', 'ACTION_ERR', { mosque_id: mid, action: action, status: res.status, reason: 'invalid_pin' });
-                _setActionsStatus(_raT('errInvalidPin'), 'err');
+                _setActionsStatus('', '');
+                _setPinError(_raT('errInvalidPin'));
+                if (pinEl) { try { pinEl.focus(); } catch (e) {} }
             } else if (res.status === 403) {
                 _L('REMOTE_ADMIN', 'ACTION_ERR', { mosque_id: mid, action: action, status: res.status, reason: 'not_configured' });
-                _setActionsStatus(_raT('errNotConfigured'), 'err');
+                _setActionsStatus('', '');
+                _setPinError(_raT('errNotConfigured'));
             } else {
                 _L('REMOTE_ADMIN', 'ACTION_ERR', { mosque_id: mid, action: action, status: res.status, body: JSON.stringify(res.body || {}) });
                 _setActionsStatus((res.body && res.body.error) || _raT('errGeneric'), 'err');
@@ -33225,12 +33541,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 
     // Chemin fiable générique pour TOUTES les actions de cet onglet (cf.
     // _installRemoteActionPolling, box uniquement, plus bas) : simple
-    // écriture upsert, aucune validation PIN serveur (même modèle de
-    // confiance que le rapport de progression de mise à jour sur cette même
-    // table -- écriture anon permissive ; le PIN reste vérifié côté client
-    // avant l'appel, cf. _sendRemoteAction ci-dessus, mais pas revérifié
-    // serveur pour ce chemin, cf. CLAUDE.md racine sur le modèle de confiance
-    // à l'échelle personnelle de ce projet).
+    // écriture upsert, aucune validation PIN serveur (écriture anon permissive,
+    // même modèle de confiance que le rapport de progression de mise à jour sur
+    // cette même table). Pour les actions déclenchées par _sendRemoteAction,
+    // ce n'est appelé QU'APRÈS un 200 de rapid-service (PIN validé serveur) :
+    // le filet de livraison ne porte donc jamais une action non authentifiée.
+    // Seul 'refresh_all' (ouverture de la modale, relecture d'état pure, aucun
+    // effet) l'appelle directement sans PIN — sans risque.
     function _requestActionViaPoll(mid, action, target) {
         var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
                    || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
@@ -33464,8 +33781,14 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var pinEl = document.getElementById(pinElId);
         var pin   = pinEl ? pinEl.value.trim() : '';
         if (!mid) { _L('REMOTE_ADMIN', 'CONFIG_ABORT', { reason: 'no_mosque_id', reloadOnly: reloadOnly }); setStatus(_raT('errGeneric'), 'err'); return; }
-        if (!/^\d{4,8}$/.test(pin)) { _L('REMOTE_ADMIN', 'CONFIG_ABORT', { reason: 'pin_format', mosque_id: mid, reloadOnly: reloadOnly, pinLen: pin.length }); setStatus(_raT('errInvalidPin'), 'err'); return; }
+        if (!/^\d{4,8}$/.test(pin)) {
+            _L('REMOTE_ADMIN', 'CONFIG_ABORT', { reason: 'pin_format', mosque_id: mid, reloadOnly: reloadOnly, pinLen: pin.length });
+            _setPinError(_raT('errInvalidPin'));
+            if (pinEl) { try { pinEl.focus(); } catch (e) {} }
+            return;
+        }
 
+        _clearPinError();
         setStatus(_raT('sending'), 'ok');
         var reloadBtn = document.getElementById('ucRAReloadBtn');
         var sendBtn   = document.getElementById('ucRASendBtn');
@@ -33490,6 +33813,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             if (sendBtn)   sendBtn.style.pointerEvents   = '';
             if (res.ok) {
                 _L('REMOTE_ADMIN', 'CONFIG_OK', { mosque_id: mid, reloadOnly: reloadOnly });
+                _clearPinError();
                 setStatus(_raT('sentOk'), 'ok');
                 if (pinEl) pinEl.value = '';
                 // Le téléphone qui vient d'envoyer une VRAIE modif de config doit
@@ -33508,10 +33832,13 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 }
             } else if (res.status === 401) {
                 _L('REMOTE_ADMIN', 'CONFIG_ERR', { mosque_id: mid, status: res.status, reason: 'invalid_pin' });
-                setStatus(_raT('errInvalidPin'), 'err');
+                setStatus('', '');
+                _setPinError(_raT('errInvalidPin'));
+                if (pinEl) { try { pinEl.focus(); } catch (e) {} }
             } else if (res.status === 403) {
                 _L('REMOTE_ADMIN', 'CONFIG_ERR', { mosque_id: mid, status: res.status, reason: 'not_configured' });
-                setStatus(_raT('errNotConfigured'), 'err');
+                setStatus('', '');
+                _setPinError(_raT('errNotConfigured'));
             } else {
                 _L('REMOTE_ADMIN', 'CONFIG_ERR', { mosque_id: mid, status: res.status, body: JSON.stringify(res.body || {}) });
                 setStatus((res.body && res.body.error) || _raT('errGeneric'), 'err');
@@ -33595,6 +33922,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _buildModal();
         _setStatus('', '');
         _setActionsStatus('', '');
+        _setPinError('');
         var actionsPinEl = document.getElementById('ucRAActionsPin');   // PIN partagé (2 onglets)
         if (actionsPinEl) actionsPinEl.value = '';
         _switchTab('actions');
@@ -36035,6 +36363,172 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 // ═════════════════════════════════════════════════════════════════════════════
 // FIN ENRICHISSEMENT AZKAR SABAH/MASAA
 // ═════════════════════════════════════════════════════════════════════════════
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// WATCHDOG DE REPAINT — détecte un écran FIGÉ (rendu bloqué) et récupère seul
+//
+// Contexte (gel écran mosquée tn.monastir.youssef, 29/08/2026 — boîtier KM22 /
+// Allwinner H616 / Mali-G31, confirmé via Tailscale) : ce boîtier tourne en
+// LAYER_TYPE_SOFTWARE (DeviceType.isKnownBuggyGpu -> évite le hang du pilote
+// Mali) donc rendu WebView ~5 img/s, certaines frames > 1s (gfxinfo :
+// « Slow bitmap uploads » sur 99% des frames). Quand le Wi-Fi tombe, la rafale
+// de fetch qui échouent + le marquee azan animé en continu ont poussé le temps
+// par frame à plusieurs secondes -> écran figé sur la dernière image (~4:37 du
+// compte à rebours iqama) alors que le JS tournait toujours (les setInterval
+// continuaient à l'heure juste). Seul un redémarrage manuel a débloqué.
+//
+// Principe : une boucle requestAnimationFrame auto-relancée est une sonde de
+// vivacité du COMPOSITEUR, indépendante du thread JS. Tant que des frames sont
+// présentées à l'écran, ce callback tourne — même sur une page 100% statique,
+// puisqu'on redemande nous-mêmes une frame à chaque fois. Il s'arrête
+// UNIQUEMENT si la page n'est plus composée : soit en arrière-plan (WebView
+// pauseTimers fige alors AUSSI le vérificateur ci-dessous -> aucun faux
+// positif), soit rendu réellement bloqué. On compare donc « dernière frame
+// présentée » à l'horloge murale : si les timers avancent, la page est visible,
+// mais aucune frame depuis >6s -> délestage ; toujours rien >9s -> reload.
+//
+// Récupération volontairement agressive (choix explicite) : pas d'exclusion
+// horaire, un seul palier de confirmation (délestage) avant le reload.
+// Garde-fou : 1 reload / 10 min max (sessionStorage). Boîtier uniquement.
+// ═════════════════════════════════════════════════════════════════════════════
+(function _installRepaintWatchdog() {
+    var _isBox = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv());
+    if (!_isBox) return;
+
+    var SHED_MS       = 6000;              // aucune frame depuis >6s -> délestage
+    var HARD_MS       = 9000;              // toujours figé >9s -> location.reload()
+    var RELOAD_GAP_MS = 10 * 60 * 1000;    // 1 reload / 10 min max
+    var CHECK_MS      = 1500;
+
+    function _now() {
+        return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    }
+
+    var _lastFrame = _now();
+    var _lastCheck = Date.now();
+    var _healthy   = 0;
+    var _shed      = false;
+
+    function _raf() { _lastFrame = _now(); requestAnimationFrame(_raf); }
+    requestAnimationFrame(_raf);
+
+    function _shedLoad() {
+        try { if (typeof window.stopMarqueeAnimation === 'function') window.stopMarqueeAnimation(); } catch (e) {}
+        try { if (typeof window._ucForceHideIqamaHadithOverlay === 'function') window._ucForceHideIqamaHadithOverlay(); } catch (e) {}
+        try { void document.documentElement.offsetHeight; } catch (e) {}   // reflow : peut vider un commit compositeur coincé
+    }
+
+    function _reload(stall) {
+        var last = 0;
+        try { last = parseInt(sessionStorage.getItem('UC_REPAINT_RELOAD_TS') || '0', 10) || 0; } catch (e) {}
+        if (Date.now() - last < RELOAD_GAP_MS) {
+            _L('SYS', 'REPAINT_FROZEN', { stallMs: Math.round(stall), action: 'reload_suppressed_gap' });
+            return;
+        }
+        try { sessionStorage.setItem('UC_REPAINT_RELOAD_TS', String(Date.now())); } catch (e) {}
+        _L('SYS', 'REPAINT_FROZEN', { stallMs: Math.round(stall), action: 'reload' });
+        // Trace native explicite : survit à un kill / force-quit (contrairement
+        // au journal JS) -- confirme au prochain incident que le watchdog a agi.
+        try {
+            if (window.AndroidMobile && typeof window.AndroidMobile.logPrayerEvent === 'function')
+                window.AndroidMobile.logPrayerEvent('SYS', 'REPAINT_WATCHDOG_RELOAD stallMs=' + Math.round(stall));
+        } catch (e) {}
+        setTimeout(function () { try { location.reload(); } catch (e) {} }, 400);
+    }
+
+    setInterval(function () {
+        var wall = Date.now();
+
+        // Le vérificateur lui-même a-t-il été suspendu ? (arrière-plan =
+        // pauseTimers, ou moteur JS entier gelé) -> ce n'est PAS le gel
+        // rendu-seul qu'on cible. On réamorce et on sort.
+        if (wall - _lastCheck > CHECK_MS * 3) {
+            _lastCheck = wall; _lastFrame = _now(); _healthy = 0; _shed = false;
+            return;
+        }
+        _lastCheck = wall;
+
+        if (document.hidden) { _lastFrame = _now(); _healthy = 0; return; }
+        if (_healthy < 3) { _healthy++; return; }   // quelques cycles sains d'abord
+
+        var stall = _now() - _lastFrame;
+        if (stall < SHED_MS) { _shed = false; return; }
+
+        if (!_shed) {
+            _shed = true;
+            _L('SYS', 'REPAINT_STALL', { stallMs: Math.round(stall) });
+            _shedLoad();
+            return;
+        }
+        if (stall >= HARD_MS) _reload(stall);
+    }, CHECK_MS);
+
+    _L('CUSTOM', 'INIT', { item: 'repaintWatchdog', shedSec: SHED_MS / 1000, hardSec: HARD_MS / 1000 });
+})();
+
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DÉLESTAGE SOUS STRESS RÉSEAU — fige le marquee azan tant que le Wi-Fi/DNS de
+// la box est en vrac (même incident 29/08/2026, cf. watchdog ci-dessus).
+//
+// Sur un boîtier en rendu logiciel, chaque frame de défilement du marquee azan
+// (plein écran, z-index élevé) force un raster bitmap complet sur le thread UI.
+// C'est un moteur de repaint permanent — exactement la charge à couper quand
+// tout le reste rame déjà. Signal : window._ucNetStress (posé plus haut par la
+// sonde HTTP réelle de l'icône internet, >=2 échecs d'affilée) OU
+// navigator.onLine === false. Le ré-affichage du marquee reprend dès que les
+// sondes repassent au vert ; le watchdog du ticker (3s) rattrape la position.
+// (Le backoff des sondages distants sous _ucNetStress est fait directement dans
+//  _installRemoteActionPolling.)
+// ═════════════════════════════════════════════════════════════════════════════
+(function _installNetworkStressLoadShedding() {
+    // Actif téléphone ET boîtier (30/08/2026) : sous mauvaise connexion, la
+    // frame de défilement du marquee azan force un raster plein écran à chaque
+    // image -- charge inutile à couper pendant que le reste rame, sur téléphone
+    // aussi (gel écran compte à rebours Asr, retour utilisateur 30/08/2026).
+    // Ne nécessite pas le bridge natif (navigator.onLine suffit hors APK).
+    window._ucMarqueeNetShed = false;
+
+    function _stressed() {
+        if (window._ucNetStress === true) return true;
+        try { if (navigator && navigator.onLine === false) return true; } catch (e) {}
+        return false;
+    }
+    function _azanMarqueeActive() {
+        try {
+            return (typeof window._ucIsAzanMarqueeActive === 'function') && !!window._ucIsAzanMarqueeActive();
+        } catch (e) { return false; }
+    }
+
+    function _sync() {
+        var stressed = _stressed();
+
+        if (stressed && !window._ucMarqueeNetShed) {
+            window._ucMarqueeNetShed = true;
+            if (_azanMarqueeActive()) {
+                try { if (typeof window.stopMarqueeAnimation === 'function') window.stopMarqueeAnimation(); } catch (e) {}
+                _L('MARQUEE', 'PAUSE', { reason: 'network_stress' });
+            }
+        } else if (!stressed && window._ucMarqueeNetShed) {
+            window._ucMarqueeNetShed = false;
+            if (_azanMarqueeActive()) {
+                try { if (typeof window.startMarqueeAnimation === 'function') window.startMarqueeAnimation(); } catch (e) {}
+                _L('MARQUEE', 'RESUME', { reason: 'network_recovered' });
+            }
+        }
+    }
+
+    setInterval(_sync, 3000);
+    try {
+        window.addEventListener('online',  _sync);
+        window.addEventListener('offline', _sync);
+    } catch (e) {}
+
+    _L('CUSTOM', 'INIT', { item: 'networkStressLoadShedding' });
+})();
+
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SIGNAL "APPLICATION PRÊTE" (écran de démarrage natif) — DERNIER BLOC DE CE

@@ -9918,33 +9918,8 @@ input[type='checkbox']:checked::after {
     color: #aaa;
 }
 
-/* ── Pull-to-refresh (cf. custom.js _installPullToRefresh) ────────────────── */
-#ucPullRefreshIndicator {
-    position: fixed;
-    top: 0;
-    left: 50%;
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: rgba(20, 20, 20, 0.85);
-    color: #DFCDB1;
-    border-radius: 50%;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-    opacity: 0;
-    transform: translate(-50%, -40px);
-    transition: transform .25s ease, opacity .25s ease, color .15s ease;
-    z-index: 999999999;
-    pointer-events: none;
-}
-#ucPullRefreshIndicator.ucPullDragging { transition: none; }
-#ucPullRefreshIndicator.ucPullReady { color: #7CFC00; }
-#ucPullRefreshIndicator.ucPullSpin svg { animation: ucPullSpinAnim .6s linear infinite; }
-@keyframes ucPullSpinAnim {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
-}
+/* Pull-to-refresh retiré le 30/08/2026 (cf. custom.js) — plus de règle
+   #ucPullRefreshIndicator ni de @keyframes ucPullSpinAnim. */
 
 /* ── Menu à onglets "Principal" / "Boîte à outils" (cf. custom.js _installMenuTabs) ──
    #languageSelectionContainer (core) est position:absolute par défaut, pensé
@@ -10729,7 +10704,38 @@ select.ucRATextInput { text-align: start; }
     font-weight: 600;
 }
 
-#ucRAPin, #ucRAActionsPin { width: 100%; box-sizing: border-box; margin-top: 6px; }
+/* Champ PIN : compact (8 chiffres), + message d'erreur "en face" (même ligne),
+   au lieu de l'ancien champ pleine largeur avec l'erreur reléguée dans un des
+   panneaux d'onglet (désynchronisée entre onglets). */
+#ucRASharedPinRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+}
+#ucRAActionsPin {
+    flex: 0 0 auto;
+    width: 9em;
+    box-sizing: border-box;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    color: #fff;
+    padding: 5px 8px;
+    text-align: center;
+    letter-spacing: 0.18em;
+    font-size: 1em;
+}
+#ucRASharedPinError {
+    flex: 1 1 auto;
+    min-width: 7em;
+    color: #ff6b6b;
+    font-size: 0.9em;
+    font-weight: 600;
+}
+#ucRASharedPinError:empty { display: none; }
+#ucRASharedPin.ucRAPinInvalid #ucRAActionsPin { border-color: #ff6b6b; }
 
 #ucRAStatus, #ucRAActionsStatus {
     min-height: 1.4em;

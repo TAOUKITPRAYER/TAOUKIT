@@ -1096,7 +1096,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.21';
+var CUSTOM_APP_VERSION = '14.32';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1411,9 +1411,23 @@ var _ucIsRealPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAn
 // lignes de JS re-parsées) : plusieurs secondes d'écran figé, aggravées sous
 // mauvaise connexion (rafale de fetch d'init qui pendouillent). Inacceptable en
 // plein compte à rebours d'iqama ou juste avant un azan. Ce garde-fou central
-// reporte tout reload DISCRÉTIONNAIRE (bouton "actualiser"/drapeau, sync config
-// reçue à distance, action distante 'reload') jusqu'à la sortie de la fenêtre
-// critique — il ne bloque jamais définitivement, il re-tente toutes les 60 s.
+// reporte tout reload NON SOLLICITÉ (sync config reçue à distance, action
+// distante 'reload') jusqu'à la sortie de la fenêtre critique — il ne bloque
+// jamais définitivement, il re-tente toutes les 60 s.
+//
+// EXCEPTION (demande terrain 01/09/2026) : le reload MANUEL déclenché par
+// l'utilisateur lui-même n'est PLUS différé — il s'exécute immédiatement, à
+// n'importe quel moment. Concerne les 4 déclencheurs manuels :
+//   - #psFlagImageVertical (double-tap)  -> restartApplicationFunction()
+//   - #psFlagImageHorizontal (tap, onclick index.html) -> restartApplicationFunction()
+//   - #ucReloadLink (lien "RELOAD" des crédits) -> restartApplicationFunction()
+//   - #ucManualReloadBtn (icône flèche, vertical) -> location.reload() direct (déjà non gardé)
+// Raison : sur une box sans RTC, après un redémarrage l'imam connecte le Wi-Fi
+// et corrige l'horloge EN PLEIN compte à rebours, puis a besoin de reloader
+// pour repartir sur les bons horaires — le report l'en empêchait (fenêtre de
+// garde ~32 min autour de chaque azan). L'utilisateur qui touche volontairement
+// le drapeau/RELOAD sait ce qu'il fait. Seuls les reloads NON sollicités (sync
+// config reçue, action distante 'reload') restent différés.
 // Les horaires n'ont de toute façon pas besoin de reload : calculés en local
 // (calculateAndDisplayTimesFunction), 100 % hors-ligne. m2body.js est chargé
 // avant custom.js -> restartApplicationFunction existe déjà ici.
@@ -1479,13 +1493,17 @@ var _ucIsRealPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAn
         }, RETRY_MS);
     };
 
-    // Bouton "actualiser" en bas de l'écran (drapeau / ps.png -> onclick=
-    // restartApplicationFunction, core m2body.js). SEUL ce point d'entrée est
-    // routé : restartApplicationReload lui-même reste direct pour les flux
-    // sensibles (changement de langue, reset réglages...).
+    // restartApplicationFunction (core m2body.js) = reload MANUEL de l'utilisateur :
+    // drapeau #psFlagImageVertical (double-tap) / #psFlagImageHorizontal (tap,
+    // onclick index.html) / lien #ucReloadLink. On le rend DIRECT et immédiat,
+    // sans garde azan/iqama (cf. bloc de commentaire en tête de cette section).
+    // Les reloads NON sollicités (sync config reçue, action distante 'reload')
+    // n'appellent PAS restartApplicationFunction : ils appellent
+    // window._ucDeferrableReload(...) directement depuis leurs handlers et
+    // restent donc différés.
     if (typeof window.restartApplicationFunction === 'function') {
         window.restartApplicationFunction = function () {
-            window._ucDeferrableReload('manual_refresh_button');
+            _doReload('manual_user_reload');
         };
     }
 
@@ -2867,6 +2885,74 @@ window._ucUnmuteMosque    = _ucUnmuteMosque;
 })();
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── TAG ONESIGNAL mosque_admin_<id> (ciblage EXCLUSIF des responsables) ──────
+// Posé UNIQUEMENT sur les téléphones dont le PIN d'administration à distance a
+// été validé côté serveur (rapid-service → 200). Sert au ciblage des alertes
+// de surveillance des modules Shelly (box → admin, cf. _installLightWatchdog
+// plus bas + rapid-service mode "light_watchdog_alert") : contrairement à
+// mosque_sub_<id> (tous les fidèles abonnés), seuls les responsables reçoivent
+// ces alertes. Plusieurs téléphones admin par mosquée sont supportés.
+//
+// Persistance : localStorage.UC_ADMIN_PUSH_FOR = { "<mosque_id>": <ts_ms>, ... }.
+// TTL 90 jours : chaque validation de PIN ré-arme les 90 j ; un responsable qui
+// ne ré-administre plus jamais cesse d'être notifié au bout de 90 j.
+// Volontairement INDÉPENDANT de la mosquée courante (comme mosque_sub_<id> via
+// UC_MOSQUE_HISTORY) : un admin peut piloter la mosquée A depuis un téléphone
+// affichant la mosquée B.
+var _UC_ADMIN_PUSH_KEY = 'UC_ADMIN_PUSH_FOR';
+var _UC_ADMIN_PUSH_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+
+function _ucReadAdminPushMap() {
+    try {
+        var o = JSON.parse(localStorage.getItem(_UC_ADMIN_PUSH_KEY) || '{}');
+        return (o && typeof o === 'object') ? o : {};
+    } catch (e) { return {}; }
+}
+function _ucWriteAdminPushMap(o) {
+    try { localStorage.setItem(_UC_ADMIN_PUSH_KEY, JSON.stringify(o || {})); } catch (e) {}
+}
+
+// Appelé après un 200 de rapid-service (PIN validé serveur) dans
+// _sendRemoteAction / _submit. Arme / ré-arme le tag admin pour cette mosquée.
+function _ucArmMosqueAdminPush(mosqueId) {
+    if (!mosqueId || _ucIsAnonymousMosqueId(mosqueId)) return;
+    var map = _ucReadAdminPushMap();
+    map[mosqueId] = Date.now();
+    _ucWriteAdminPushMap(map);
+    if (window.AndroidMobile && typeof window.AndroidMobile.addMosqueAdminTag === 'function') {
+        try { window.AndroidMobile.addMosqueAdminTag(mosqueId); } catch (e) {}
+    }
+    _L('REMOTE_ADMIN', 'ADMIN_PUSH_ARMED', { mosque_id: mosqueId });
+}
+window._ucArmMosqueAdminPush = _ucArmMosqueAdminPush;
+
+// IIFE idempotente (à chaque chargement) : ré-affirme les tags admin encore
+// valides, purge ceux expirés (TTL).
+(function _installOneSignalMosqueAdminTag() {
+    if (typeof window.AndroidMobile === 'undefined') return;
+    var map = _ucReadAdminPushMap();
+    var now = Date.now();
+    var _armed = [], _expired = [], _changed = false;
+    Object.keys(map).forEach(function (id) {
+        var ts = map[id];
+        if (typeof ts === 'number' && (now - ts) <= _UC_ADMIN_PUSH_TTL_MS) {
+            if (typeof window.AndroidMobile.addMosqueAdminTag === 'function') {
+                try { window.AndroidMobile.addMosqueAdminTag(id); _armed.push(id); } catch (e) {}
+            }
+        } else {
+            if (typeof window.AndroidMobile.removeMosqueAdminTag === 'function') {
+                try { window.AndroidMobile.removeMosqueAdminTag(id); } catch (e) {}
+            }
+            delete map[id];
+            _expired.push(id);
+            _changed = true;
+        }
+    });
+    if (_changed) _ucWriteAdminPushMap(map);
+    _L('CUSTOM', 'INIT', { item: 'oneSignalMosqueAdminTag', armed: _armed.join(',') || '-', expired: _expired.join(',') || '-' });
+})();
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── PATCH jomoaTimeDisplayHorizontal ─────────────────────────────────────────
 // Problème : la variable interne `jomoaFixedTime` (let dans m2body.js) n'est
 // mise à jour depuis JS_DATA.ucJomoaFixedTime QUE les vendredis (if isFriday).
@@ -3791,10 +3877,19 @@ window._ucForceCloseAllCounterOverlays = function () {
     var _qcHeader = document.getElementById('qrCodeHeader');
     if (_qcHeader) {
         _qcHeader.style.cursor = 'pointer';
+        // Double clic / double tap requis (un simple clic ne doit plus ouvrir
+        // la console de debug — retour utilisateur 01/09/2026).
+        var _qcHdrLastClick = 0;
         _qcHeader.addEventListener('click', function (e) {
             e.stopPropagation();
-            overlay.classList.add('qcHidden');
-            if (typeof window._toggleDebugConsole === 'function') window._toggleDebugConsole();
+            var now = Date.now();
+            if (now - _qcHdrLastClick > 0 && now - _qcHdrLastClick < 450) {
+                _qcHdrLastClick = 0;
+                overlay.classList.add('qcHidden');
+                if (typeof window._toggleDebugConsole === 'function') window._toggleDebugConsole();
+            } else {
+                _qcHdrLastClick = now;
+            }
         });
     }
 
@@ -5027,6 +5122,159 @@ function _ucShowAzanAlertBanner(prayerLabel, minutes) {
     }, 10000);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SURVEILLANCE PRÉ-AZAN DES MODULES SHELLY  (boîtier uniquement)
+// ─────────────────────────────────────────────────────────────────────────────
+// 1 h 10 puis 30 min avant l'azan de chaque prière (Fajr/Dhuhr/Asr/Maghreb/Isha,
+// pas Shuruq), la box interroge tous les modules Shelly ACTIVÉS dans le
+// paramétrage (window._ucShellyLightsSnapshot, module _installShellyStateReader).
+// Pour chaque module qui ne répond pas (state==='error'), elle envoie une
+// notification push VISIBLE aux SEULS téléphones administrateurs de la mosquée
+// (rapid-service mode "light_watchdog_alert" → filtre tag mosque_admin_<id>).
+//
+// Hameçon : applyNextPrayerHighlight(remainingMinutes) (appelé à chaque tick).
+// Anti-répétition : 1) mémoire par créneau, réarmée à chaque changement de
+// prière (_ucLightWatchdogResetCycle) ; 2) dédup PERSISTANTE
+// (localStorage.UC_LWD_DONE) par jour+prière+créneau+module — la box redémarre
+// souvent (COLD_START_RESTORE_RETRY), la mémoire seule ne suffit pas.
+// Un échec réseau (box hors ligne — cas réel) NE marque PAS la dédup : retry au
+// tick suivant tant qu'on est dans la fenêtre du créneau.
+// ═══════════════════════════════════════════════════════════════════════════
+var _lwdFiredMem      = { '70': false, '30': false };
+var _lwdInFlight      = false;
+var _lwdInFlightSince = 0;
+var _LWD_DONE_KEY     = 'UC_LWD_DONE';
+var _LWD_MODULES      = ['ampliInt', 'ampliExt', 'minaret', 'mihrab', 'roller'];
+
+function _ucLwdIsBox() {
+    return !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+        && window.AndroidMobile.isAndroidTv());
+}
+function _ucLwdToday() {
+    var d = new Date();
+    return '' + d.getFullYear()
+        + ('0' + (d.getMonth() + 1)).slice(-2)
+        + ('0' + d.getDate()).slice(-2);
+}
+function _ucLwdReadDone() {
+    var today = _ucLwdToday();
+    var out = {};
+    try {
+        var o = JSON.parse(localStorage.getItem(_LWD_DONE_KEY) || '{}');
+        if (o && typeof o === 'object') {
+            // Purge des clés qui ne sont pas du jour (préfixe YYYYMMDD|)
+            Object.keys(o).forEach(function (k) { if (k.indexOf(today + '|') === 0) out[k] = 1; });
+        }
+    } catch (e) {}
+    return out;
+}
+function _ucLwdWriteDone(map) {
+    try { localStorage.setItem(_LWD_DONE_KEY, JSON.stringify(map || {})); } catch (e) {}
+}
+
+function _ucLightWatchdogResetCycle() {
+    _lwdFiredMem = { '70': false, '30': false };
+}
+
+function _ucLightWatchdogTick(remainingMinutes, prayerKey) {
+    if (!_ucLwdIsBox()) return;
+    // JOMOA autorisé (le vendredi, _getUpcomingPrayerKey remplace DOHR par JOMOA
+    // pendant toute la fenêtre pré-Dhuhr — c'est justement la prière où l'ampli
+    // externe est le plus critique). Seul SHRQ (Doha, pas d'azan) est exclu.
+    if (!prayerKey || prayerKey === 'SHRQ') return;
+    if (typeof remainingMinutes !== 'number' || isNaN(remainingMinutes)) return;
+
+    // Créneau 1 h 10 : fenêtre ]30 ; 70] min — la borne basse évite qu'un seul
+    // tick tardif déclenche les deux créneaux d'un coup.
+    if (remainingMinutes <= 70 && remainingMinutes > 30 && !_lwdFiredMem['70']) {
+        _lwdFiredMem['70'] = true;
+        _ucLightWatchdogCheck('70', prayerKey, false);
+    }
+    // Créneau 30 min : fenêtre ]0 ; 30]
+    if (remainingMinutes <= 30 && remainingMinutes > 0 && !_lwdFiredMem['30']) {
+        _lwdFiredMem['30'] = true;
+        _ucLightWatchdogCheck('30', prayerKey, false);
+    }
+}
+
+// checkpoint : '70' | '30'   prayerKey : 'FAJR'|'DOHR'|'ASSR'|'MGRB'|'ISHA'
+function _ucLightWatchdogCheck(checkpoint, prayerKey, bypassDedup) {
+    if (typeof window._ucShellyLightsSnapshot !== 'function') return;
+    // Garde anti-rafale : un seul snapshot en vol (abandon au bout de 20 s si
+    // les modules injoignables font traîner le fetch — cf. _installLightsStateReporting).
+    if (_lwdInFlight && (Date.now() - _lwdInFlightSince) < 20000) return;
+    _lwdInFlight = true;
+    _lwdInFlightSince = Date.now();
+
+    window._ucShellyLightsSnapshot().then(function (snap) {
+        snap = snap || {};
+        var done = _ucLwdReadDone();
+        var today = _ucLwdToday();
+        Object.keys(snap).forEach(function (name) {
+            var ch = snap[name];
+            if (!ch || ch.state !== 'error') return;
+            if (_LWD_MODULES.indexOf(name) === -1) return;
+            var doneKey = today + '|' + prayerKey + '|' + checkpoint + '|' + name;
+            if (!bypassDedup && done[doneKey]) return;   // déjà notifié aujourd'hui
+            var ip = String(ch.base || '').replace(/^https?:\/\//, '');
+            _L('LIGHTS', 'WATCHDOG_ALERT', {
+                module: name, ip: ip || '?', checkpoint: checkpoint,
+                prayer: prayerKey, reason: ch.reason || '?'
+            });
+            _ucLwdSendAlert(name, ip, checkpoint, prayerKey, bypassDedup, doneKey);
+        });
+    }).catch(function (e) {
+        _L('LIGHTS', 'WATCHDOG_ERR', { checkpoint: checkpoint, prayer: prayerKey, error: (e && e.message) || String(e) });
+    }).then(function () { _lwdInFlight = false; });
+}
+
+function _ucLwdSendAlert(moduleName, ip, checkpoint, prayerKey, bypassDedup, doneKey) {
+    var mid = (typeof window._ucCurrentMosqueId === 'function') ? window._ucCurrentMosqueId() : '';
+    if (!mid) { _L('LIGHTS', 'WATCHDOG_ALERT_ERR', { module: moduleName, reason: 'no_mosque_id' }); return; }
+    var MC     = window.MOSQUE_CONFIG || {};
+    var _SB_URL = MC.SUPABASE_URL      || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+    var _SB_KEY = MC.SUPABASE_ANON_KEY || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
+    fetch(_SB_URL + '/functions/v1/rapid-service', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': _SB_KEY },
+        body: JSON.stringify({
+            type: 'light_watchdog_alert',
+            mosque_id: mid,
+            mosque_name: MC.MOSQUE_NAME || '',
+            module: moduleName,
+            ip: ip || '',
+            checkpoint: checkpoint,
+            prayer: prayerKey
+        })
+    }).then(function (r) {
+        if (r.ok) {
+            _L('LIGHTS', 'WATCHDOG_ALERT_SENT', { module: moduleName, ip: ip || '?', checkpoint: checkpoint, prayer: prayerKey });
+            if (!bypassDedup && doneKey) {
+                var done = _ucLwdReadDone();
+                done[doneKey] = 1;
+                _ucLwdWriteDone(done);
+            }
+        } else {
+            _L('LIGHTS', 'WATCHDOG_ALERT_ERR', { module: moduleName, checkpoint: checkpoint, status: r.status });
+        }
+    }).catch(function (e) {
+        // Box probablement hors ligne : ne PAS marquer la dédup → retry au tick suivant.
+        _L('LIGHTS', 'WATCHDOG_ALERT_ERR', { module: moduleName, checkpoint: checkpoint, error: (e && e.message) || String(e) });
+    });
+}
+
+// ── Utilitaire console : forcer une vérification de surveillance ─────────────
+//    ucTestLightWatchdog()               → créneau '30', prochaine prière
+//    ucTestLightWatchdog('70', 'MGRB')   → créneau '1h10', Maghreb
+//  Ignore la dédup persistante (envoie même si déjà notifié aujourd'hui).
+window.ucTestLightWatchdog = function (checkpoint, prayerKey) {
+    var cp = (checkpoint === '70') ? '70' : '30';
+    var pk = prayerKey || (typeof _getUpcomingPrayerKey === 'function' && _getUpcomingPrayerKey()) || 'MGRB';
+    _L('LIGHTS', 'WATCHDOG_TEST', { checkpoint: cp, prayer: pk, isBox: _ucLwdIsBox() });
+    _ucLightWatchdogCheck(cp, pk, true);
+    return 'watchdog check lancé (créneau ' + cp + ', prière ' + pk + ')';
+};
+
 // ── Utilitaire console : tester une lumière manuellement ─────────────────
 //
 //  Depuis la console navigateur :
@@ -5171,6 +5419,7 @@ function applyNextPrayerHighlight(remainingMinutes) {
         // Réinitialiser tous les flags de déclenchement lumières du cycle précédent
         _lightProgramConfig.forEach(function(item) { _lightFiredSet[item.key] = false; });
         _azanAlertFired = false;   // nouveau cycle → réinitialiser la garde de l'alerte azan
+        _ucLightWatchdogResetCycle();   // nouveau cycle → réarmer les 2 créneaux de surveillance
     }
 
     // ── Déclenchements programmation lumineuse ───────────────────────────
@@ -5178,6 +5427,9 @@ function applyNextPrayerHighlight(remainingMinutes) {
 
     // ── Alerte avant azan (onglet "الأذان والإشعارات", modale Réglages) ────
     _applyAzanAlertNotification(remainingMinutes, nextKey);
+
+    // ── Surveillance modules Shelly (box only : 1h10 + 30min avant l'azan) ──
+    _ucLightWatchdogTick(remainingMinutes, nextKey);
 
     if (JS_CUSTOM.ucStartQuranBeforeAzan == 1 && nextKey && _quranAutoStartConfig[nextKey]) {
         const _dayIdx = _getCurrentWeekDayIndex();
@@ -14750,29 +15002,37 @@ function forceHijriSyncFunction() {
     // "QR CODE" plus haut) sans dupliquer la logique d'affichage/masquage.
     window._toggleDebugConsole = _toggle;
 
-    // Clic sur l'overlay lui-même → ferme
+    // Clic sur l'overlay lui-même → ferme (fermeture : simple clic conservé,
+    // seul l'AFFICHAGE exige un double clic — cf. _bindDblOpen ci-dessous).
     _overlay.addEventListener('click', function(e) { _toggle(e); });
 
-    // Clic sur cityCodeDisplayHorizontal → ouvre / ferme la console
-    var _trigger = document.getElementById('cityCodeDisplayHorizontal');
-    if (_trigger) {
-        _trigger.style.cursor = 'pointer';
-        _trigger.addEventListener('click', _toggle);
+    // OUVERTURE : double clic / double tap requis (un simple clic ne doit plus
+    // ouvrir la console — trop facile à déclencher par erreur en tapotant le
+    // code ville ou le drapeau, retour utilisateur 01/09/2026). `click` est
+    // synthétisé au tap par la WebView → un détecteur basé sur `click` couvre
+    // souris ET tactile sans code touch dédié. La console n'étant pas encore
+    // visible ici, _toggle ne peut que l'ouvrir (jamais la fermer par erreur).
+    function _bindDblOpen(el) {
+        if (!el) return;
+        el.style.cursor = 'pointer';
+        var _lastClick = 0;
+        el.addEventListener('click', function (e) {
+            if (e) e.stopPropagation();
+            var now = Date.now();
+            if (now - _lastClick > 0 && now - _lastClick < 450) {
+                _lastClick = 0;
+                _toggle(e);
+            } else {
+                _lastClick = now;
+            }
+        });
     }
-    var _triggerV = document.getElementById('cityCodeDisplayVertical');
-    if (_triggerV) {
-        _triggerV.style.cursor = 'pointer';
-        _triggerV.addEventListener('click', _toggle);
-    }
+    window._bindDebugConsoleDblOpen = _bindDblOpen;
 
-    // Clic sur qrFlagImageHorizontal/Vertical -> meme fonction que cityCode
-    ['qrFlagImageHorizontal', 'qrFlagImageVertical'].forEach(function(id) {
-        var el = document.getElementById(id);
-        if (el) {
-            el.style.cursor = 'pointer';
-            el.addEventListener('click', _toggle);
-        }
-    });
+    _bindDblOpen(document.getElementById('cityCodeDisplayHorizontal'));
+    _bindDblOpen(document.getElementById('cityCodeDisplayVertical'));
+    _bindDblOpen(document.getElementById('qrFlagImageHorizontal'));
+    _bindDblOpen(document.getElementById('qrFlagImageVertical'));
 
 })();
 
@@ -17929,6 +18189,9 @@ ucOn(UC_EVT.AZAN_TIME,  function () { try { localStorage.removeItem(_UC_JOMOA_AD
 
         if (themes.length === 0) {
             _L('THEME','INFO',{custom:'aucun thème trouvé dans spec/themes/'});
+            // Aucun thème custom : signaler quand même "prêt" pour que
+            // _installDailyThemeReliability ne reste pas à attendre indéfiniment.
+            if (typeof window._ucCustomThemesReady === 'function') { try { window._ucCustomThemesReady(); } catch (e) {} }
             return;
         }
 
@@ -18036,8 +18299,243 @@ ucOn(UC_EVT.AZAN_TIME,  function () { try { localStorage.removeItem(_UC_JOMOA_AD
 
         _L('THEME','PATCH',{fn:'apply/increment/decrement',
             coreMax:39, customMin:_minIdx, customMax:_maxIdx});
+
+        // Plage des indices custom, publiée pour :
+        //  - _installDailyThemeReliability (fiabilité du thème par jour) ;
+        //  - le patch des éditeurs de thème (accepter les indices custom).
+        window._ucCustomThemeRange = { min: _minIdx, max: _maxIdx };
+        if (typeof window._ucCustomThemesReady === 'function') { try { window._ucCustomThemesReady(); } catch (e) {} }
     }
 
+})();
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIABILITÉ DU CHANGEMENT DE THÈME PROGRAMMÉ (BGsType_1 / _2 / _3)
+// ─────────────────────────────────────────────────────────────────────────────
+// Bugs du coeur (m2body.js changeThemeByDay / changeThemeByPrayer /
+// changeThemeRandomly + les éditeurs), corrigés ici pour les TROIS modes :
+//
+//  1. changeThemeByDay ET changeThemeRandomly ne sont rappelés QU'À 00:00 pile
+//     (dans le bloc `timeString24 == "00:00"` de updateTimeAndPrayersFunction)
+//     + au boot (initializeThemeScheduler, +3 s). Un tick 00:00 manqué (box en
+//     veille, saut d'horloge sans RTC, stall CPU) => le thème du nouveau jour
+//     n'est jamais appliqué avant le prochain reload. Retour utilisateur
+//     01/09/2026 : « à un moment donné le fond repasse sur HR_0 (rouge) ».
+//     (changeThemeByPrayer, lui, est rappelé chaque minute -> peu concerné
+//      par ce point-ci, mais concerné par les 2 et 3 ci-dessous.)
+//  2. Slot vide / valeur non numérique :
+//     - changeThemeByDay/ByPrayer : parseInt -> NaN -> return, on RESTE sur
+//       l'ancien index (souvent 0 après un reset -> HR-0.jpg = le fond rouge).
+//     - changeThemeRandomly : AUCUN garde Number.isInteger -> setThemeFunction(NaN)
+//       -> currentThemeIndex = NaN (empoisonne tout) -> themes/HR-NaN.jpg (404).
+//  3. Course au boot : si le thème programmé est un indice CUSTOM (>= 1000, cf.
+//     _installCustomThemes) et que la sonde d'images n'a pas fini quand le
+//     scheduler du coeur tourne (+3 s), applyThemeFunction pas encore patché
+//     -> themes/HR-1003.jpg -> 404. Et ça ne s'auto-répare PAS : au tick
+//     suivant `want === currentThemeIndex` -> skip.
+//  4. Les éditeurs editThemeForDayFunction / editThemeForSalatFunction du coeur
+//     REJETTENT silencieusement toute valeur > 39 -> impossible d'affecter un
+//     thème custom à un jour / une prière. (editThemeRandomListFunction, lui,
+//     accepte déjà n'importe quels entiers séparés par virgule.)
+//
+// Correctifs : dispatch unique _applyScheduledTheme(reason, force) qui calcule
+// la cible du mode courant, avec gardes (NaN, plage, différé custom). Overrides
+// des 3 fonctions coeur (appelées par identifiant nu -> résolvent vers ces
+// versions, même pattern que applyThemeFunction/incrementThemeFunction). +
+// vérif getDay() toutes les 60 s (rattrape un 00:00 manqué, re-tire aussi en
+// mode 3) + ré-application au retour de veille + ré-application FORCÉE dès que
+// _installCustomThemes est prêt. + patch des 2 éditeurs pour la plage custom.
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installThemeSchedulerReliability() {
+
+    var _deferTries  = 0;
+    var _customReady = false;
+
+    function _num(v) {
+        v = String(v == null ? '' : v).trim();
+        if (!/^\d+$/.test(v)) return null;
+        var n = parseInt(v, 10);
+        return isFinite(n) ? n : null;
+    }
+    function _slot(str, i) { return _num(String(str || '').split(/[|,]/)[i]); }
+    function _range() { return window._ucCustomThemeRange || null; }
+    function _isValidIdx(n) {
+        if (n == null) return false;
+        if (n >= 0 && n <= 39) return true;               // plage coeur
+        var r = _range();
+        return !!(r && n >= r.min && n <= r.max);         // plage custom
+    }
+    function _type() {
+        return String((typeof JS_DATA !== 'undefined' && JS_DATA.ucThemesActiveType) || '0');
+    }
+
+    // Réplique de la logique de fenêtre de changeThemeByPrayer (m2body.js) :
+    // 6 créneaux (0=Fajr..5=Isha+/nuit) selon l'heure courante.
+    function _prayerSlotIndex() {
+        if (typeof currentTimeInMinutes === 'undefined' || typeof fajrTimeInMinutes === 'undefined') return null;
+        var N = (typeof JS_Minutes_BeforeAZAN_ToChange_Theme === 'number') ? JS_Minutes_BeforeAZAN_ToChange_Theme : 0;
+        var t = currentTimeInMinutes;
+        if (t < fajrTimeInMinutes    - N) return 5;
+        if (t < shuruqTimeInMinutes  - N) return 0;
+        if (t < dohrTimeInMinutes    - N) return 1;
+        if (t < asrTimeInMinutes     - N) return 2;
+        if (t < maghribTimeInMinutes - N) return 3;
+        if (t < ishaTimeInMinutes    - N) return 4;
+        return 5;
+    }
+
+    // Indice de thème cible pour le mode courant, ou null si indéterminé.
+    function _targetIndex() {
+        var ty = _type();
+        if (ty === '2') {
+            return _slot(JS_DATA.ucThemes4EveryDays, new Date().getDay());
+        }
+        if (ty === '1') {
+            var si = _prayerSlotIndex();
+            if (si == null) return null;
+            if (typeof currentThemeIndexForPrayer !== 'undefined') currentThemeIndexForPrayer = si;
+            return _slot(JS_DATA.ucThemes4eachSalat, si);
+        }
+        if (ty === '3') {
+            var list = _randomList();
+            if (!list.length) return null;
+            return list[Math.floor(Math.random() * list.length)];
+        }
+        return null;   // mode 0 : pas de changement automatique
+    }
+
+    // Liste (mode 3) filtrée aux indices valides -- inclut les indices custom
+    // dès que window._ucCustomThemeRange est publié.
+    function _randomList() {
+        return String((typeof JS_DATA !== 'undefined' && JS_DATA.ucThemesMyBGsLista) || '').split(',')
+            .map(function (s) { return _num(s); })
+            .filter(function (n) { return _isValidIdx(n); });
+    }
+
+    function _applyScheduledTheme(reason, force) {
+        var ty = _type();
+        if (ty === '0') return;
+
+        // Mode 3 : ne PAS re-tirer au simple réveil de veille (sinon le fond
+        // changerait à chaque fois qu'on rallume l'écran). Tous les autres
+        // déclencheurs (00:00 du coeur, boot, changement de mode, édition de la
+        // liste, changement de JOUR, _installCustomThemes prêt) re-tirent.
+        if (ty === '3' && reason === 'resume') return;
+
+        var want = _targetIndex();
+        if (want == null) {
+            _L('THEME', 'SCHED_SKIP', { reason: reason + ':no_target', type: ty });
+            return;
+        }
+        if (!_isValidIdx(want)) {
+            if (want >= 40 && !_range() && _deferTries++ < 25) {
+                // indice custom demandé, plage pas encore prête -> différer
+                setTimeout(function () { _applyScheduledTheme(reason, force); }, 1000);
+            } else {
+                _L('THEME', 'SCHED_SKIP', { reason: reason + ':invalid_or_not_ready', want: String(want) });
+            }
+            return;
+        }
+
+        var cur = (typeof currentThemeIndex !== 'undefined') ? currentThemeIndex : null;
+        if (!force && cur === want) return;               // déjà le bon thème
+        _L('THEME', 'SCHED_APPLY', { reason: reason, type: ty, theme: want, was: cur, force: !!force });
+        if (typeof setThemeFunction === 'function') setThemeFunction(want, true);
+    }
+
+    // ── Overrides des 3 fonctions coeur ──────────────────────────────────────
+    // (updateTimeAndPrayersFunction / applyThemeChange les appellent par
+    //  identifiant nu -> résolvent vers ces versions.)
+    window.changeThemeByDay    = function () { _applyScheduledTheme('core_byday'); };
+    window.changeThemeRandomly = function () { _applyScheduledTheme('core_random'); };
+    // changeThemeByPrayer : le coeur l'appelle CHAQUE minute -- on garde ce
+    // rythme, en passant par notre dispatch (garde NaN + différé custom).
+    window.changeThemeByPrayer = function () { _applyScheduledTheme('core_byprayer'); };
+
+    // _installCustomThemes prêt (sonde d'images finie, applyThemeFunction patché)
+    // -> ré-application FORCÉE : couvre la course au boot où un thème custom a
+    // pu être posé avant le patch (404). Mode 3 : on ne re-tire PAS si le thème
+    // courant est déjà un tirage valide de la liste (évite un double tirage au
+    // démarrage).
+    window._ucCustomThemesReady = function () {
+        _customReady = true;
+        if (_type() === '3') {
+            var list = _randomList();
+            var cur  = (typeof currentThemeIndex !== 'undefined') ? currentThemeIndex : null;
+            if (list.length && list.indexOf(cur) !== -1) {
+                _L('THEME', 'SCHED_SKIP', { reason: 'custom_themes_ready:type3_current_ok', cur: cur });
+                return;
+            }
+        }
+        _applyScheduledTheme('custom_themes_ready', true);
+    };
+    // Filet si _installCustomThemes ne signale jamais.
+    setTimeout(function () { if (!_customReady) _applyScheduledTheme('boot_fallback', true); }, 15000);
+
+    // Changement de jour FIABLE, indépendant du tick 00:00 du coeur (souvent
+    // manqué sur box) : on relève getDay() chaque minute.
+    var _lastDay = new Date().getDay();
+    setInterval(function () {
+        var d = new Date().getDay();
+        if (d !== _lastDay) {
+            _L('THEME', 'DAY_ROLLOVER', { from: _lastDay, to: d });
+            _lastDay = d;
+            _applyScheduledTheme('day_rollover', true);   // force -> re-tire aussi en mode 3
+        }
+    }, 60000);
+
+    // Retour de veille / premier plan (le resync du coeur ne repasse pas par
+    // ces fonctions).
+    document.addEventListener('visibilitychange', function () {
+        if (document.hidden) return;
+        var d = new Date().getDay();
+        var changed = (d !== _lastDay);
+        _lastDay = d;
+        _applyScheduledTheme(changed ? 'resume_new_day' : 'resume', changed);
+    });
+
+    // ── Éditeurs : accepter aussi la plage custom (coeur rejette > 39) ───────
+    function _validEditIdx(v) {
+        if (v === '.') return true;                       // sentinelle "aucun thème" (coeur)
+        return _isValidIdx(_num(v));
+    }
+
+    if (typeof window.editThemeForDayFunction === 'function') {
+        window.editThemeForDayFunction = function (themeIndexParam) {
+            if (!isInputDialogOpen) {
+                inputDialogValue  = '';
+                isInputDialogOpen = false;
+                openInputDialogFunction('Enter Theme number for : ' + weekDayNamesArray[themeIndexParam],
+                    dailyThemesArray[themeIndexParam], 'editThemeForDayFunction(' + themeIndexParam + ')', true);
+                return;
+            }
+            if (!_validEditIdx(inputDialogValue)) return;
+            dailyThemesArray[themeIndexParam] = inputDialogValue;
+            saveThemesForEachDay();
+            saveSettingsToStorageFunction();
+            applyThemeChange();
+        };
+    }
+
+    if (typeof window.editThemeForSalatFunction === 'function') {
+        window.editThemeForSalatFunction = function (themeIndexParam) {
+            if (!isInputDialogOpen) {
+                inputDialogValue  = '';
+                isInputDialogOpen = false;
+                openInputDialogFunction('Enter Theme Number for : ' + prayerNamesArray[themeIndexParam],
+                    themesForEachSalat[themeIndexParam], 'editThemeForSalatFunction(' + themeIndexParam + ')', true);
+                return;
+            }
+            if (!_validEditIdx(inputDialogValue)) return;
+            themesForEachSalat[themeIndexParam] = inputDialogValue;
+            saveThemesForEachSalat();
+            saveSettingsToStorageFunction();
+            applyThemeChange();
+        };
+    }
+
+    _L('CUSTOM', 'INIT', { item: 'themeSchedulerReliability' });
 })();
 
 
@@ -19894,6 +20392,9 @@ function selectQPTakbir() {
         var url = _SB_URL + '/rest/v1/mosque_notifications'
                 + '?mosque_id=eq.' + encodeURIComponent(mid)
                 + '&select=type,body,ok,created_at'
+                // light_watchdog = alerte technique interne (box → admin), pas
+                // une actualité destinée aux fidèles : exclue de ce panneau.
+                + '&type=neq.light_watchdog'
                 + '&order=created_at.desc&limit=10';
 
         fetch(url, { headers: { apikey: _SB_KEY, Authorization: 'Bearer ' + _SB_KEY } })
@@ -19906,6 +20407,9 @@ function selectQPTakbir() {
                 _renderRecentNotifItems((window._ucGetNotifHistory && window._ucGetNotifHistory()) || []);
             });
     }
+    // Exposé pour rafraîchissement externe (ex: après la purge d'historique du
+    // panneau admin, _installNotifHistoryPanel — autre IIFE).
+    window._ucRefreshRecentNotifList = _renderRecentNotifList;
 
     // ── Bloc "Calendrier" (onglet التقويم/calendar) ───────────────────────
     // 1er bloc : calendrier mensuel navigable (flèches gauche/droite), jour
@@ -25351,41 +25855,119 @@ function _ucDefaultAdminPin() {
     function _setPin(pin) {
         JS_CUSTOM[PIN_KEY] = pin;
         if (typeof saveCustomSettingsFunction === 'function') saveCustomSettingsFunction();
-        _pushPinHash(pin);
+        return _pushPinHash(pin);   // promesse {ok, status?, error?, skipped?}
     }
 
-    // Pousse le hash (jamais le PIN en clair) vers mosques.pin_hash --
-    // condition nécessaire pour que l'administration à distance (téléphone,
-    // cf. _installRemoteMosqueAdmin) puisse valider ce PIN côté serveur
-    // (rapid-service, mode remote_config_update). Best-effort, silencieux :
-    // un échec réseau ici ne doit jamais bloquer/alarmer sur un simple
-    // changement de PIN local, qui reste effectif immédiatement sur cet
-    // appareil quoi qu'il arrive.
-    function _pushPinHash(pin) {
-        var mid = window._ucCurrentMosqueId();
-        if (!mid) return;
-        var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
-                   || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
-        var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
-                   || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
-        _ucSha256Hex(pin).then(function (hash) {
-            fetch(_SB_URL + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid), {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type':  'application/json',
-                    'apikey':         _SB_KEY,
-                    'Authorization': 'Bearer ' + _SB_KEY,
-                    'Prefer':         'return=minimal',
-                },
-                body: JSON.stringify({ pin_hash: hash }),
-            })
-            .then(function (r) {
-                if (r.ok) { _L('CFG', 'PIN_HASH_PUSHED', { mosque_id: mid }); }
-                else { _L('CFG', 'PIN_HASH_PUSH_ERR', { mosque_id: mid, status: r.status }); }
-            })
-            .catch(function (e) { _L('CFG', 'PIN_HASH_PUSH_ERR', { mosque_id: mid, error: (e && e.message) || String(e) }); });
-        }).catch(function () {});
+    function _pinSbCfg() {
+        return {
+            url: (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+                 || 'https://tjmjmlzwzebocfdmifrg.supabase.co',
+            key: (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+                 || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4'
+        };
     }
+
+    // PATCH mosques.pin_hash + pose les gardes d'auto-écriture
+    // (UC_SELF_WRITE_INFLIGHT / UC_SELF_WRITE_UPDATED_AT) pour que le polling de
+    // config de CETTE box ne prenne pas sa propre écriture pour une modif
+    // distante et ne reboucle pas en reload (même garde que
+    // _installAutoExportAfterRemoteEdit). `pin_hash` n'est pas une colonne
+    // horaire → le trigger on_mosque_update ne notifie personne.
+    function _patchPinHashToServer(mid, hash) {
+        var c = _pinSbCfg();
+        try { localStorage.setItem('UC_SELF_WRITE_INFLIGHT', String(Date.now())); } catch (e) {}
+        return fetch(c.url + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid) + '&select=updated_at', {
+            method: 'PATCH',
+            headers: {
+                'Content-Type':  'application/json',
+                'apikey':         c.key,
+                'Authorization': 'Bearer ' + c.key,
+                'Prefer':         'return=representation',
+            },
+            body: JSON.stringify({ pin_hash: hash }),
+        })
+        .then(function (r) {
+            if (!r.ok) { _L('CFG', 'PIN_HASH_PUSH_ERR', { mosque_id: mid, status: r.status }); return { ok: false, status: r.status }; }
+            return r.json().catch(function () { return null; }).then(function (rows) {
+                try {
+                    var ua = rows && rows[0] && rows[0].updated_at;
+                    if (ua) localStorage.setItem('UC_SELF_WRITE_UPDATED_AT', ua);
+                    localStorage.removeItem('UC_SELF_WRITE_INFLIGHT');
+                } catch (e) {}
+                _L('CFG', 'PIN_HASH_PUSHED', { mosque_id: mid });
+                return { ok: true };
+            });
+        })
+        .catch(function (e) {
+            _L('CFG', 'PIN_HASH_PUSH_ERR', { mosque_id: mid, error: (e && e.message) || String(e) });
+            return { ok: false, error: (e && e.message) || String(e) };
+        });
+    }
+
+    // Pousse le hash (jamais le PIN en clair) vers mosques.pin_hash -- c'est CE
+    // hash que rapid-service compare au PIN saisi dans l'écran « إدارة عن بعد »
+    // (_installRemoteMosqueAdmin). **BOX UNIQUEMENT** : toutes les mosquées ont
+    // une box, elle est la source de vérité du PIN d'admin à distance. Un
+    // téléphone qui change son PIN local ne touche donc PLUS mosques.pin_hash
+    // (fin du risque « PIN local de la box ≠ hash serveur », désync silencieuse).
+    // Retourne une promesse {ok, status?, error?, skipped?} : le dialogue « Code
+    // PIN » l'attend et affiche un vrai retour (fini le best-effort silencieux
+    // qui laissait croire à une synchro réussie alors que le push avait échoué).
+    function _pushPinHash(pin) {
+        if (!_ucLwdIsBox()) return Promise.resolve({ ok: true, skipped: 'not_box' });
+        var mid = window._ucCurrentMosqueId();
+        if (!mid || (typeof _ucIsAnonymousMosqueId === 'function' && _ucIsAnonymousMosqueId(mid))) {
+            return Promise.resolve({ ok: true, skipped: 'no_mosque' });
+        }
+        return _ucSha256Hex(pin).then(function (hash) {
+            return _patchPinHashToServer(mid, hash);
+        }).catch(function (e) {
+            _L('CFG', 'PIN_HASH_PUSH_ERR', { mosque_id: mid, error: (e && e.message) || String(e) });
+            return { ok: false, error: (e && e.message) || String(e) };
+        });
+    }
+
+    // Auto-réparation au démarrage (box uniquement) : re-pousse mosques.pin_hash
+    // à partir du PIN local de la box s'il est absent côté serveur ou divergent.
+    // Corrige tout seul les cas : PIN jamais synchronisé (pin_hash NULL → 403 à
+    // distance), push jadis échoué faute de réseau, désync après une écriture
+    // parasite. Ne pousse JAMAIS le PIN d'usine (public) — dans ce cas l'admin
+    // distant reste volontairement à 403 tant qu'un vrai PIN n'est pas défini
+    // sur l'écran de la mosquée.
+    var _pinHealDone = false;
+    function _pinHashSelfHeal(attempt) {
+        if (_pinHealDone || !_ucLwdIsBox()) return;
+        attempt = attempt || 1;
+        var mid = window._ucCurrentMosqueId && window._ucCurrentMosqueId();
+        if (!mid || (typeof _ucIsAnonymousMosqueId === 'function' && _ucIsAnonymousMosqueId(mid))) return;
+        var localPin = JS_CUSTOM[PIN_KEY] || _ucDefaultAdminPin();
+        if (localPin === _ucDefaultAdminPin()) {
+            _pinHealDone = true;
+            _L('CFG', 'PIN_HASH_SELF_HEAL_SKIP', { mosque_id: mid, reason: 'still_default' });
+            return;
+        }
+        var c = _pinSbCfg();
+        _ucSha256Hex(localPin).then(function (hash) {
+            return fetch(c.url + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid) + '&select=pin_hash',
+                  { headers: { apikey: c.key, Authorization: 'Bearer ' + c.key } })
+            .then(function (r) { return r.json(); })
+            .then(function (rows) {
+                var cur = (rows && rows[0]) ? rows[0].pin_hash : undefined;
+                if (cur === hash) { _pinHealDone = true; _L('CFG', 'PIN_HASH_SELF_HEAL_OK', { mosque_id: mid }); return; }
+                var reason = cur ? 'mismatch' : 'null';
+                return _patchPinHashToServer(mid, hash).then(function (res) {
+                    if (res.ok) _pinHealDone = true;
+                    _L('CFG', 'PIN_HASH_SELF_HEAL_' + (res.ok ? 'PUSHED' : 'ERR'),
+                       { mosque_id: mid, reason: reason, status: res.status || 0 });
+                    if (!res.ok && attempt < 2) setTimeout(function () { _pinHashSelfHeal(attempt + 1); }, 63000);
+                });
+            });
+        }).catch(function (e) {
+            _L('CFG', 'PIN_HASH_SELF_HEAL_ERR', { mosque_id: mid, error: (e && e.message) || String(e) });
+            if (attempt < 2) setTimeout(function () { _pinHashSelfHeal(attempt + 1); }, 63000);
+        });
+    }
+    setTimeout(function () { _pinHashSelfHeal(1); }, 12000);
 
     // ── Boutons apres eidAdha ─────────────────────────────────────────────
     var eidAdhaEl = document.getElementById('eidAdhaCheckbox');
@@ -25680,6 +26262,7 @@ function _ucDefaultAdminPin() {
         ' placeholder="Nouveau PIN (4 a 8 chiffres)" style="' + INP_SM + ';margin-bottom:8px;"/>',
         '<input id="ucPinConf" type="password" maxlength="8" inputmode="numeric"',
         ' placeholder="Confirmer" style="' + INP_SM + '"/>',
+        '<p id="ucPinChangeHint" style="color:rgba(223,205,177,0.7);font-size:0.8em;margin:10px 0 0;line-height:1.35;"></p>',
         '<p id="ucPinChangeErr" style="' + ERR_STYLE + '"></p>',
         '<div style="' + BTN_ROW + '">',
         '<span id="ucPinChangeCancel" class="ucModalBtn ucModalBtn--secondary">Annuler</span>',
@@ -25720,23 +26303,48 @@ function _ucDefaultAdminPin() {
     btnPin.addEventListener('click', function() {
         ['ucPinOld','ucPinNew','ucPinConf'].forEach(function(id) { _el(id).value = ''; });
         _el('ucPinChangeErr').textContent = '';
+        _el('ucPinChangeErr').style.color = '';
         _show(ovChange);
         _el('ucPinOld').focus();
     });
     _el('ucPinChangeCancel').addEventListener('click', function() { _hide(ovChange); });
     _el('ucPinChangeOk').addEventListener('click', function() {
         var err  = _el('ucPinChangeErr');
+        var okBtn = _el('ucPinChangeOk');
         if (window._ucPinGuard && window._ucPinGuard.check(err)) return;
         var old  = _el('ucPinOld').value;
         var nw   = _el('ucPinNew').value;
         var conf = _el('ucPinConf').value;
+        err.style.color = '';
         if (old  !== _getPin())          { window._ucPinGuard && window._ucPinGuard.fail(); err.textContent = (window._ucAdminMsg && window._ucAdminMsg.oldPinErr) || 'Ancien PIN incorrect';                       return; }
         if (!/^\d{4,8}$/.test(nw))       { err.textContent = (window._ucAdminMsg && window._ucAdminMsg.pin4Err) || 'Le nouveau PIN doit comporter entre 4 et 8 chiffres'; return; }
         if (nw !== conf)                  { err.textContent = (window._ucAdminMsg && window._ucAdminMsg.pinMismatch) || 'Les deux PIN ne correspondent pas'; return; }
         window._ucPinGuard && window._ucPinGuard.success();
-        _setPin(nw);
-        _hide(ovChange);
-        _ucToast((window._ucAdminMsg && window._ucAdminMsg.pinOk) || 'Code PIN modifié', 'ok');
+        // PIN appliqué localement tout de suite ; on ATTEND le résultat de la
+        // synchro serveur avant de fermer, pour ne jamais laisser croire que
+        // l'admin à distance est armé alors que le push a échoué (box hors ligne).
+        err.style.color = 'rgba(223,205,177,0.85)';
+        err.textContent = (window._ucAdminMsg && window._ucAdminMsg.pinSyncing) || 'Synchronisation avec le serveur…';
+        okBtn.style.pointerEvents = 'none';
+        okBtn.style.opacity = '0.55';
+        _setPin(nw).then(function (res) {
+            okBtn.style.pointerEvents = '';
+            okBtn.style.opacity = '';
+            if (res && res.skipped) {
+                // Téléphone : ce PIN ne vaut que sur cet appareil, aucune synchro.
+                _hide(ovChange);
+                _ucToast((window._ucAdminMsg && window._ucAdminMsg.pinLocalOnly) || 'Code PIN de cet appareil modifié', 'ok');
+                return;
+            }
+            if (res && res.ok) {
+                _hide(ovChange);
+                _ucToast((window._ucAdminMsg && window._ucAdminMsg.pinSyncOk) || 'Code PIN modifié et synchronisé ✓', 'ok');
+            } else {
+                err.style.color = '#e0b050';
+                err.textContent = (window._ucAdminMsg && window._ucAdminMsg.pinSyncFail)
+                    || 'PIN changé sur cet écran, mais NON synchronisé au serveur. Reconnectez Internet et refaites l’opération.';
+            }
+        });
     });
 
     // ── Toast helper (compatible WebView Android + web) ──────────────────
@@ -25800,6 +26408,12 @@ function _updateAdminLabels() {
         oldPinErr:    { AR: 'PIN القديم خاطئ', FR: 'Ancien PIN incorrect', EN: 'Wrong old PIN', TR: 'Eski PIN yanlış', ID: 'PIN lama salah' },
         pin4Err:      { AR: 'PIN من 4 إلى 8 أرقام',  FR: '4 à 8 chiffres requis',  EN: '4 to 8 digits required', TR: '4-8 rakam gerekli', ID: '4-8 angka diperlukan' },
         pinMismatch:  { AR: 'PIN غير متطابق', FR: 'Les deux PIN ne correspondent pas', EN: 'PIN mismatch', TR: 'PIN uyumsuz', ID: 'PIN tidak cocok' },
+        pinSyncing:   { AR: 'جارٍ المزامنة مع الخادم…', FR: 'Synchronisation avec le serveur…', EN: 'Syncing with the server…' },
+        pinSyncOk:    { AR: 'تم تغيير رمز PIN ومزامنته ✓', FR: 'Code PIN modifié et synchronisé ✓', EN: 'PIN changed and synced ✓' },
+        pinSyncFail:  { AR: 'تم تغيير الرمز على هذه الشاشة لكن لم تتم مزامنته مع الخادم. أعد الاتصال بالإنترنت وكرّر العملية.', FR: 'PIN changé sur cet écran, mais NON synchronisé au serveur. Reconnectez Internet et refaites l’opération.', EN: 'PIN changed on this screen but NOT synced to the server. Reconnect to the Internet and try again.' },
+        pinLocalOnly: { AR: 'تم تغيير رمز PIN لهذا الجهاز', FR: 'Code PIN de cet appareil modifié', EN: 'This device’s PIN changed' },
+        pinChangeHintBox:   { AR: 'هذا الرمز يحمي أيضًا إدارة المسجد عن بعد من هاتف الإمام.', FR: 'Ce code protège aussi l’administration à distance de la mosquée depuis le téléphone.', EN: 'This code also protects remote administration of the mosque from the phone.' },
+        pinChangeHintPhone: { AR: 'هذا الرمز يحمي هذا الجهاز فقط. رمز الإدارة عن بعد يُضبط على شاشة المسجد (الصندوق).', FR: 'Ce code ne protège que cet appareil. Le code d’administration à distance se règle sur l’écran de la mosquée (la box).', EN: 'This code protects only this device. The remote-admin code is set on the mosque screen (the box).' },
         notifErr:     { AR: 'خطأ في الإرسال', FR: 'Erreur envoi', EN: 'Send error', TR: 'Gönderme hatası', ID: 'Gagal kirim' },
         notifNetErr:  { AR: 'لا يوجد إنترنت', FR: 'Pas de connexion', EN: 'No connection', TR: 'Bağlantı yok', ID: 'Tidak ada jaringan' },
         msgBtn:       { AR: 'إعلام عام', FR: 'Message',     EN: 'Message',  TR: 'Mesaj',    ID: 'Pesan'   },
@@ -25816,6 +26430,7 @@ function _updateAdminLabels() {
         msgPlaceholder: { AR: 'اكتب رسالتك هنا...', FR: 'Votre message...', EN: 'Your message...' },
         historyBtn:    { AR: 'سجل الإرساليات', FR: 'Historique', EN: 'History', TR: 'Geçmiş', ID: 'Riwayat' },
         histTitle:     { AR: 'سجل الرسائل', FR: 'Historique des messages', EN: 'Message history', TR: 'Mesaj geçmişi', ID: 'Riwayat pesan' },
+        histPurge:     { AR: 'حذف السجل', FR: 'Purger', EN: 'Clear', TR: 'Temizle', ID: 'Hapus' },
         close:         { AR: 'إغلاق', FR: 'Fermer', EN: 'Close', TR: 'Kapat', ID: 'Tutup' },
         // Titres des 2 groupes de la rangée protégée par PIN (regroupement
         // 27/08/2026, cf. _installAdminNotifyPanel) : Communication = envoi
@@ -25867,6 +26482,12 @@ function _updateAdminLabels() {
     var pc = _el('ucPinConf'); if (pc) pc.placeholder = t('confPin');
     var cc = _el('ucPinChangeCancel'); if (cc) cc.textContent = t('cancel');
     var co = _el('ucPinChangeOk');     if (co) co.textContent = t('confirm');
+    var chHint = _el('ucPinChangeHint');
+    if (chHint) {
+        var _isBoxDev = !!(window.AndroidMobile && typeof window.AndroidMobile.isAndroidTv === 'function'
+            && window.AndroidMobile.isAndroidTv());
+        chHint.textContent = t(_isBoxDev ? 'pinChangeHintBox' : 'pinChangeHintPhone');
+    }
 
     // Overlay Janaza
     var jt = _el('ucJanazaTitle'); if (jt) jt.textContent = t('janazaTitle');
@@ -25899,6 +26520,7 @@ function _updateAdminLabels() {
     // Overlay Historique
     var ht = _el('ucHistTitle'); if (ht) ht.textContent = t('histTitle');
     var hc = _el('ucHistClose'); if (hc) hc.textContent = t('close');
+    var hp = _el('ucHistPurge'); if (hp) hp.textContent = t('histPurge');
 
     // Messages toast accessibles aux handlers existants
     window._ucAdminMsg = {
@@ -25910,6 +26532,10 @@ function _updateAdminLabels() {
         oldPinErr:   t('oldPinErr'),
         pin4Err:     t('pin4Err'),
         pinMismatch: t('pinMismatch'),
+        pinSyncing:  t('pinSyncing'),
+        pinSyncOk:   t('pinSyncOk'),
+        pinSyncFail: t('pinSyncFail'),
+        pinLocalOnly: t('pinLocalOnly'),
         janazaNameReq: t('janazaNameReq'),
         lockBtn:     t('lockBtn')
     };
@@ -26597,7 +27223,9 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         '<p id="ucHistTitle" style="margin:0 0 12px;font-size:1em;color:#c8a84b;',
         'text-align:center;flex-shrink:0;">Historique des messages</p>',
         '<div id="ucHistList" style="overflow:auto;flex:1;min-height:0;"></div>',
-        '<div style="display:flex;justify-content:center;margin-top:14px;flex-shrink:0;">',
+        '<p id="ucHistPurgeStatus" style="color:#aaa;font-size:0.78em;text-align:center;min-height:1em;margin:8px 0 0;flex-shrink:0;"></p>',
+        '<div style="display:flex;gap:10px;justify-content:center;margin-top:8px;flex-shrink:0;">',
+        '<span id="ucHistPurge" class="ucModalBtn ucModalBtn--secondary" style="color:#ff6b6b;">Purger</span>',
         '<span id="ucHistClose" class="ucModalBtn ucModalBtn--secondary">Fermer</span>',
         '</div></div>'
     ].join('');
@@ -26609,12 +27237,40 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
 
     function _typeLabel(type) {
         var L = {
-            notifier: { AR:'تحديث الأوقات', FR:'Mise à jour des horaires', EN:'Schedule update',  TR:'Takvim güncellemesi',     ID:'Pembaruan jadwal' },
-            message:  { AR:'رسالة',         FR:'Message',                 EN:'Message',          TR:'Mesaj',                    ID:'Pesan' },
-            janaza:   { AR:'جنازة',         FR:'Janaza',                  EN:'Janaza',           TR:'Cenaze',                   ID:'Janazah' }
+            notifier:       { AR:'تحديث الأوقات', FR:'Mise à jour des horaires', EN:'Schedule update',  TR:'Takvim güncellemesi',     ID:'Pembaruan jadwal' },
+            message:        { AR:'رسالة',         FR:'Message',                 EN:'Message',          TR:'Mesaj',                    ID:'Pesan' },
+            janaza:         { AR:'جنازة',         FR:'Janaza',                  EN:'Janaza',           TR:'Cenaze',                   ID:'Janazah' },
+            light_watchdog: { AR:'مراقبة الأجهزة', FR:'Surveillance matériel',   EN:'Hardware watchdog', TR:'Donanım izleme',          ID:'Pemantauan perangkat' }
         };
         var row = L[type] || L.message;
         return row[_lang()] || row.EN;
+    }
+
+    // Corps serveur "ampliExt:192.168.100.91@30min/MGRB" -> phrase lisible.
+    var _LWD_MOD = {
+        ampliInt: { AR:'مكبّر الإمام',        FR:'ampli imam' },
+        ampliExt: { AR:'مكبّر الأذان الخارجي', FR:'ampli azan (ext.)' },
+        minaret:  { AR:'المئذنة',              FR:'minaret' },
+        mihrab:   { AR:'المحراب',              FR:'mihrab' },
+        roller:   { AR:'الستارة',              FR:'volet' }
+    };
+    var _LWD_PR = {
+        FAJR:{AR:'الفجر',FR:'Fajr'}, DOHR:{AR:'الظهر',FR:'Dhuhr'}, ASSR:{AR:'العصر',FR:'Asr'},
+        MGRB:{AR:'المغرب',FR:'Maghreb'}, ISHA:{AR:'العشاء',FR:'Isha'}, JOMOA:{AR:'الجمعة',FR:'Jumu\'a'}
+    };
+    function _fmtWatchdogBody(raw) {
+        var m = String(raw || '').match(/^(\w+):([^@]*)@(\d+)min\/(\w+)$/);
+        if (!m) return String(raw || '');
+        var isAr = (_lang() === 'AR');
+        var mod = (_LWD_MOD[m[1]] && (_LWD_MOD[m[1]][isAr ? 'AR' : 'FR'])) || m[1];
+        var pr  = (_LWD_PR[m[4]]  && (_LWD_PR[m[4]][isAr ? 'AR' : 'FR']))  || m[4];
+        var ip  = m[2] ? ' (' + m[2] + ')' : '';
+        var when = isAr
+            ? (m[3] === '70' ? 'قبل الأذان بساعة و10 د' : 'قبل الأذان بـ30 د')
+            : (m[3] === '70' ? '1 h 10 avant l\'azan' : '30 min avant l\'azan');
+        return isAr
+            ? ('⚠️ ' + mod + ip + ' لا يستجيب — ' + when + ' (' + pr + ')')
+            : ('⚠️ ' + mod + ip + ' injoignable — ' + when + ' (' + pr + ')');
     }
 
     function _emptyLabel() {
@@ -26629,12 +27285,16 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         return p2(d.getDate()) + '/' + p2(d.getMonth() + 1) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
     }
 
+    // Liste fusionnée affichée : envois locaux (UC_NOTIF_HISTORY) + alertes de
+    // surveillance matériel récupérées du serveur (mosque_notifications,
+    // type='light_watchdog'), triées du plus récent au plus ancien.
+    var _histItems = [];
+
     function _renderHistory() {
         var list = _e('ucHistList');
         list.innerHTML = '';
-        var arr = (window._ucGetNotifHistory && window._ucGetNotifHistory()) || [];
 
-        if (!arr.length) {
+        if (!_histItems.length) {
             var empty = document.createElement('p');
             empty.style.cssText = 'color:#aaa;text-align:center;font-size:0.9em;margin:18px 0;';
             empty.textContent = _emptyLabel();
@@ -26642,7 +27302,7 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             return;
         }
 
-        arr.forEach(function(item) {
+        _histItems.forEach(function(item) {
             var row = document.createElement('div');
             row.style.cssText = 'border-left:3px solid ' + (item.ok ? '#4caf50' : '#ff4444')
                 + ';background:rgba(255,255,255,0.04);border-radius:4px;'
@@ -26663,10 +27323,11 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
             head.appendChild(type);
             row.appendChild(head);
 
-            if (item.body) {
+            var bodyTxt = (item.type === 'light_watchdog') ? _fmtWatchdogBody(item.body) : item.body;
+            if (bodyTxt) {
                 var body = document.createElement('div');
                 body.style.cssText = 'color:#ddd;font-size:0.85em;margin-top:4px;white-space:pre-wrap;word-break:break-word;';
-                body.textContent = item.body;
+                body.textContent = bodyTxt;
                 row.appendChild(body);
             }
 
@@ -26674,11 +27335,119 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         });
     }
 
-    btnHist.addEventListener('click', function() {
+    function _sbCfg() {
+        var MC = window.MOSQUE_CONFIG || {};
+        return {
+            url: MC.SUPABASE_URL      || 'https://tjmjmlzwzebocfdmifrg.supabase.co',
+            key: MC.SUPABASE_ANON_KEY || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4'
+        };
+    }
+
+    // Charge la liste : local d'abord (instantané), puis fusion avec les alertes
+    // serveur (asynchrone, best-effort — hors ligne = liste locale seule).
+    function _loadHistory() {
+        _histItems = ((window._ucGetNotifHistory && window._ucGetNotifHistory()) || []).slice();
         _renderHistory();
+
+        var mid = (typeof window._ucCurrentMosqueId === 'function') ? window._ucCurrentMosqueId() : '';
+        if (!mid) return;
+        var c = _sbCfg();
+        var url = c.url + '/rest/v1/mosque_notifications'
+                + '?mosque_id=eq.' + encodeURIComponent(mid)
+                + '&type=eq.light_watchdog'
+                + '&select=type,body,ok,created_at'
+                + '&order=created_at.desc&limit=20';
+        fetch(url, { headers: { apikey: c.key, Authorization: 'Bearer ' + c.key } })
+            .then(function(r) { return r.ok ? r.json() : Promise.reject(r.status); })
+            .then(function(rows) {
+                if (!Array.isArray(rows)) return;
+                var srv = rows.map(function(x) {
+                    return { ts: x.created_at, type: x.type, body: x.body || '', ok: !!x.ok };
+                });
+                // fusion + tri décroissant par horodatage
+                _histItems = ((window._ucGetNotifHistory && window._ucGetNotifHistory()) || [])
+                    .slice().concat(srv)
+                    .sort(function(a, b) { return new Date(b.ts) - new Date(a.ts); });
+                _renderHistory();
+            })
+            .catch(function(e) { _L('NOTIF', 'HIST_WATCHDOG_FETCH_ERR', String(e)); });
+    }
+
+    // Purge : historique local (cet appareil) + alertes de surveillance serveur
+    // de cette mosquée (type='light_watchdog' uniquement — RLS dédiée). Double
+    // tap de confirmation, sans boîte de dialogue système.
+    var _purgeArmed = false;
+    var _purgeArmTimer = null;
+    function _purgeStatus(msg, isErr) {
+        var el = _e('ucHistPurgeStatus');
+        if (el) { el.textContent = msg || ''; el.style.color = isErr ? '#ff6b6b' : '#aaa'; }
+    }
+    function _purgeLabel(state) {
+        var L = {
+            btn:     { AR:'حذف السجل', FR:'Purger', EN:'Clear', TR:'Temizle', ID:'Hapus' },
+            confirm: { AR:'حذف كامل السجل ؟', FR:'Vider tout l’historique ?', EN:'Clear all history?', TR:'Tüm geçmiş silinsin mi?', ID:'Hapus semua riwayat?' },
+            done:    { AR:'تم حذف السجل', FR:'Historique vidé', EN:'History cleared', TR:'Temizlendi', ID:'Dihapus' },
+            err:     { AR:'فشل حذف الجزء الخادمي', FR:'Échec purge côté serveur', EN:'Server purge failed', TR:'Sunucu hatası', ID:'Gagal di server' }
+        };
+        return (L[state] && (L[state][_lang()] || L[state].EN)) || state;
+    }
+    function _resetPurgeBtn() {
+        _purgeArmed = false;
+        if (_purgeArmTimer) { clearTimeout(_purgeArmTimer); _purgeArmTimer = null; }
+        var b = _e('ucHistPurge');
+        if (b) b.textContent = _purgeLabel('btn');
+    }
+    function _doPurge() {
+        // 1) local (toujours possible, données de cet appareil)
+        try { localStorage.removeItem(UC_NOTIF_HISTORY_KEY); } catch (e) {}
+        // 2) serveur : TOUT l'historique de notifications de cette mosquée —
+        // pas seulement les alertes light_watchdog, mais aussi ce qu'affiche
+        // ucMosqueInfoRecentNotifSection (notifier / message / janaza /
+        // config_update / remote_action). Purge complète voulue (demande
+        // 01/09/2026). RLS "purge notifications history (anon)" using(true).
+        var mid = (typeof window._ucCurrentMosqueId === 'function') ? window._ucCurrentMosqueId() : '';
+        var c = _sbCfg();
+        var p = (mid)
+            ? fetch(c.url + '/rest/v1/mosque_notifications'
+                    + '?mosque_id=eq.' + encodeURIComponent(mid),
+                    { method: 'DELETE', headers: { apikey: c.key, Authorization: 'Bearer ' + c.key, Prefer: 'return=minimal' } })
+            : Promise.resolve({ ok: true });
+        p.then(function(r) {
+            _L('NOTIF', 'HIST_PURGE', { mosque_id: mid, serverOk: !!(r && r.ok), status: (r && r.status) || 0 });
+            _purgeStatus(_purgeLabel((r && r.ok) ? 'done' : 'err'), !(r && r.ok));
+        }).catch(function(e) {
+            _L('NOTIF', 'HIST_PURGE_ERR', String(e));
+            _purgeStatus(_purgeLabel('err'), true);
+        }).then(function() {
+            _resetPurgeBtn();
+            _loadHistory();
+            // Rafraîchit aussi le bloc "Dernières notifications" de la modale
+            // infos-mosquée (autre IIFE) s'il a été rendu au moins une fois.
+            if (typeof window._ucRefreshRecentNotifList === 'function') {
+                try { window._ucRefreshRecentNotifList(); } catch (e) {}
+            }
+            window._ucRefreshAdminStatus && window._ucRefreshAdminStatus();
+        });
+    }
+
+    btnHist.addEventListener('click', function() {
+        _resetPurgeBtn();
+        _purgeStatus('');
+        _loadHistory();
         ov.style.display = 'flex';
     });
-    _e('ucHistClose').addEventListener('click', function() { ov.style.display = 'none'; });
+    _e('ucHistPurge').addEventListener('click', function() {
+        if (!_purgeArmed) {
+            _purgeArmed = true;
+            _e('ucHistPurge').textContent = _purgeLabel('confirm');
+            _purgeArmTimer = setTimeout(_resetPurgeBtn, 4000);
+            return;
+        }
+        _resetPurgeBtn();
+        _purgeStatus('…');
+        _doPurge();
+    });
+    _e('ucHistClose').addEventListener('click', function() { ov.style.display = 'none'; _resetPurgeBtn(); _purgeStatus(''); });
     ov.addEventListener('click', function(evt) {
         if (evt.target === ov) ov.style.display = 'none';
     });
@@ -32172,9 +32941,11 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
 // l'écran plusieurs secondes, bien plus sous mauvaise connexion (rafale de
 // fetch d'init qui pendouillent). Déclenché accidentellement en plein compte à
 // rebours d'Asr (retour utilisateur 30/08/2026, mosquée tn.monastir.aboubaker),
-// il donnait un écran gelé. Le bouton "actualiser" en bas de l'écran
-// (restartApplicationFunction → _ucDeferrableReload, qui respecte la fenêtre
-// azan/iqama) suffit largement. Fonction + CSS supprimées.
+// il donnait un écran gelé — c'est un GESTE facile à déclencher sans le vouloir.
+// Le reload manuel reste possible via le drapeau #psFlagImageVertical
+// (double-tap délibéré) / #psFlagImageHorizontal / le lien #ucReloadLink, tous
+// immédiats (cf. section RELOAD DIFFÉRABLE). Fonction + CSS du pull-to-refresh
+// supprimées.
 // ═════════════════════════════════════════════════════════════════════════════
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -32837,7 +33608,12 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         errNetwork:       { AR: 'خطأ في الشبكة',                                FR: 'Erreur réseau',                                          EN: 'Network error' },
         errNotConfigured: { AR: 'الإدارة عن بعد غير مفعلة لهذا المسجد -- عرّف رمز PIN أولاً على الشاشة', FR: "Administration à distance non configurée -- définissez d'abord un code PIN sur la box", EN: 'Remote admin not configured -- set a PIN on the box first' },
         errInvalidPin:    { AR: 'رمز PIN غير صحيح',                             FR: 'Code PIN incorrect',                                     EN: 'Invalid PIN' },
-        errGeneric:       { AR: 'حدث خطأ',                                      FR: "Une erreur est survenue",                                EN: 'An error occurred' }
+        errGeneric:       { AR: 'حدث خطأ',                                      FR: "Une erreur est survenue",                                EN: 'An error occurred' },
+        verifyPinBtn:     { AR: 'تحقّق',                                        FR: 'Vérifier l’accès',                                       EN: 'Check access' },
+        verifyPinChecking:{ AR: 'جارٍ التحقّق...',                              FR: 'Vérification...',                                        EN: 'Checking...' },
+        verifyPinOk:      { AR: '✓ الرمز مقبول من المسجد',                      FR: '✓ Code accepté par la mosquée',                          EN: '✓ Code accepted by the mosque' },
+        verifyPinBad:     { AR: '✗ الرمز مرفوض — تحقّق من الرمز المضبوط على شاشة المسجد', FR: '✗ Code refusé — vérifiez le code réglé sur l’écran de la mosquée', EN: '✗ Code rejected — check the code set on the mosque screen' },
+        verifyPinNone:    { AR: '✗ لا يوجد رمز مضبوط على شاشة المسجد بعد',       FR: '✗ Aucun code encore réglé sur l’écran de la mosquée',    EN: '✗ No code set on the mosque screen yet' }
     };
     function _raT(key) {
         var row = L_RA[key];
@@ -32930,6 +33706,10 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                     '<label for="ucRAActionsPin" id="ucRASharedPinLabel">' + _raT('pinLabel') + '</label>' +
                     '<div id="ucRASharedPinRow">' +
                         '<input type="password" id="ucRAActionsPin" maxlength="8" inputmode="numeric" autocomplete="off">' +
+                        // Bouton "Vérifier l'accès" : teste le PIN contre la box
+                        // (rapid-service mode verify_pin) sans rien exécuter →
+                        // "✓ code accepté" / "✗ refusé" / "✗ aucun code sur la box".
+                        '<span id="ucRAVerifyPinBtn" class="ucModalBtn ucModalBtn--secondary" role="button" tabindex="0">' + _raT('verifyPinBtn') + '</span>' +
                         // Message "Code PIN incorrect" EN FACE du champ (et non
                         // dans un panneau d'onglet) : une seule cible partagée
                         // par les deux onglets → jamais désynchronisé (le cas
@@ -32937,6 +33717,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                         // depuis Paramétrage, l'action passe mais l'erreur
                         // persiste" ne peut plus arriver).
                         '<span id="ucRASharedPinError" role="alert"></span>' +
+                        '<span id="ucRASharedPinNote" role="status"></span>' +
                     '</div>' +
                     '<div id="ucRAPinHint">' + _raT('pinHint') + '</div>' +
                 '</div>' +
@@ -32957,11 +33738,17 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                         '<div id="ucRALedStatus" class="ucRALedStatus"></div>' +
                         '<div class="ucRASectionTitle">' + _raT('reloadBtn') + '</div>' +
                         '<div class="ucRAActionsTop"><span id="ucRAReloadBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('reloadBtn') + '</span></div>' +
+                        // Retour de l'action AFFICHÉ SOUS SON PROPRE BOUTON (et non
+                        // dans #ucRAActionsStatus tout en haut du panneau, hors champ
+                        // de vision quand on agit en bas — retour imam 01/09/2026).
+                        '<div id="ucRAReloadStatus" class="ucRALedStatus"></div>' +
                         '<div class="ucRASectionTitle">' + _raT('actUpdateTitle') + '</div>' +
                         '<div id="ucRAUpdateStatus" class="ucRAUpdateStatus">' + _raT('updateUnknown') + '</div>' +
                         '<div class="ucRAActionsTop"><span id="ucRAUpdateBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actUpdateBtn') + '</span></div>' +
+                        '<div id="ucRAUpdateActionStatus" class="ucRALedStatus"></div>' +
                         '<div class="ucRASectionTitle">' + _raT('actDiagTitle') + '</div>' +
                         '<div class="ucRAActionsTop"><span id="ucRASendDebugBtn" class="ucModalBtn ucModalBtn--secondary">' + _raT('actSendDebug') + '</span></div>' +
+                        '<div id="ucRADiagStatus" class="ucRALedStatus"></div>' +
                     '</div>' +
                     '<div class="ucRAPane" data-pane="settings">' +
                         '<div class="ucRASectionTitle">' + _raT('timesTitle') + '</div>' +
@@ -33013,7 +33800,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         // abonnés de la mosquée, pas seulement la box visée (retour utilisateur
         // 30/07/2026). Combiné à la garde box-only du listener 'ucRemoteAction'
         // plus haut : aucun téléphone ne peut plus réagir à cette commande.
-        document.getElementById('ucRAReloadBtn').addEventListener('click', function () { _sendRemoteAction('reload', null); });
+        document.getElementById('ucRAReloadBtn').addEventListener('click', function () { _sendRemoteAction('reload', null, _setReloadStatus); });
         // Bouton de synchro de la liste des récitateurs (onglet Paramétrage) --
         // pas de PIN : simple relecture (comme lights_refresh / audio_refresh).
         var _recBtn = document.getElementById('ucRARecitersSyncBtn');
@@ -33028,14 +33815,21 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         // window._ucSendDebugReport) -- utile quand un incident (ex. téléchargement
         // qui semble bloqué) est signalé par un utilisateur sur une box distante,
         // sans avoir à s'y déplacer pour ouvrir la console et taper "envoyer".
-        document.getElementById('ucRAUpdateBtn').addEventListener('click', function () { _sendRemoteAction('update_app', null); });
-        document.getElementById('ucRASendDebugBtn').addEventListener('click', function () { _sendRemoteAction('send_debug', null); });
+        document.getElementById('ucRAUpdateBtn').addEventListener('click', function () { _sendRemoteAction('update_app', null, _setUpdateActionStatus); });
+        document.getElementById('ucRASendDebugBtn').addEventListener('click', function () { _sendRemoteAction('send_debug', null, _setDiagStatus); });
         document.getElementById('ucRASendBtn').addEventListener('click', function () { _submit(false); });
         // Dès que l'utilisateur (re)tape le PIN, on efface le message d'erreur :
         // il ne peut jamais rester un "Code PIN incorrect" affiché à côté d'un
         // PIN qu'on vient de corriger et qui va passer.
         var _pinInEl = document.getElementById('ucRAActionsPin');
-        if (_pinInEl) _pinInEl.addEventListener('input', function () { _clearPinError(); });
+        if (_pinInEl) _pinInEl.addEventListener('input', function () { _clearPinError(); _setPinNote('', false); });
+        var _vpBtn = document.getElementById('ucRAVerifyPinBtn');
+        if (_vpBtn) {
+            _vpBtn.addEventListener('click', _verifyPin);
+            _vpBtn.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _verifyPin(); }
+            });
+        }
         // Délégation unique : la grille Coran est réécrite en entier à chaque
         // _renderQuranTable() (cellules jour togglées), pas besoin de
         // réattacher un listener par cellule à chaque rendu.
@@ -33071,8 +33865,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             _audioBtns[a].addEventListener('click', function () {
                 var playT = this.getAttribute('data-ra-audio-play');
                 var stopT = this.getAttribute('data-ra-audio-stop');
-                if (playT && _sendRemoteAction(playT + '_play', null)) _startAudioSync(playT);
-                if (stopT && _sendRemoteAction(stopT + '_stop', null)) _startAudioSync(stopT);
+                if (playT && _sendRemoteAction(playT + '_play', null, _setAudioStatus)) _startAudioSync(playT);
+                if (stopT && _sendRemoteAction(stopT + '_stop', null, _setAudioStatus)) _startAudioSync(stopT);
             });
         }
         var _audioLeds = overlay.querySelectorAll('.ucRAAudioLed');
@@ -33088,8 +33882,8 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             _lightBtns[j].addEventListener('click', function () {
                 var onTarget  = this.getAttribute('data-ra-light-on');
                 var offTarget = this.getAttribute('data-ra-light-off');
-                if (onTarget  && _sendRemoteAction('light_on',  onTarget))  _startLedSync(onTarget);
-                if (offTarget && _sendRemoteAction('light_off', offTarget)) _startLedSync(offTarget);
+                if (onTarget  && _sendRemoteAction('light_on',  onTarget,  _setLedStatus))  _startLedSync(onTarget);
+                if (offTarget && _sendRemoteAction('light_off', offTarget, _setLedStatus)) _startLedSync(offTarget);
             });
         }
         // Pastille LED : un appui demande une relecture instantanée de l'état
@@ -33459,6 +34253,23 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         el.className = type ? ('ucRAStatus-' + type) : '';
     }
 
+    // Retour d'action affiché SOUS le bouton concerné (Recharger / Mettre à jour /
+    // Diagnostic), pas dans #ucRAActionsStatus en tête de panneau : quand on agit
+    // en bas de l'onglet, le message du haut est hors écran (retour imam 01/09/2026).
+    // Coran/azan et lumières ont déjà leur propre ligne (#ucRAAudioStatus /
+    // #ucRALedStatus) — _sendRemoteAction y route via son 3ᵉ argument.
+    function _mkSectionStatusSetter(id) {
+        return function (msg, type) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = msg || '';
+            el.className = 'ucRALedStatus' + (type ? ' ucRALedStatus--' + type : '');
+        };
+    }
+    var _setReloadStatus       = _mkSectionStatusSetter('ucRAReloadStatus');
+    var _setUpdateActionStatus = _mkSectionStatusSetter('ucRAUpdateActionStatus');
+    var _setDiagStatus         = _mkSectionStatusSetter('ucRADiagStatus');
+
     // Message d'erreur PIN, affiché EN FACE du champ #ucRAActionsPin (cible
     // unique #ucRASharedPinError, partagée par les deux onglets). Utilisé pour
     // TOUT ce qui concerne la validité du PIN (format local + 401/403 serveur)
@@ -33473,15 +34284,76 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     }
     function _clearPinError() { _setPinError(''); }
 
+    // Retour positif du bouton "Vérifier l'accès" (#ucRASharedPinNote, vert).
+    function _setPinNote(msg, ok) {
+        var el = document.getElementById('ucRASharedPinNote');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.className = (msg && ok) ? 'ucRAPinNoteOk' : '';
+    }
+
+    // Teste le PIN saisi contre la box (rapid-service mode verify_pin) SANS rien
+    // exécuter : juste 200 / 401 / 403. Donne à l'imam (ou à l'installateur) une
+    // confirmation en 1 tap que l'administration à distance est bien armée.
+    function _verifyPin() {
+        var mid   = window._ucCurrentMosqueId();
+        var pinEl = document.getElementById('ucRAActionsPin');
+        var pin   = pinEl ? pinEl.value.trim() : '';
+        _setPinNote('', false);
+        if (!mid) { _setPinError(_raT('errGeneric')); return; }
+        if (!/^\d{4,8}$/.test(pin)) {
+            _setPinError(_raT('errInvalidPin'));
+            if (pinEl) { try { pinEl.focus(); } catch (e) {} }
+            return;
+        }
+        _clearPinError();
+        _setPinNote(_raT('verifyPinChecking'), false);
+        _L('REMOTE_ADMIN', 'VERIFY_PIN_SEND', { mosque_id: mid });
+        fetch('https://tjmjmlzwzebocfdmifrg.supabase.co/functions/v1/rapid-service', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'apikey': 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4' },
+            body: JSON.stringify({ type: 'verify_pin', mosque_id: mid, pin: pin })
+        })
+        .then(function (r) { return { ok: r.ok, status: r.status }; })
+        .then(function (res) {
+            if (res.ok) {
+                _setPinNote(_raT('verifyPinOk'), true);
+                _clearPinError();
+                _L('REMOTE_ADMIN', 'VERIFY_PIN_OK', { mosque_id: mid });
+                if (typeof window._ucArmMosqueAdminPush === 'function') window._ucArmMosqueAdminPush(mid);
+            } else if (res.status === 401) {
+                _setPinNote('', false); _setPinError(_raT('verifyPinBad'));
+                _L('REMOTE_ADMIN', 'VERIFY_PIN_ERR', { mosque_id: mid, status: 401 });
+            } else if (res.status === 403) {
+                _setPinNote('', false); _setPinError(_raT('verifyPinNone'));
+                _L('REMOTE_ADMIN', 'VERIFY_PIN_ERR', { mosque_id: mid, status: 403 });
+            } else {
+                _setPinNote('', false); _setPinError(_raT('errGeneric'));
+                _L('REMOTE_ADMIN', 'VERIFY_PIN_ERR', { mosque_id: mid, status: res.status });
+            }
+        })
+        .catch(function (e) {
+            _setPinNote('', false); _setPinError(_raT('errNetwork'));
+            _L('REMOTE_ADMIN', 'VERIFY_PIN_NETWORK_ERR', { mosque_id: mid, error: (e && e.message) || String(e) });
+        });
+    }
+
     // Envoie une commande ponctuelle (onglet Actions) -- même endpoint/PIN que
     // _submit(), mais mode "remote_action" : aucune écriture dans mosques,
     // juste un push silencieux que la box exécute immédiatement (cf. listener
     // 'ucRemoteAction', custom.js plus haut, et rapid-service côté serveur).
-    function _sendRemoteAction(action, target) {
+    // statusFn (facultatif) : cible d'affichage du retour ("Envoi..." / "Envoyé" /
+    // erreur réseau) -- par défaut #ucRAActionsStatus (haut du panneau), mais les
+    // appelants passent le setter de LEUR bloc (_setLedStatus, _setAudioStatus,
+    // _setReloadStatus...) pour que le libellé s'affiche là où l'action est
+    // déclenchée. Les erreurs de PIN (401/403) restent, elles, EN FACE du champ
+    // PIN partagé (_setPinError), toujours visible en tête de modale.
+    function _sendRemoteAction(action, target, statusFn) {
+        var _stat = (typeof statusFn === 'function') ? statusFn : _setActionsStatus;
         var mid   = window._ucCurrentMosqueId();
         var pinEl = document.getElementById('ucRAActionsPin');
         var pin   = pinEl ? pinEl.value.trim() : '';
-        if (!mid) { _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'no_mosque_id', action: action }); _setActionsStatus(_raT('errGeneric'), 'err'); return false; }
+        if (!mid) { _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'no_mosque_id', action: action }); _stat(_raT('errGeneric'), 'err'); return false; }
         if (!/^\d{4,8}$/.test(pin)) {
             _L('REMOTE_ADMIN', 'ACTION_ABORT', { reason: 'pin_format', mosque_id: mid, action: action, pinLen: pin.length });
             _setPinError(_raT('errInvalidPin'));
@@ -33490,7 +34362,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         }
 
         _clearPinError();
-        _setActionsStatus(_raT('sending'), 'ok');
+        _stat(_raT('sending'), 'ok');
         var body = { type: 'remote_action', mosque_id: mid, pin: pin, action: action };
         if (target) body.target = target;
 
@@ -33516,25 +34388,28 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
             if (res.ok) {
                 _L('REMOTE_ADMIN', 'ACTION_OK', { mosque_id: mid, action: action });
                 _clearPinError();
-                _setActionsStatus(_raT('actionSentOk'), 'ok');
+                _stat(_raT('actionSentOk'), 'ok');
                 _requestActionViaPoll(mid, action, target);   // PIN OK → filet fiable
+                // PIN validé serveur → ce téléphone est un responsable de cette
+                // mosquée : armer le tag OneSignal des alertes de surveillance.
+                if (typeof window._ucArmMosqueAdminPush === 'function') window._ucArmMosqueAdminPush(mid);
             } else if (res.status === 401) {
                 _L('REMOTE_ADMIN', 'ACTION_ERR', { mosque_id: mid, action: action, status: res.status, reason: 'invalid_pin' });
-                _setActionsStatus('', '');
+                _stat('', '');
                 _setPinError(_raT('errInvalidPin'));
                 if (pinEl) { try { pinEl.focus(); } catch (e) {} }
             } else if (res.status === 403) {
                 _L('REMOTE_ADMIN', 'ACTION_ERR', { mosque_id: mid, action: action, status: res.status, reason: 'not_configured' });
-                _setActionsStatus('', '');
+                _stat('', '');
                 _setPinError(_raT('errNotConfigured'));
             } else {
                 _L('REMOTE_ADMIN', 'ACTION_ERR', { mosque_id: mid, action: action, status: res.status, body: JSON.stringify(res.body || {}) });
-                _setActionsStatus((res.body && res.body.error) || _raT('errGeneric'), 'err');
+                _stat((res.body && res.body.error) || _raT('errGeneric'), 'err');
             }
         })
         .catch(function (e) {
             _L('REMOTE_ADMIN', 'ACTION_NETWORK_ERR', { mosque_id: mid, action: action, error: (e && e.message) || String(e) });
-            _setActionsStatus(_raT('errNetwork'), 'err');
+            _stat(_raT('errNetwork'), 'err');
         });
         return true;
     }
@@ -33816,6 +34691,9 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
                 _clearPinError();
                 setStatus(_raT('sentOk'), 'ok');
                 if (pinEl) pinEl.value = '';
+                // PIN validé serveur → ce téléphone est un responsable de cette
+                // mosquée : armer le tag OneSignal des alertes de surveillance.
+                if (typeof window._ucArmMosqueAdminPush === 'function') window._ucArmMosqueAdminPush(mid);
                 // Le téléphone qui vient d'envoyer une VRAIE modif de config doit
                 // refléter le même changement que la box, pas rester sur son
                 // ancien état local -- incohérent sinon (cf. discussion
@@ -33931,6 +34809,10 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         _setLedStatus('', '');
         _setAudioStatus('', '');
         _setRecitersStatus('', '');
+        _setReloadStatus('', '');
+        _setUpdateActionStatus('', '');
+        _setDiagStatus('', '');
+        _setPinNote('', false);
 
         // ── Demande de synchro de TOUS les états à l'ouverture ───────────────
         // Une seule commande 'refresh_all' -> la box republie lumières + audio

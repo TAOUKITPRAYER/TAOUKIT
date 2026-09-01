@@ -6711,26 +6711,39 @@
     bottom: 0;
     left: 0;
     border-radius: 13px;
-    background: rgba(255, 255, 255, 0.18);
-    transition: background 0.2s;
+    /* Convention app (vert actif / brun inactif) — même couleurs que le
+       relookage global des <input type="checkbox"> natifs (cf. plus bas,
+       "Relookage global de TOUTES les cases à cocher natives"). Ce toggle-ci
+       masque sa checkbox (opacity:0) sous un <span> dessiné à part, il
+       n'hérite donc PAS de ce style natif automatiquement -- avant, il avait
+       ses propres couleurs (or actif / gris inactif), incohérentes avec le
+       reste de l'appli (retour utilisateur 01/09/2026, écran d'admin →
+       activation de la lecture du Coran).
+    */
+    background: #4a3a1a;
+    border: 1px solid #6a5530;
+    box-sizing: border-box;
+    transition: background 0.2s, border-color 0.2s;
     pointer-events: none;
 }
 .ucSettingsToggleSlider::after {
     content: '';
     position: absolute;
-    top: 3px;
-    left: 3px;
+    top: 2px;
+    left: 2px;
     width: 19px;
     height: 19px;
     border-radius: 50%;
-    background: #fff;
-    transition: left 0.2s;
+    background: #cbb888;
+    transition: left 0.2s, background 0.2s;
 }
 .ucSettingsToggleWrap input[type="checkbox"]:checked + .ucSettingsToggleSlider {
-    background: #f0d080;
+    background: #3a6b3f;
+    border-color: #3ddc63;
 }
 .ucSettingsToggleWrap input[type="checkbox"]:checked + .ucSettingsToggleSlider::after {
-    left: 22px;
+    left: 21px;
+    background: #3ddc63;
 }
 /* Jauges (alerte 1-30, silencieux-avant 0-60, remise-après 1-180) — repli sur
    le rendu natif (accent-color) plutôt qu'un redesign complet de la piste/du
@@ -10728,7 +10741,7 @@ select.ucRATextInput { text-align: start; }
     font-size: 1em;
 }
 #ucRASharedPinError {
-    flex: 1 1 auto;
+    flex: 1 1 100%;
     min-width: 7em;
     color: #ff6b6b;
     font-size: 0.9em;
@@ -10736,6 +10749,22 @@ select.ucRATextInput { text-align: start; }
 }
 #ucRASharedPinError:empty { display: none; }
 #ucRASharedPin.ucRAPinInvalid #ucRAActionsPin { border-color: #ff6b6b; }
+
+/* Bouton "Vérifier l'accès" + retour positif (#ucRASharedPinNote, vert). */
+#ucRAVerifyPinBtn {
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    font-size: 0.85em;
+}
+#ucRASharedPinNote {
+    flex: 1 1 100%;
+    min-width: 7em;
+    font-size: 0.9em;
+    font-weight: 600;
+    color: rgba(223, 205, 177, 0.85);
+}
+#ucRASharedPinNote:empty { display: none; }
+#ucRASharedPinNote.ucRAPinNoteOk { color: #7ed17e; }
 
 #ucRAStatus, #ucRAActionsStatus {
     min-height: 1.4em;
@@ -10812,9 +10841,18 @@ select.ucRATextInput { text-align: start; }
 
 .ucRALightRow .ucModalBtn.ucRALightBtn {
     min-width: 0;
-    padding: 7px 14px;
+    padding: 9px 18px;
     font-size: 0.88em;
 }
+
+/* Cibles tactiles LED / « Allumer » / « Éteindre » trop rapprochées → fausses
+   manœuvres au doigt (retour imam 01/09/2026). On élargit l'espacement de la
+   ligne et on repousse le bouton d'arrêt à l'opposé du bouton de mise en
+   marche pour rendre la confusion on/off quasi impossible. */
+.ucRALightRow, .ucRAAudioRow { gap: 12px 18px; }
+.ucRALightRow [data-ra-light-off],
+.ucRAAudioRow [data-ra-audio-stop] { margin-inline-start: auto; }
+.ucRALed { width: 16px; height: 16px; }
 
 /* Pastille LED d'état de la lumière (entre le label et le bouton "Allumer",
    onglet Actions -- cf. custom.js _installRemoteMosqueAdmin / _applyLightsState).
@@ -10859,7 +10897,7 @@ select.ucRATextInput { text-align: start; }
    ⏸ = en lecture. Cliquable (synchro avec l'état réel de la box). */
 .ucRAAudioRow .ucModalBtn.ucRAAudioBtn {
     min-width: 0;
-    padding: 7px 14px;
+    padding: 9px 18px;
     font-size: 0.88em;
 }
 .ucRAAudioLed {

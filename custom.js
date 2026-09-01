@@ -19447,7 +19447,16 @@ function selectQPTakbir() {
     window._ucSelectMosque = function(id, isRemote) {
         var reg = window.MOSQUES_REGISTRY || {};
         if (reg[id] && reg[id]._UC_ANONYMOUS) {
-            _showAnonMosqueWarning(function() { _finishSelectMosque(id, true); });
+            // "طلب إضافة مسجد" : plus d'avertissement (ucAnonMosqueWarnModal,
+            // demande utilisateur) ni de réinitialisation. On bascule sur le
+            // modèle anonyme EN CONSERVANT tout ce qui est déjà réglé sur cet
+            // appareil (horaires, iqama, ajustements, profil) — ces valeurs
+            // servent de point de départ à la proposition de nouvelle mosquée.
+            // La bascule recharge la page ; un indicateur one-shot rouvre
+            // directement ucMosqueProfileEditOverlay juste après (cf.
+            // _resumeProfileEditAfterReload dans _installMosqueInfoModal).
+            try { localStorage.setItem('UC_OPEN_PROFILE_EDIT_AFTER_RELOAD', '1'); } catch (e) {}
+            _finishSelectAnonymousKeepConfig(id);
             return;
         }
         if (isRemote || !reg[id]) {
@@ -19533,6 +19542,69 @@ function selectQPTakbir() {
             }
             localStorage.setItem('JS_DATA_CUSTOM', JSON.stringify(stored));
         } catch(e) {}
+        location.reload();
+    }
+
+    // ── Bascule "طلب إضافة مسجد" vers le modèle anonyme ────────────────────────
+    // Variante de _finishSelectMosque dédiée à la proposition de nouvelle
+    // mosquée. Deux différences avec _finishSelectMosque(id, true) :
+    //   1. On cale JS_CUSTOM.ucMosqueConfigVersion sur la VERSION du modèle
+    //      anonyme lui-même — ainsi _applyMosqueConfig() fait un SKIP au
+    //      rechargement (storedVersion === MOSQUE_CONFIG.VERSION) au lieu de
+    //      réécrire JS_DATA avec les horaires/iqama génériques du registre.
+    //      → horaires, iqama, ajustements, ville de calcul déjà réglés sur
+    //      l'appareil = base de la proposition. Un seul rechargement (pas le
+    //      double habituel).
+    //   2. On vide quand même le profil IDENTITÉ (adresse/tél/email/GPS/photo/
+    //      commodités/lien) — comme _finishSelectMosque(id, true) — car ces
+    //      champs sont ceux de l'ANCIENNE mosquée et n'ont aucun sens pour une
+    //      nouvelle. Les coordonnées GPS notamment sont ensuite auto-remplies à
+    //      l'ouverture de l'éditeur (position réelle du téléphone, sinon
+    //      coordonnées de la ville choisie — cf. _mpeAutofillGeo). Le NOM
+    //      (JS_DATA.ucMosqueName) est conservé, l'utilisateur le remplace.
+    function _finishSelectAnonymousKeepConfig(id) {
+        try { localStorage.setItem('UC_MOSQUE_ID', id); } catch(e) {}
+        if (typeof window._ucUnmuteMosque === 'function') window._ucUnmuteMosque(id);
+        try {
+            var reg = window.MOSQUES_REGISTRY || {};
+            var anonVer = (reg[id] && reg[id].VERSION) || '';
+            var stored = JSON.parse(localStorage.getItem('JS_DATA_CUSTOM') || '{}');
+            stored.ucMosqueConfigVersion = anonVer;
+            ['ucMosqueAddress', 'ucMosquePhone', 'ucMosqueEmail', 'ucMosqueLat', 'ucMosqueLng',
+             'ucMosqueWomenAllowed', 'ucMosqueWomenAblution', 'ucMosqueJanaza', 'ucMosqueKottab',
+             'ucMosqueParking', 'ucMosqueSocialUrl', 'ucMosqueImageUrl'].forEach(function (k) {
+                delete stored[k];
+            });
+            localStorage.setItem('JS_DATA_CUSTOM', JSON.stringify(stored));
+        } catch(e) {}
+
+        // Ville choisie en haut du sélecteur (ucMosqueSelectCityButton) : elle
+        // peut différer de la ville de calcul courante de l'app (l'imam ouvre
+        // le sélecteur, choisit son pays/sa ville, PUIS tape "طلب إضافة مسجد").
+        // Comme on court-circuite _applyMosqueConfig() (skip via
+        // ucMosqueConfigVersion ci-dessus), c'est ICI qu'il faut répercuter ce
+        // choix — sinon la proposition partirait avec la ville de l'ancienne
+        // mosquée (JS_DATA.ucNowCityCODE inchangé + _ucProposeNewMosque le lit
+        // en priorité). On pose ANON_LOC_STORAGE_KEY (lu par mosquee.js pour
+        // MOSQUE_CONFIG.LOCATION_CODE) et, si la ville a réellement changé, on
+        // réécrit JS_DATA.ucNowCityCODE dans le blob stocké, en résolvant le
+        // code exact du catalogue (_ucResolveCityCode, même traitement que
+        // _applyMosqueConfig — un code inexistant = 404 wtimes = plantage au
+        // boot). Écriture directe du blob + un seul location.reload() : même
+        // mécanique éprouvée que _applyMosqueConfig, pas d'appel à
+        // selectCityFunction() (cf. régression boucle infinie du 02/08/2026).
+        try {
+            if (_selCityCode) localStorage.setItem(ANON_LOC_STORAGE_KEY, _selCityCode);
+            var _jd     = JSON.parse(localStorage.getItem('JS_DATA') || '{}');
+            var _selN   = _normCityCode(_selCityCode || '');
+            var _curN   = _normCityCode(_jd.ucNowCityCODE || '');
+            if (_selN && _selN !== _curN) {
+                _jd.ucNowCityCODE = (typeof _ucResolveCityCode === 'function')
+                    ? _ucResolveCityCode(_selCityCode) : _selCityCode;
+                localStorage.setItem('JS_DATA', JSON.stringify(_jd));
+            }
+        } catch(e) {}
+
         location.reload();
     }
 
@@ -21751,6 +21823,7 @@ function selectQPTakbir() {
         socialLink:  { AR: 'رابط (فيسبوك/موقع الويب...)', FR: 'Lien (Facebook/site web...)', EN: 'Link (Facebook/website...)' },
         cancel:      { AR: 'إلغاء', FR: 'Annuler', EN: 'Cancel' },
         save:        { AR: 'حفظ', FR: 'Enregistrer', EN: 'Save' },
+        propose:     { AR: 'اقتراح كمسجد جديد', FR: 'Proposer la mosquée', EN: 'Propose mosque' },
         gpsUnavail:  { AR: 'GPS غير متوفر', FR: 'GPS indisponible', EN: 'GPS unavailable' },
         locateFailed:{ AR: 'تعذر تحديد الموقع', FR: 'Impossible de déterminer la position', EN: 'Could not determine the location' },
         saved:       { AR: 'تم الحفظ', FR: 'Enregistré', EN: 'Saved' }
@@ -21809,6 +21882,7 @@ function selectQPTakbir() {
                 '</div>' +
                 '<div id="ucMosqueProfileEditFooter">' +
                     '<span id="ucMPECancel" class="ucModalBtn ucModalBtn--secondary">' + _mpeT('cancel') + '</span>' +
+                    '<span id="ucMPEPropose" class="ucModalBtn ucModalBtn--primary" style="display:none;">' + _mpeT('propose') + '</span>' +
                     '<span id="ucMPESave" class="ucModalBtn ucModalBtn--primary">' + _mpeT('save') + '</span>' +
                 '</div>' +
                 '</div>' +
@@ -21856,7 +21930,13 @@ function selectQPTakbir() {
                 errEl.textContent = _mpeT('locateFailed');
             });
         });
-        document.getElementById('ucMPESave').addEventListener('click', function () {
+        // Enregistrement local du formulaire (sans effet distant). Extrait de
+        // l'ancien handler de #ucMPESave pour être réutilisé tel quel par le
+        // bouton #ucMPEPropose (mode proposition) : _ucProposeNewMosque lit
+        // JS_DATA.ucMosqueName / JS_CUSTOM.ucMosque* — il faut donc committer
+        // le formulaire AVANT de l'appeler, sinon la proposition part avec les
+        // valeurs d'avant l'édition.
+        function _mpeCommitForm() {
             // Nom de la mosquée (JS_DATA, pas JS_CUSTOM — même champ que
             // editMosqueNameFunction/ucEditMosqueNameButton, core m2body.js).
             // Reproduit exactement ses 3 effets de bord (valeur + les 2
@@ -21884,10 +21964,27 @@ function selectQPTakbir() {
             JS_CUSTOM.ucMosqueParking       = document.getElementById('ucMPEParking').checked ? 1 : 0;
             JS_CUSTOM.ucMosqueSocialUrl     = (document.getElementById('ucMPESocial').value || '').trim();
             saveCustomSettingsFunction();
+        }
+
+        document.getElementById('ucMPESave').addEventListener('click', function () {
+            _mpeCommitForm();
             _autoPushProfileIfRealMosque();
             _closeMosqueProfileEdit();
             _refreshMosqueProfileBlock();
             window._ucToast && window._ucToast(_mpeT('saved'), 'ok');
+        });
+
+        // Mode proposition (mosquée anonyme) uniquement — bouton masqué sinon
+        // (cf. _openMosqueProfileEdit). Enregistre le formulaire puis délègue
+        // l'envoi Supabase à _ucProposeNewMosque (confirm + anti-spam 5 min +
+        // toasts gérés là-bas). L'appareil ne bascule pas sur le nouvel id.
+        var _mpeProposeBtn = document.getElementById('ucMPEPropose');
+        if (_mpeProposeBtn) _mpeProposeBtn.addEventListener('click', function () {
+            _mpeCommitForm();
+            _refreshMosqueProfileBlock();
+            if (typeof window._ucProposeNewMosque === 'function') {
+                window._ucProposeNewMosque();
+            }
         });
     }
 
@@ -21945,6 +22042,13 @@ function selectQPTakbir() {
         var _isAnon = (!_mid || _mid === 'anonymous.generic');
         document.getElementById('ucMosqueProfileEditTitle').textContent = _mpeT(_isAnon ? 'titleCreate' : 'titleUpdate');
 
+        // Bouton "Proposer la mosquée" : visible seulement sur le modèle
+        // anonyme (= on est en train de créer/proposer une nouvelle mosquée) ;
+        // masqué pour une vraie mosquée (là, "Enregistrer" suffit + push ciblé
+        // du profil via _autoPushProfileIfRealMosque).
+        var _mpePropEl = document.getElementById('ucMPEPropose');
+        if (_mpePropEl) _mpePropEl.style.display = _isAnon ? '' : 'none';
+
         var c = JS_CUSTOM;
         document.getElementById('ucMPEName').value      = JS_DATA.ucMosqueName || '';
         document.getElementById('ucMPEAddress').value  = c.ucMosqueAddress  || '';
@@ -21960,6 +22064,11 @@ function selectQPTakbir() {
         document.getElementById('ucMPESocial').value   = c.ucMosqueSocialUrl || '';
         document.getElementById('ucMPEGeoErr').textContent = '';
 
+        // Nouvelle mosquée (modèle anonyme) : pré-remplir les coordonnées GPS
+        // automatiquement — position réelle du téléphone si l'app y a droit,
+        // sinon coordonnées de la ville choisie, sinon rien (cf. _mpeAutofillGeo).
+        if (_isAnon) _mpeAutofillGeo();
+
         // Repart toujours sur l'onglet "Informations" à l'ouverture.
         var btns = _profileEditOv.querySelectorAll('.ucMPETabBtn');
         var panes = _profileEditOv.querySelectorAll('.ucMPEPane');
@@ -21973,6 +22082,51 @@ function selectQPTakbir() {
     function _closeMosqueProfileEdit() {
         _undockAdjustmentsFromTab();
         if (_profileEditOv) _profileEditOv.classList.remove('ucMosqueModalOpen');
+    }
+
+    // ── Auto-remplissage des coordonnées GPS à l'ouverture (nouvelle mosquée) ──
+    // Cascade demandée : (1) position ACTUELLE du téléphone via
+    // navigator.geolocation si l'app en a le droit ; (2) sinon coordonnées de
+    // la ville de calcul courante (window.UC_CITY_COORDS_TN, table slug→lat/lng
+    // renseignée pour ~163/171 villes TN, cf. _installMosqueSelector) ;
+    // (3) sinon on laisse vide. Ne touche jamais des champs déjà renseignés
+    // (l'utilisateur garde la main + le bouton "📍 Utiliser ma position").
+    function _mpeAutofillGeo() {
+        var latEl = document.getElementById('ucMPELat');
+        var lngEl = document.getElementById('ucMPELng');
+        if (!latEl || !lngEl) return;
+        if ((latEl.value || '').trim() || (lngEl.value || '').trim()) return;
+
+        function _fillFromCity() {
+            try {
+                if ((latEl.value || '').trim() || (lngEl.value || '').trim()) return;
+                var cc = ((typeof JS_DATA !== 'undefined' && JS_DATA.ucNowCityCODE) || '').toLowerCase();
+                if (cc.indexOf('.') === -1) return;
+                var slug = cc.split('.')[1] || '';
+                var tbl  = window.UC_CITY_COORDS_TN || {};
+                var bare = slug.replace(/_+$/, '');
+                var pt   = tbl[slug] || tbl[bare] || tbl[bare + '_'];
+                if (pt && typeof pt.lat === 'number' && typeof pt.lng === 'number') {
+                    latEl.value = pt.lat.toFixed(6);
+                    lngEl.value = pt.lng.toFixed(6);
+                    if (typeof _L === 'function') _L('MPE', 'GEO_FILL', { src: 'city', slug: slug });
+                }
+            } catch (e) {}
+        }
+
+        if (!navigator.geolocation) { _fillFromCity(); return; }
+        try {
+            navigator.geolocation.getCurrentPosition(
+                function (pos) {
+                    if ((latEl.value || '').trim() || (lngEl.value || '').trim()) return;
+                    latEl.value = pos.coords.latitude.toFixed(6);
+                    lngEl.value = pos.coords.longitude.toFixed(6);
+                    if (typeof _L === 'function') _L('MPE', 'GEO_FILL', { src: 'device' });
+                },
+                function () { _fillFromCity(); },
+                { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+            );
+        } catch (e) { _fillFromCity(); }
     }
 
     // Exposé pour ucMosqueSelectorProposeLink (_installMosqueSelector) : ouvre

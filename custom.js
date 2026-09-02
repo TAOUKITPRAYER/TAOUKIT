@@ -1096,7 +1096,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.32';
+var CUSTOM_APP_VERSION = '14.33';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -2623,8 +2623,76 @@ window._ucCurrentMosqueId = function () {
     saveCustomSettingsFunction();
 })();
 
+// ── Renumérotation des thèmes personnalisés : ancienne base 1000 -> 50 ────────
+// _installCustomThemes attribuait autrefois les indices 1000, 1001, … aux fonds
+// de spec/themes/ ("loin du core, collision-proof"). Trop grand pour être tapé
+// ou retenu dans l'écran de choix des thèmes (dialogues « par jour » / « par
+// prière » / liste aléatoire / saisie directe). Nouvelle base : 50, juste après
+// les 40 thèmes core (0-39).
+// Cette IIFE migre UNE FOIS toute config déjà écrite avec l'ancienne base :
+// ucUserThemeBG (thème fixe), ucThemes4EveryDays, ucThemes4eachSalat,
+// ucThemesMyBGsLista, + les variables core déjà dérivées (m1prime.js les lit
+// au parse, AVANT ce fichier -> currentThemeIndex / dailyThemesArray /
+// themesForEachSalat / randomThemesList peuvent déjà contenir 1000+).
+// Idempotente : après le 1er passage aucune valeur 1000+ ne subsiste.
+// DOIT rester avant _forceDefaultVrThemeOn (qui peut recharger la page).
+(function _ucRenumberCustomThemes() {
+    if (typeof JS_DATA === 'undefined') return;
+    var OLD_BASE = 1000, NEW_BASE = 50, SPAN = 50;   // 1000..1049 -> 50..99
+
+    function _one(v) {
+        var s = String(v == null ? '' : v).trim();
+        if (!/^\d+$/.test(s)) return null;            // '.', '', non-numérique -> inchangé
+        var n = parseInt(s, 10);
+        return (n >= OLD_BASE && n < OLD_BASE + SPAN) ? (NEW_BASE + (n - OLD_BASE)) : null;
+    }
+    function _list(str, sep) {
+        if (typeof str !== 'string' || str.indexOf(String(OLD_BASE)) === -1) return null;
+        var hit = false;
+        var out = str.split(sep).map(function (p) {
+            var m = _one(p);
+            if (m == null) return p;
+            hit = true;
+            return String(m);
+        }).join(sep);
+        return hit ? out : null;
+    }
+    function _inOld(x) {
+        var n = parseInt(x, 10);
+        return isFinite(n) && n >= OLD_BASE && n < OLD_BASE + SPAN;
+    }
+
+    var changed = false;
+
+    var curM = _one(JS_DATA.ucUserThemeBG);
+    if (curM != null) {
+        JS_DATA.ucUserThemeBG = curM;
+        changed = true;
+        if (typeof currentThemeIndex !== 'undefined' && _inOld(currentThemeIndex)) {
+            currentThemeIndex = curM;
+        }
+    }
+
+    var d = _list(JS_DATA.ucThemes4EveryDays, '|');
+    if (d != null) { JS_DATA.ucThemes4EveryDays = d; changed = true;
+        if (typeof dailyThemesArray !== 'undefined') dailyThemesArray = d.split('|'); }
+
+    var s = _list(JS_DATA.ucThemes4eachSalat, '|');
+    if (s != null) { JS_DATA.ucThemes4eachSalat = s; changed = true;
+        if (typeof themesForEachSalat !== 'undefined') themesForEachSalat = s.split('|'); }
+
+    var r = _list(JS_DATA.ucThemesMyBGsLista, ',');
+    if (r != null) { JS_DATA.ucThemesMyBGsLista = r; changed = true;
+        if (typeof randomThemesList !== 'undefined') randomThemesList = r.split(','); }
+
+    if (changed) {
+        if (typeof saveSettingsToStorageFunction === 'function') saveSettingsToStorageFunction();
+        if (typeof _L === 'function') _L('THEME', 'RENUMBER', { from: OLD_BASE, to: NEW_BASE });
+    }
+})();
+
 // ── Thème vertical par défaut (1er lancement / après reset) ────────────────
-// Index custom 1004 = HR_S2.webp (cf. _installCustomThemes(), thème "S-type"
+// Index custom 54 = HR_S2.webp (cf. _installCustomThemes(), thème "S-type"
 // n°2 détecté dans spec/themes/HR/) -- pas d'image VR dédiée (aucun
 // VR_S2.webp sur disque), donc réservé au mode VERTICAL uniquement (retour
 // utilisateur 27/08/2026) : une box/boîtier horizontal garde son thème par
@@ -2633,7 +2701,7 @@ window._ucCurrentMosqueId = function () {
 // son corps pour toute vraie mosquée -- _UC_REMOTE_MANAGED -- donc ce
 // forçage ne s'appliquait en pratique JAMAIS à une mosquée réellement
 // sélectionnée/importée, seulement au modèle anonyme -- bug constaté
-// 27/08/2026, test aboubakr : thème core "VR0" affiché au lieu de 1004).
+// 27/08/2026, test aboubakr : thème core "VR0" affiché au lieu de 54).
 // Rechargement nécessaire (contrairement à _forceActivate24HoursDefaultOn
 // juste au-dessus) : m1prime.js lit JS_DATA.ucUserThemeBG UNE SEULE FOIS, à
 // l'analyse du script ("let currentThemeIndex = JS_DATA.ucUserThemeBG"),
@@ -2647,7 +2715,7 @@ window._ucCurrentMosqueId = function () {
     saveCustomSettingsFunction();
     if (typeof detectOrientationFunction === 'function') detectOrientationFunction();
     if (typeof isHorizontalOrientation !== 'undefined' && isHorizontalOrientation) return;   // box : thème habituel inchangé
-    JS_DATA.ucUserThemeBG = 1004;
+    JS_DATA.ucUserThemeBG = 54;
     if (typeof saveSettingsToStorageFunction === 'function') saveSettingsToStorageFunction();
     location.reload();
 })();
@@ -18112,9 +18180,13 @@ ucOn(UC_EVT.AZAN_TIME,  function () { try { localStorage.removeItem(_UC_JOMOA_AD
 // ── THÈMES CUSTOM : spec/themes/HR/HR{n}.png + spec/themes/VR/VR{n}.png ───
 // ═══════════════════════════════════════════════════════════════════════════
 //
-//  Les images HR{n}.png / VR{n}.png dans spec/themes/HR/ et spec/themes/VR/
-//  s'ajoutent aux 40 thèmes core (indices 0-39).
-//  Indices custom : 40 = HR1/VR1, 41 = HR2/VR2, …
+//  Les images HR_A{n}/HR_S{n} et VR_A{n}/VR_S{n} dans spec/themes/HR/ et
+//  spec/themes/VR/ s'ajoutent aux 40 thèmes core (indices 0-39).
+//  Indices custom : CUSTOM_BASE = 50 -> 50, 51, 52, … (juste après le core, pour
+//  rester tapables dans l'écran de choix des thèmes : dialogues « par jour » /
+//  « par prière », liste aléatoire, saisie directe du thème courant).
+//  Toute config écrite avec l'ANCIENNE base 1000 est migrée une fois au
+//  chargement par _ucRenumberCustomThemes (plus haut dans ce fichier).
 //  Si une orientation a moins de thèmes que l'autre, on boucle sur le dernier
 //  disponible plutôt que d'afficher une image manquante.
 //
@@ -18123,7 +18195,7 @@ ucOn(UC_EVT.AZAN_TIME,  function () { try { localStorage.removeItem(_UC_JOMOA_AD
 // ───────────────────────────────────────────────────────────────────────────
 (function _installCustomThemes() {
 
-    var CUSTOM_BASE = 1000;     // premier index custom (loin du core, collision-proof)
+    var CUSTOM_BASE = 50;      // premier index custom (juste après les 40 thèmes core 0-39)
     var MAX_PROBE   = 20;       // indices sondés : 1 … MAX_PROBE
     var HR_BASE     = 'spec/themes/HR/';
     var VR_BASE     = 'spec/themes/VR/';
@@ -18302,9 +18374,31 @@ ucOn(UC_EVT.AZAN_TIME,  function () { try { localStorage.removeItem(_UC_JOMOA_AD
 
         // Plage des indices custom, publiée pour :
         //  - _installDailyThemeReliability (fiabilité du thème par jour) ;
-        //  - le patch des éditeurs de thème (accepter les indices custom).
-        window._ucCustomThemeRange = { min: _minIdx, max: _maxIdx };
+        //  - le patch des éditeurs de thème (accepter les indices custom) ;
+        //  - _installCustomThemePicker (aperçus + saisie directe dans l'écran thèmes).
+        window._ucCustomThemeRange  = { min: _minIdx, max: _maxIdx };
+        window._ucCustomThemes      = themes.map(function (t) {
+            return {
+                idx:   t.idx,
+                hrUrl: t.hrUrl,
+                vrUrl: t.vrUrl,
+                label: String((t.hrUrl || t.vrUrl || '')).replace(/.*\//, '').replace(/\.\w+$/, '') || String(t.idx)
+            };
+        });
+        if (typeof window._ucRefreshCustomThemePicker === 'function') { try { window._ucRefreshCustomThemePicker(); } catch (e) {} }
         if (typeof window._ucCustomThemesReady === 'function') { try { window._ucCustomThemesReady(); } catch (e) {} }
+
+        // Repeinture unique maintenant que applyThemeFunction est patché.
+        // Nécessaire pour un thème CUSTOM en mode fixe (ucThemesActiveType 0) :
+        // le coeur a déjà appelé applyThemeFunction(currentThemeIndex custom)
+        // pendant l'init -> themes/HR-{custom}.jpg 404, fond vide, et rien ne
+        // le rejoue (applyThemeChange case 0 = no-op, le scheduler saute le
+        // type 0). Couvre aussi la renumérotation 1000->50 : _ucRenumberCustomThemes
+        // a pu changer currentThemeIndex sans repeindre. Sans effet visible pour
+        // un thème coeur (même image redessinée une fois).
+        if (_findEntry(currentThemeIndex) && typeof window.applyThemeFunction === 'function') {
+            try { window.applyThemeFunction(true); } catch (e) {}
+        }
     }
 
 })();
@@ -18329,10 +18423,10 @@ ucOn(UC_EVT.AZAN_TIME,  function () { try { localStorage.removeItem(_UC_JOMOA_AD
 //       l'ancien index (souvent 0 après un reset -> HR-0.jpg = le fond rouge).
 //     - changeThemeRandomly : AUCUN garde Number.isInteger -> setThemeFunction(NaN)
 //       -> currentThemeIndex = NaN (empoisonne tout) -> themes/HR-NaN.jpg (404).
-//  3. Course au boot : si le thème programmé est un indice CUSTOM (>= 1000, cf.
-//     _installCustomThemes) et que la sonde d'images n'a pas fini quand le
-//     scheduler du coeur tourne (+3 s), applyThemeFunction pas encore patché
-//     -> themes/HR-1003.jpg -> 404. Et ça ne s'auto-répare PAS : au tick
+//  3. Course au boot : si le thème programmé est un indice CUSTOM (>= 50, cf.
+//     _installCustomThemes, CUSTOM_BASE) et que la sonde d'images n'a pas fini
+//     quand le scheduler du coeur tourne (+3 s), applyThemeFunction pas encore
+//     patché -> themes/HR-53.jpg -> 404. Et ça ne s'auto-répare PAS : au tick
 //     suivant `want === currentThemeIndex` -> skip.
 //  4. Les éditeurs editThemeForDayFunction / editThemeForSalatFunction du coeur
 //     REJETTENT silencieusement toute valeur > 39 -> impossible d'affecter un
@@ -18429,8 +18523,8 @@ ucOn(UC_EVT.AZAN_TIME,  function () { try { localStorage.removeItem(_UC_JOMOA_AD
             return;
         }
         if (!_isValidIdx(want)) {
-            if (want >= 40 && !_range() && _deferTries++ < 25) {
-                // indice custom demandé, plage pas encore prête -> différer
+            if (want > 39 && !_range() && _deferTries++ < 25) {
+                // indice custom demandé (> 39), plage pas encore prête -> différer
                 setTimeout(function () { _applyScheduledTheme(reason, force); }, 1000);
             } else {
                 _L('THEME', 'SCHED_SKIP', { reason: reason + ':invalid_or_not_ready', want: String(want) });
@@ -18536,6 +18630,97 @@ ucOn(UC_EVT.AZAN_TIME,  function () { try { localStorage.removeItem(_UC_JOMOA_AD
     }
 
     _L('CUSTOM', 'INIT', { item: 'themeSchedulerReliability' });
+})();
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ÉCRAN DE CHOIX DES THÈMES : thèmes personnalisés visibles + saisissables
+// ─────────────────────────────────────────────────────────────────────────────
+// Le core (m2body.js) ne connaît que 0-39 : l'écran themesSectionId n'offre que
+// les flèches ◀▶ pour le thème courant, et les dialogues « entrez un numéro »
+// (par jour / par prière) que _installThemeSchedulerReliability a déjà rouverts
+// à la plage custom. Restait le problème : personne ne CONNAÎT les numéros des
+// thèmes perso (50, 51, …). Ici on les rend découvrables :
+//   1. #currentThemeDisplay devient cliquable -> dialogue « numéro du thème »
+//      (0-39 ou 50-54), pour poser le thème courant sans faire défiler ;
+//   2. bande d'aperçus ajoutée en bas de la modale : vignette + n° de chaque
+//      thème perso, un appui l'applique directement.
+// Se (re)construit dès que window._ucCustomThemes est publié
+// (_ucRefreshCustomThemePicker, appelé par _installCustomThemes).
+// ═══════════════════════════════════════════════════════════════════════════
+(function _installCustomThemePicker() {
+
+    // ── Saisie directe du thème courant (#currentThemeDisplay) ──────────────
+    window._ucSetThemeByNumber = function () {
+        var r = window._ucCustomThemeRange;
+        if (!isInputDialogOpen) {
+            inputDialogValue  = '';
+            isInputDialogOpen = false;
+            var hint = '0-39' + (r ? ' / ' + r.min + '-' + r.max : '');
+            openInputDialogFunction('Numéro du thème (' + hint + ')',
+                String((typeof currentThemeIndex !== 'undefined') ? currentThemeIndex : 0),
+                '_ucSetThemeByNumber()', true);
+            return;
+        }
+        var n = parseInt(inputDialogValue, 10);
+        if (!isFinite(n)) return;
+        var ok = (n >= 0 && n <= 39) || (r && n >= r.min && n <= r.max);
+        if (!ok) return;
+        if (typeof setThemeFunction === 'function') setThemeFunction(n, true);
+    };
+
+    var _disp = document.getElementById('currentThemeDisplay');
+    if (_disp) {
+        _disp.style.cursor = 'pointer';
+        _disp.title = 'Choisir le thème par numéro';
+        _disp.addEventListener('click', function () { window._ucSetThemeByNumber(); });
+    }
+
+    // ── Bande d'aperçus des thèmes personnalisés ───────────────────────────
+    function _build() {
+        var list = window._ucCustomThemes || [];
+        var host = document.getElementById('ucCustomThemeStrip');
+        if (!host) {
+            var sec     = document.getElementById('themesSectionId');
+            var content = sec && sec.querySelector('.modalContentClass');
+            if (!content) return;
+            host = document.createElement('div');
+            host.id = 'ucCustomThemeStrip';
+            content.appendChild(host);
+        }
+        host.innerHTML = '';
+        if (!list.length) { host.style.display = 'none'; return; }
+        host.style.display = '';
+
+        var title = document.createElement('div');
+        title.className = 'infoTextClass';
+        var nums = list.map(function (t) { return t.idx; });
+        title.textContent = 'Thèmes personnalisés : ' + nums[0] + '–' + nums[nums.length - 1]
+                          + '  (un appui applique)';
+        host.appendChild(title);
+
+        var row = document.createElement('div');
+        row.className = 'ucCustomThemeRow';
+        list.forEach(function (t) {
+            var cell = document.createElement('div');
+            cell.className = 'ucCustomThemeCell';
+            var url = t.hrUrl || t.vrUrl;
+            if (url) cell.style.backgroundImage = 'url(' + url + ')';
+            var tag = document.createElement('span');
+            tag.textContent = t.idx;
+            cell.appendChild(tag);
+            cell.addEventListener('click', function () {
+                if (typeof setThemeFunction === 'function') setThemeFunction(t.idx, true);
+            });
+            row.appendChild(cell);
+        });
+        host.appendChild(row);
+    }
+
+    window._ucRefreshCustomThemePicker = _build;
+    _build();   // premier rendu (souvent vide tant que _ucCustomThemes n'est pas publié)
+
+    _L('CUSTOM', 'INIT', { item: 'customThemePicker' });
 })();
 
 

@@ -11165,3 +11165,43 @@ select.ucRATextInput { text-align: start; }
 #menuFooterLinks {
     display: none !important;
 }
+
+/* ── Bande d'aperçus des thèmes personnalisés (écran themesSectionId) ────────
+   Injectée par custom.js _installCustomThemePicker en bas de la modale des
+   thèmes : rend les fonds de spec/themes/ (indices 50+) découvrables et
+   applicables d'un appui, en plus de la saisie du numéro. */
+#ucCustomThemeStrip {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+#ucCustomThemeStrip .ucCustomThemeRow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+}
+#ucCustomThemeStrip .ucCustomThemeCell {
+    position: relative;
+    width: 84px;
+    height: 48px;
+    border-radius: 5px;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+#ucCustomThemeStrip .ucCustomThemeCell span {
+    position: absolute;
+    left: 3px;
+    bottom: 2px;
+    padding: 0 5px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+    font-size: 0.8em;
+    font-weight: 700;
+    line-height: 1.5;
+}

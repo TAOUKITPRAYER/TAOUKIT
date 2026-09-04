@@ -1096,7 +1096,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.33';
+var CUSTOM_APP_VERSION = '14.34';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -8650,13 +8650,30 @@ function _qpSavePosition() {
     // premier récitateur de la liste une fois le dernier épuisé (demande du
     // 21/08/2026).
     const _qpAudio = document.getElementById('quranAudioPlayer');
+    // Trace dédiée (04/09/2026, diagnostic "ça boucle toujours sur la même
+    // sourate" remonté par plusieurs mosquées) : AUCUN autre point du code
+    // ne logue ce passage naturel fin-de-fichier -> sourate suivante (ni
+    // selectQPSurah, ni _playQP). Sans cette ligne, impossible de vérifier
+    // après coup si l'enchaînement a réellement eu lieu -- on ne voit que les
+    // FIRE action=play de _startQuranAutoPlayback, qui reflètent juste l'état
+    // courant à chaque déclenchement pré-azan, jamais la transition elle-même.
     _qpAudio.addEventListener('ended', function() {
+        var _endedReciter  = _qpReciterIdx;
+        var _endedSurah    = _qpSurahNum;
+        var _endedDuration = _qpAudio.duration;
+        var _endedPosition = _qpAudio.currentTime;
         _qpAutoAdvance = true;
         if (_qpSurahNum >= 114) {
             _qpReciterIdx = _qpNextAvailableReciterIdx(_qpReciterIdx);
             if (typeof _refreshQPReciters === 'function') _refreshQPReciters();
+            _L('AUDIO','FIRE',{action:'surah_ended', reciter:_endedReciter, surah:_endedSurah,
+                duration:_endedDuration, position:_endedPosition,
+                next_reciter:_qpReciterIdx, next_surah:1, wrap:1});
             selectQPSurah(1);
         } else {
+            _L('AUDIO','FIRE',{action:'surah_ended', reciter:_endedReciter, surah:_endedSurah,
+                duration:_endedDuration, position:_endedPosition,
+                next_reciter:_qpReciterIdx, next_surah:(_endedSurah + 1), wrap:0});
             selectQPSurah(_qpSurahNum + 1);
         }
     });
@@ -28400,7 +28417,16 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         _lastJson = sig;
         _inFlight = true;
         _inFlightSince = Date.now();
-        _L('AUDIO', 'STATE_SNAPSHOT', { reason: reason || '', quran: snap.quran.playing ? 'play' : 'stop', azan: snap.azan.playing ? 'play' : 'stop' });
+        // q_src/q_pos/q_dur ajoutés le 04/09/2026 (diagnostic "boucle sur la
+        // même sourate") : avant ceci, le snapshot local ne portait que
+        // play/stop -- impossible de savoir, a posteriori, SUR QUELLE sourate
+        // ni à QUELLE position ça tournait à un instant donné. Ces 3 champs
+        // étaient déjà calculés dans `snap` (poussés vers Supabase
+        // mosque_device_status.audio_state) mais jamais recopiés dans la
+        // trace locale/debug console.
+        _L('AUDIO', 'STATE_SNAPSHOT', { reason: reason || '', quran: snap.quran.playing ? 'play' : 'stop',
+            q_src: snap.quran.src, q_pos: snap.quran.positionSec, q_dur: snap.quran.durationSec,
+            azan: snap.azan.playing ? 'play' : 'stop' });
         fetch(_SB_URL + '/rest/v1/mosque_device_status', {
             method: 'POST',
             headers: {

@@ -1096,7 +1096,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.35';
+var CUSTOM_APP_VERSION = '14.36';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -1415,6 +1415,11 @@ var _ucIsRealPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAn
 // distante 'reload') jusqu'à la sortie de la fenêtre critique — il ne bloque
 // jamais définitivement, il re-tente toutes les 60 s.
 //
+// PORTÉE : BOX UNIQUEMENT. Sur téléphone / PC (tout appareil qui n'est pas un
+// afficheur de mosquée) _ucReloadGuardActive() renvoie toujours false → aucun
+// report : changer de mosquée en pleine prière recharge tout de suite et la
+// séquence de la nouvelle mosquée repart normalement (demande 06/09/2026).
+//
 // EXCEPTION (demande terrain 01/09/2026) : le reload MANUEL déclenché par
 // l'utilisateur lui-même n'est PLUS différé — il s'exécute immédiatement, à
 // n'importe quel moment. Concerne les 4 déclencheurs manuels :
@@ -1445,8 +1450,15 @@ var _ucIsRealPhone = !!(window.AndroidMobile && typeof window.AndroidMobile.isAn
     }
 
     // True si un reload maintenant couperait un azan / une séquence d'iqama.
+    // Garde-fou RÉSERVÉ AUX BOX (afficheur de mosquée) : sur tout autre appareil
+    // (téléphone, PC…) l'utilisateur qui change de mosquée en pleine séquence de
+    // prière doit pouvoir le faire — le reload de bascule s'exécute
+    // immédiatement et la séquence de la nouvelle mosquée démarre normalement
+    // (demande terrain 06/09/2026). Le report n'avait de sens que pour l'imam
+    // devant un afficheur en plein compte à rebours d'iqama.
     window._ucReloadGuardActive = function () {
         try {
+            if (typeof _ucLwdIsBox === 'function' && !_ucLwdIsBox()) return false;
             if (typeof isIqamaCounterActive !== 'undefined' && isIqamaCounterActive) return true;
             var ids = ['azanPopupVertical', 'azanPopupHorizontal', 'iqamaPopupVertical', 'iqamaPopupHorizontal'];
             for (var i = 0; i < ids.length; i++) {

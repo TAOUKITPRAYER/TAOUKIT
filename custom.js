@@ -1096,7 +1096,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.36';
+var CUSTOM_APP_VERSION = '14.37';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -32050,10 +32050,22 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
     var CONFIRM_DELAY_MS      = 3000;                // délai entre les 2 lectures de confirmation
     var SNOOZE_MS             = 8 * 60 * 60 * 1000;  // 8h après "Rester ici"
     var HIDDEN_THRESHOLD_MS   = 60000;               // ignore les allers-retours rapides (notif, écran verrouillé bref)
+    var MIN_RERUN_MS          = 2 * 60 * 1000;       // pas plus d'une vérif complète toutes les 2 min
+    var MOVE_TRIGGER_KM       = 3;                   // déplacement mini (watchPosition) qui relance une vérif
+    var WATCH_ACCURACY_MAX_M  = 500;                 // lectures du watch trop floues -> ignorées (juste un déclencheur)
+    var _HOME_GEO_KEY         = 'UC_HOME_GEO';       // cache {id,lat,lng} des coords de la mosquée courante
+
+    var _SB_URL = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_URL)
+               || 'https://tjmjmlzwzebocfdmifrg.supabase.co';
+    var _SB_KEY = (window.MOSQUE_CONFIG && window.MOSQUE_CONFIG.SUPABASE_ANON_KEY)
+               || 'sb_publishable_P9MMDcQw_mM4bLqCVCj_3A_tdTK5Tj4';
 
     var _panel = null;
     var _checking = false;
     var _lastLat = null, _lastLng = null;
+    var _lastRunAt = 0;
+    var _watchId = null;
+    var _watchRefLat = null, _watchRefLng = null;   // dernier point de référence du watch
 
     function _getPosition(cb) {
         if (!navigator.geolocation) { cb(null); return; }
@@ -32064,10 +32076,41 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         );
     }
 
-    function _currentMosqueCoords() {
+    // Coordonnées de la mosquée COURANTE. Registre local -> MOSQUE_CONFIG.
+    // Mosquée gérée à distance : MOSQUE_CONFIG ne porte PAS de coords (cf.
+    // spec/mosquee.js) -> on lit ce que _applyRow a écrit (JS_DATA.ucMeteo*,
+    // JS_CUSTOM.ucMosqueLat/Lng), sinon un cache local, sinon un fetch unique
+    // de mosques.latitude/longitude (mis en cache). Async -> callback.
+    function _resolveHomeCoords(cb) {
         var c = MOSQUE_CONFIG && (MOSQUE_CONFIG.MOSQUE_COORDS || MOSQUE_CONFIG.WEATHER_COORDS);
-        if (!c || typeof c.latitude !== 'number' || typeof c.longitude !== 'number') return null;
-        return c;
+        if (c && isFinite(c.latitude) && isFinite(c.longitude)) {
+            cb({ latitude: +c.latitude, longitude: +c.longitude }); return;
+        }
+        var la = parseFloat((typeof JS_DATA !== 'undefined' && JS_DATA.ucMeteoLatitude)
+                    || (typeof JS_CUSTOM !== 'undefined' && JS_CUSTOM.ucMosqueLat));
+        var lo = parseFloat((typeof JS_DATA !== 'undefined' && JS_DATA.ucMeteoLongitude)
+                    || (typeof JS_CUSTOM !== 'undefined' && JS_CUSTOM.ucMosqueLng));
+        if (isFinite(la) && isFinite(lo) && (la || lo)) { cb({ latitude: la, longitude: lo }); return; }
+
+        var mid = (typeof window._ucCurrentMosqueId === 'function') ? window._ucCurrentMosqueId() : '';
+        if (!mid) { cb(null); return; }
+        try {
+            var cached = JSON.parse(localStorage.getItem(_HOME_GEO_KEY) || 'null');
+            if (cached && cached.id === mid && isFinite(cached.lat) && isFinite(cached.lng)) {
+                cb({ latitude: +cached.lat, longitude: +cached.lng }); return;
+            }
+        } catch (e) {}
+        fetch(_SB_URL + '/rest/v1/mosques?mosque_id=eq.' + encodeURIComponent(mid) + '&select=latitude,longitude',
+              { headers: { apikey: _SB_KEY, Authorization: 'Bearer ' + _SB_KEY } })
+            .then(function (r) { return r.json(); })
+            .then(function (rows) {
+                var row = rows && rows[0];
+                if (row && isFinite(row.latitude) && isFinite(row.longitude)) {
+                    try { localStorage.setItem(_HOME_GEO_KEY, JSON.stringify({ id: mid, lat: row.latitude, lng: row.longitude })); } catch (e) {}
+                    cb({ latitude: +row.latitude, longitude: +row.longitude });
+                } else { cb(null); }
+            })
+            .catch(function () { cb(null); });
     }
 
     function _localCandidates(lat, lng, excludeId) {
@@ -32091,7 +32134,7 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         var dLng = SEARCH_RADIUS_KM / (111 * Math.max(0.1, Math.cos(lat * Math.PI / 180)));
         var filter = 'and=(latitude.gte.' + (lat - dLat) + ',latitude.lte.' + (lat + dLat) +
                      ',longitude.gte.' + (lng - dLng) + ',longitude.lte.' + (lng + dLng) + ')';
-        var url = _SB_URL + '/rest/v1/mosques?' + filter + '&select=mosque_id,mosque_name,latitude,longitude';
+        var url = _SB_URL + '/rest/v1/mosques?' + filter + '&select=mosque_id,mosque_name,latitude,longitude&limit=200';
         fetch(url, { headers: { apikey: _SB_KEY, Authorization: 'Bearer ' + _SB_KEY } })
             .then(function (r) { return r.json(); })
             .then(function (rows) {
@@ -32206,48 +32249,99 @@ var SUPABASE_KEEPALIVE_ENABLED = true;
         });
     }
 
-    function _runCheck() {
+    function _noteWatchRef(coords) {
+        if (coords && isFinite(coords.latitude) && isFinite(coords.longitude)) {
+            _watchRefLat = coords.latitude; _watchRefLng = coords.longitude;
+        }
+    }
+
+    function _runCheck(trigger) {
         if (_checking) return;
         if (JS_CUSTOM.ucMosqueProximityEnabled != 1) return;
         if (Date.now() < (JS_CUSTOM.ucMosqueProximitySnoozeUntil || 0)) return;
-        var home = _currentMosqueCoords();
-        if (!home) return;
-
+        if (Date.now() - _lastRunAt < MIN_RERUN_MS) return;
         _checking = true;
-        _getPosition(function (posA) {
-            if (!posA || posA.coords.accuracy > ACCURACY_MAX_M) { _checking = false; return; }
-            var dA = _ucHaversineKm(posA.coords.latitude, posA.coords.longitude, home.latitude, home.longitude);
-            if (dA <= DISTANCE_THRESHOLD_KM) { _checking = false; return; }
+        _lastRunAt = Date.now();
 
-            // Confirmation : 2e lecture fraîche après un court délai -- évite
-            // qu'un simple rebond GPS ponctuel déclenche le panneau.
-            setTimeout(function () {
-                _getPosition(function (posB) {
-                    _checking = false;
-                    if (!posB || posB.coords.accuracy > ACCURACY_MAX_M) return;
-                    var dB = _ucHaversineKm(posB.coords.latitude, posB.coords.longitude, home.latitude, home.longitude);
-                    if (dB <= DISTANCE_THRESHOLD_KM) return;
-                    _maybeShowPanel(posB.coords.latitude, posB.coords.longitude);
-                });
-            }, CONFIRM_DELAY_MS);
+        _resolveHomeCoords(function (home) {
+            if (!home) { _checking = false; return; }
+            _getPosition(function (posA) {
+                if (!posA || posA.coords.accuracy > ACCURACY_MAX_M) { _checking = false; return; }
+                _noteWatchRef(posA.coords);
+                var dA = _ucHaversineKm(posA.coords.latitude, posA.coords.longitude, home.latitude, home.longitude);
+                if (dA <= DISTANCE_THRESHOLD_KM) { _checking = false; return; }
+
+                // Confirmation : 2e lecture fraîche après un court délai -- évite
+                // qu'un simple rebond GPS ponctuel déclenche le panneau.
+                setTimeout(function () {
+                    _getPosition(function (posB) {
+                        _checking = false;
+                        if (!posB || posB.coords.accuracy > ACCURACY_MAX_M) return;
+                        _noteWatchRef(posB.coords);
+                        var dB = _ucHaversineKm(posB.coords.latitude, posB.coords.longitude, home.latitude, home.longitude);
+                        if (dB <= DISTANCE_THRESHOLD_KM) return;
+                        _L('MOSQUE_PROX', 'FAR', { trigger: trigger || '?', km: +dB.toFixed(1) });
+                        _maybeShowPanel(posB.coords.latitude, posB.coords.longitude);
+                    });
+                }, CONFIRM_DELAY_MS);
+            });
         });
+    }
+
+    // ── Suivi de position léger (déclencheur, pas de la haute précision) ─────
+    // watchPosition basse consommation tant que l'app est au premier plan :
+    // dès que le téléphone s'est éloigné de MOVE_TRIGGER_KM du dernier point
+    // de référence, on relance une vérification complète. Comble le trou de
+    // l'ancien mécanisme (2 seuls déclencheurs : ouverture + retour de fond)
+    // qui ratait "l'utilisateur vient d'arriver dans une autre ville".
+    // Suspendu quand l'app passe en arrière-plan (batterie ; de toute façon le
+    // WebView est gelé en fond). Pas de permission supplémentaire : c'est la
+    // même que getCurrentPosition, déjà accordée pour la Qibla / 1er lancement.
+    function _startWatch() {
+        if (_watchId !== null || !navigator.geolocation) return;
+        if (JS_CUSTOM.ucMosqueProximityEnabled != 1) return;
+        try {
+            _watchId = navigator.geolocation.watchPosition(function (pos) {
+                if (!pos || !pos.coords) return;
+                if (pos.coords.accuracy > WATCH_ACCURACY_MAX_M) return;
+                if (_watchRefLat === null) { _noteWatchRef(pos.coords); return; }
+                var moved = _ucHaversineKm(_watchRefLat, _watchRefLng, pos.coords.latitude, pos.coords.longitude);
+                if (moved < MOVE_TRIGGER_KM) return;
+                _noteWatchRef(pos.coords);
+                _L('MOSQUE_PROX', 'MOVE_TRIGGER', { movedKm: +moved.toFixed(1) });
+                _runCheck('move');
+            }, function () {}, { enableHighAccuracy: false, maximumAge: 300000, timeout: 30000 });
+        } catch (e) { _watchId = null; }
+    }
+    function _stopWatch() {
+        if (_watchId !== null && navigator.geolocation) {
+            try { navigator.geolocation.clearWatch(_watchId); } catch (e) {}
+        }
+        _watchId = null;
     }
 
     // ── Déclencheurs : chargement (une fois) + retour d'arrière-plan réel
     // (pas un simple clignotement d'écran -- même seuil/logique que le
-    // resync de la séquence de prière, cf. plus haut dans ce fichier) ───────
+    // resync de la séquence de prière, cf. plus haut dans ce fichier)
+    // + déplacement détecté par le watch (ci-dessus) ───────────────────────
     var _hiddenAt = null;
     document.addEventListener('visibilitychange', function () {
-        if (document.hidden) { _hiddenAt = Date.now(); return; }
+        if (document.hidden) { _hiddenAt = Date.now(); _stopWatch(); return; }
+        _startWatch();
         if (_hiddenAt === null) return;
         var hiddenMs = Date.now() - _hiddenAt;
         _hiddenAt = null;
-        if (hiddenMs > HIDDEN_THRESHOLD_MS) _runCheck();
+        if (hiddenMs > HIDDEN_THRESHOLD_MS) _runCheck('resume');
     });
 
-    setTimeout(_runCheck, 8000);
+    setTimeout(function () { _runCheck('startup'); _startWatch(); }, 8000);
 
-    window._ucRescheduleMosqueProximityCheck = _runCheck;
+    // Toggle du réglage : (re)démarre ou coupe le watch selon l'état, et
+    // relance une vérif immédiate à l'activation.
+    window._ucRescheduleMosqueProximityCheck = function () {
+        if (JS_CUSTOM.ucMosqueProximityEnabled == 1) { _startWatch(); _runCheck('toggle'); }
+        else { _stopWatch(); }
+    };
 
     _L('CUSTOM', 'INIT', { item: 'mosqueProximityCheck' });
 })();

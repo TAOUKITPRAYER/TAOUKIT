@@ -1096,7 +1096,7 @@ function _ucRegisterFlipMuteTarget(getAudioFn) {
 // dans l'app (onglet navigateur, écran principal, "À propos", menu latéral) —
 // cf. release/instapk.ps1 "setversion" pour la mettre à jour automatiquement
 // ici ET dans app/build.gradle (versionName/versionCode) en une seule commande.
-var CUSTOM_APP_VERSION = '14.34';
+var CUSTOM_APP_VERSION = '14.35';
 document.title = 'TAWKIT.NET ' + CUSTOM_APP_VERSION; //Titre onglet navigateur
 
 if (typeof appVersionString !== 'undefined') { // Affichage de la version dans l'app (en bas à droite) et dans la page "À propos"
@@ -28381,10 +28381,49 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
     var _inFlightSince = 0;
     var _lastJson = '';
 
+    // ── État RÉEL de l'azan (pas seulement l'aperçu réglages) ────────────────
+    // L'indicateur azan du téléphone doit refléter l'azan qui SONNE vraiment sur
+    // la box, quelle que soit sa source :
+    //  1. lecture NATIVE (AzanPlaybackService) — c'est LA source en mode "voix
+    //     complète", l'appli d'un boîtier étant en permanence au premier plan
+    //     (AzanPlaybackService.kt joue quand même en fg dans ce mode ; le <audio>
+    //     JS est alors muet). Lu via MobileJsBridge.isAzanCurrentlyPlaying().
+    //  2. <audio> WebView réels : azan court / bip / azan redirigé vers un
+    //     serveur (_patchRedirectAudioForAzan) — là c'est bien un élément du DOM.
+    //  3. aperçu _acPreviewEl : déclenché depuis le téléphone (action azan_play).
+    // Avant : _snapshot() ne regardait QUE le cas 3 -> l'indicateur restait ▶
+    // "arrêté" pendant un vrai azan (retour test 06/09/2026, box z6-nour-cite-chaker).
+    var _AZAN_EL_IDS = ['audioAzanElement', 'audioFajrElement', 'audioShortAzanElement'];
+    function _azanRealState() {
+        var nativePlaying = false;
+        try {
+            nativePlaying = !!(window.AndroidMobile
+                && typeof window.AndroidMobile.isAzanCurrentlyPlaying === 'function'
+                && window.AndroidMobile.isAzanCurrentlyPlaying());
+        } catch (e) {}
+        var domEl = null;
+        for (var i = 0; i < _AZAN_EL_IDS.length; i++) {
+            var el = document.getElementById(_AZAN_EL_IDS[i]);
+            if (el && !el.paused && !el.ended && el.currentTime > 0) { domEl = el; break; }
+        }
+        var prev = (typeof window._acAzanPreviewState === 'function')
+            ? window._acAzanPreviewState() : { playing: false, src: '' };
+        var origin = nativePlaying ? 'native' : (domEl ? 'webview' : (prev.playing ? 'preview' : 'none'));
+        return {
+            playing: nativePlaying || !!domEl || !!prev.playing,
+            src: domEl ? (domEl.currentSrc || domEl.src || '')
+                       : (prev.playing ? (prev.src || '') : (nativePlaying ? 'native' : '')),
+            positionSec: domEl ? Math.round(domEl.currentTime || 0) : (prev.positionSec || 0),
+            durationSec: (domEl && isFinite(domEl.duration)) ? Math.round(domEl.duration) : (prev.durationSec || 0),
+            origin: origin
+        };
+    }
+    window._ucAzanRealState = _azanRealState;
+
     function _snapshot() {
         var q = document.getElementById('quranAudioPlayer');
         var qPlaying = !!(q && !q.paused && !q.ended && q.currentTime > 0);
-        var azan = (typeof window._acAzanPreviewState === 'function') ? window._acAzanPreviewState() : { playing: false, src: '' };
+        var azan = _azanRealState();
         return {
             quran: {
                 playing: qPlaying,
@@ -28397,7 +28436,8 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
                 playing: !!azan.playing,
                 src: (azan.src || '').split('/').pop() || '',
                 positionSec: azan.positionSec || 0,
-                durationSec: azan.durationSec || 0
+                durationSec: azan.durationSec || 0,
+                origin: azan.origin || ''
             }
         };
     }
@@ -28412,7 +28452,8 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         // distante, démarrage) poussent TOUJOURS -> audio_state_at change ->
         // la synchro de l'indicateur côté téléphone la détecte. Les évènements
         // play/pause spontanés ne poussent que si l'état a réellement bougé.
-        var _force = (reason === 'periodic' || reason === 'admin_refresh' || reason === 'startup' || reason.indexOf('remote_') === 0);
+        var _force = (reason === 'periodic' || reason === 'admin_refresh' || reason === 'startup'
+            || reason === 'azan_show' || reason === 'azan_hide' || reason.indexOf('remote_') === 0);
         if (!_force && sig === _lastJson) return;
         _lastJson = sig;
         _inFlight = true;
@@ -28507,9 +28548,51 @@ window._ucAddNotifHistory = _ucAddNotifHistory;
         if (!_qpHooked) setTimeout(_hookQuran, 3000);
     })();
 
-    // L'aperçu azan (_acPreviewEl) est un Audio() hors DOM -> pas d'écouteur
-    // simple ici ; on s'appuie sur le push post-action (cf. _ucDispatchRemoteAction
-    // 'azan_*') + la garde périodique.
+    // ── Azan réel : évènements + fenêtre de sondage ─────────────────────────
+    // L'aperçu azan (_acPreviewEl) est un Audio() hors DOM -> pas d'écouteur ici.
+    // Les <audio> réels (azan court / bip / redirection serveur) émettent, eux,
+    // play/pause/ended -> on les branche pour une poussée immédiate. Le cas
+    // "voix complète" (lecture 100 % NATIVE, aucun event DOM) est couvert par :
+    //   - AZAN_SHOW / AZAN_HIDE (poussée forcée à l'ouverture / fermeture de
+    //     l'écran d'azan),
+    //   - une fenêtre de sondage 5 s ARMÉE entre AZAN_SHOW et AZAN_HIDE (elle
+    //     capte le démarrage natif qui suit l'affichage du popup de ~1-2 s, et
+    //     l'arrêt anticipé), plafonnée à 12 min au cas où AZAN_HIDE manque.
+    (function _hookRealAzan() {
+        var _hooked = 0;
+        _AZAN_EL_IDS.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (!el || el._ucAudStateHooked) return;
+            el._ucAudStateHooked = true;
+            _hooked++;
+            ['play', 'playing', 'pause', 'ended'].forEach(function (evt) {
+                el.addEventListener(evt, function () { _queue('azan_evt'); });
+            });
+        });
+        if (_hooked < _AZAN_EL_IDS.length) setTimeout(_hookRealAzan, 4000);
+    })();
+
+    var _azanWinPoll = null, _azanWinUntil = 0;
+    function _stopAzanWindow() {
+        if (_azanWinPoll) { clearInterval(_azanWinPoll); _azanWinPoll = null; }
+    }
+    function _startAzanWindow() {
+        _azanWinUntil = Date.now() + 12 * 60 * 1000;
+        if (_azanWinPoll) return;
+        _azanWinPoll = setInterval(function () {
+            if (Date.now() > _azanWinUntil) { _stopAzanWindow(); return; }
+            _push('azan_tick');   // non forcé : ne pousse que si l'état a bougé
+        }, 5000);
+    }
+    if (typeof ucOn === 'function' && window.UC_EVT) {
+        ucOn(window.UC_EVT.AZAN_SHOW, function () { _startAzanWindow(); _queue('azan_show'); });
+        ucOn(window.UC_EVT.AZAN_HIDE, function () {
+            _stopAzanWindow();
+            // petit délai : laisse le natif publier isPlayingNow=false d'abord
+            setTimeout(function () { _push('azan_hide'); }, 800);
+        });
+    }
+
     setTimeout(function () { _push('startup'); }, 9000);
     setInterval(function () { _push('periodic'); }, PERIODIC_MS);
 
